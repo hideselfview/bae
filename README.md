@@ -79,3 +79,18 @@ We're exploring this approach to:
 - Maintain technical documentation that evolves alongside the implementation
 - Create self-documenting code and capture thought process
 - Facilitate collaboration between contributors across time
+
+## Development Setup
+
+1. Clone the repository
+2. Install Rust locally:
+
+   ```bash
+   # Install Rust with custom toolchain directory
+   RUSTUP_HOME="$(pwd)/.rustup" CARGO_HOME="$(pwd)/.cargo" ./rustup-init.sh -y
+
+   # Set up environment
+   source .cargo/env
+   ```
+
+The project uses a local Rust installation to ensure consistent toolchain versions across all developers. The [`rust-toolchain.toml`](rust-toolchain.toml) file specifies the required Rust version and components.

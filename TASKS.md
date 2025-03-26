@@ -17,6 +17,13 @@
 
 ## Setup & Initial Infrastructure
 
+- [x] Set up local Rust development environment
+
+  - [x] Create `rust-toolchain.toml` to specify Rust version and components
+  - [x] Add `rustup-init.sh` for local Rust installation
+  - [x] Update `.gitignore` to exclude local Rust files
+  - [x] Document setup process in README
+
 - [ ] Set up Tauri project structure
 
   - [ ] Create new Tauri project with Rust backend
