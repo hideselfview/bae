@@ -39,17 +39,19 @@
       - schema.rs
     - src-tauri/tests/storage/
       - init_test.rs
-    - src/lib/
-      - client.ts
-      - types.ts
+    - src/
+      - components/
+        - mod.rs
+      - lib.rs
+      - main.rs
 
-- [ ] Create TypeScript client for Tauri commands
+- [ ] Create Dioxus frontend for Tauri commands
   - [ ] Define command types
     - [ ] Create types for all command parameters
     - [ ] Create types for all command responses
-    - [ ] Add zod schemas for runtime validation
+    - [ ] Add Rust type definitions with serde for serialization
   - [ ] Implement client methods
-    - [ ] Create BaeClient class
+    - [ ] Create Tauri command wrappers in Dioxus
     - [ ] Add storage settings methods
       - [ ] getStorageSettings(): Promise<StorageSettings>
       - [ ] saveStorageSettings(settings: StorageSettings): Promise<void>
@@ -212,11 +214,11 @@
     - [ ] Map chunks to tracks in database
     - [ ] Handle reading track data for playback
 - [ ] Create storage settings UI
-  - [ ] Create React components
-    - [ ] Create StorageSettings.tsx
-      - [ ] Add S3 settings form using React Hook Form
+  - [ ] Create Dioxus components
+    - [ ] Create StorageSettings.rs
+      - [ ] Add S3 settings form using Dioxus form handling
       - [ ] Add local storage settings form
-    - [ ] Create StorageUsage.tsx for displaying current chunk usage
+    - [ ] Create StorageUsage.rs for displaying current chunk usage
   - [ ] Add Tauri commands in main.rs
     - [ ] Add get_storage_settings() -> Result<StorageSettings>
     - [ ] Add save_storage_settings(settings: StorageSettings) -> Result<()>
@@ -225,7 +227,7 @@
     - [ ] Add settings table to SQLite
     - [ ] Add secure credential storage using Tauri's API
   - [ ] Write tests
-    - [ ] Write React component tests with Vitest
+    - [ ] Write Dioxus component tests
       - [ ] Test form validation
         - [ ] Test required fields (access key, secret key, bucket name)
         - [ ] Test region selector has valid options
@@ -311,12 +313,12 @@
     - [ ] Add required fields (id, name)
     - [ ] Add optional fields (bio, image)
 - [ ] Build album search UI
-  - [ ] Create React components
-    - [ ] Create AlbumSearch.tsx
+  - [ ] Create Dioxus components
+    - [ ] Create AlbumSearch.rs
       - [ ] Add search input with debouncing
       - [ ] Add results list with pagination
       - [ ] Add release details view
-    - [ ] Create AlbumDetails.tsx
+    - [ ] Create AlbumDetails.rs
       - [ ] Display release information
       - [ ] Show track list
       - [ ] Add cover art display
@@ -324,7 +326,7 @@
     - [ ] Add search_albums(query: &str) -> Result<Vec<Album>>
     - [ ] Add get_album_details(id: &str) -> Result<Album>
   - [ ] Write tests
-    - [ ] Write React component tests
+    - [ ] Write Dioxus component tests
       - [ ] Test search input behavior
       - [ ] Test results display
       - [ ] Test pagination
@@ -333,8 +335,8 @@
       - [ ] Test command serialization
       - [ ] Test error handling
 - [ ] Build album import UI
-  - [ ] Create React components
-    - [ ] Create AlbumImport.tsx
+  - [ ] Create Dioxus components
+    - [ ] Create AlbumImport.rs
       - [ ] Show selected release details
       - [ ] Add data source selection
         - [ ] Local folder picker
@@ -348,7 +350,7 @@
     - [ ] Add import_album(album_id: &str, source: DataSource) -> Result<AlbumId>
     - [ ] Add get_import_progress(album_id: &str) -> Result<ImportProgress>
   - [ ] Write tests
-    - [ ] Write React component tests
+    - [ ] Write Dioxus component tests
       - [ ] Test source selection
       - [ ] Test progress display
       - [ ] Test error handling
@@ -380,11 +382,11 @@
     - [ ] Add get_artist_albums(artist_id: &str) -> Result<Vec<Album>>
     - [ ] Add search_albums(query: &str) -> Result<Vec<Album>>
   - [ ] Build browser UI
-    - [ ] Create ArtistView.tsx
+    - [ ] Create ArtistView.rs
       - [ ] Display artist info
       - [ ] Show album grid
       - [ ] Add sorting options
-    - [ ] Create AlbumGrid.tsx
+    - [ ] Create AlbumGrid.rs
       - [ ] Display album covers
       - [ ] Add hover effects
       - [ ] Handle selection

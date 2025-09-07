@@ -55,7 +55,7 @@ See [TASKS.md](TASKS.md) for implementation progress and detailed task breakdown
 - **Frontend**:
 
   - Tauri as the application framework
-  - TypeScript + React for the user interface
+  - Rust + Dioxus for the user interface
 
 ## Development Approach
 
