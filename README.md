@@ -54,8 +54,7 @@ See [TASKS.md](TASKS.md) for implementation progress and detailed task breakdown
 
 - **Frontend**:
 
-  - Tauri as the application framework
-  - Rust + Dioxus for the user interface
+  - Dioxus for native desktop application with built-in UI components
 
 ## Development Approach
 
@@ -91,6 +90,24 @@ We're exploring this approach to:
 
    # Set up environment
    source .cargo/env
+   
+   # Install Dioxus CLI
+   cargo install dioxus-cli
    ```
 
 The project uses a local Rust installation to ensure consistent toolchain versions across all developers. The [`rust-toolchain.toml`](rust-toolchain.toml) file specifies the required Rust version and components.
+
+3. Run the desktop application:
+
+   ```bash
+   # Navigate to the project directory
+   cd bae
+   
+   # Set up environment (if not already done)
+   source ../.cargo/env
+   
+   # Run in development mode
+   dx serve --platform desktop
+   ```
+
+   The development server provides hot reloading and will automatically rebuild when you make changes to the code.

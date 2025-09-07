@@ -23,69 +23,11 @@
   - [x] Add `rustup-init.sh` for local Rust installation
   - [x] Update `.gitignore` to exclude local Rust files
   - [x] Document setup process in README
+  - [x] Install dioxus-cli for Dioxus project creation
 
-- [ ] Set up Tauri project structure
+- [x] Set up Dioxus desktop project structure
 
-  - [ ] Create new Tauri project with Rust backend
-  - [ ] Add initial dependencies:
-    - dirs (home directory)
-    - rusqlite (SQLite)
-    - anyhow (error handling)
-    - tempfile (for tests)
-  - [ ] Set up directory structure:
-    - src-tauri/src/storage/
-      - mod.rs
-      - init.rs
-      - schema.rs
-    - src-tauri/tests/storage/
-      - init_test.rs
-    - src/
-      - components/
-        - mod.rs
-      - lib.rs
-      - main.rs
-
-- [ ] Create Dioxus frontend for Tauri commands
-  - [ ] Define command types
-    - [ ] Create types for all command parameters
-    - [ ] Create types for all command responses
-    - [ ] Add Rust type definitions with serde for serialization
-  - [ ] Implement client methods
-    - [ ] Create Tauri command wrappers in Dioxus
-    - [ ] Add storage settings methods
-      - [ ] getStorageSettings(): Promise<StorageSettings>
-      - [ ] saveStorageSettings(settings: StorageSettings): Promise<void>
-      - [ ] testS3Connection(settings: S3Settings): Promise<void>
-    - [ ] Add album management methods
-      - [ ] searchAlbums(query: string): Promise<Album[]>
-      - [ ] getAlbumDetails(id: string): Promise<Album>
-      - [ ] importAlbum(albumId: string, source: DataSource): Promise<AlbumId>
-      - [ ] getImportProgress(albumId: string): Promise<ImportProgress>
-      - [ ] selectFolder(): Promise<string>
-    - [ ] Add browser methods
-      - [ ] getArtists(): Promise<Artist[]>
-      - [ ] getArtistAlbums(artistId: string): Promise<Album[]>
-      - [ ] searchAlbums(query: string): Promise<Album[]>
-    - [ ] Add streaming methods
-      - [ ] getStreamFormats(): Promise<Format[]>
-      - [ ] startStream(trackId: string, format: Format): Promise<StreamHandle>
-      - [ ] seekStream(handle: StreamHandle, position: number): Promise<void>
-      - [ ] getStreamProgress(handle: StreamHandle): Promise<Progress>
-    - [ ] Add torrent methods
-      - [ ] parseTorrent(magnetOrFile: string): Promise<TorrentInfo>
-      - [ ] startDownload(torrentId: string, fileMapping: FileMapping): Promise<void>
-      - [ ] getDownloadProgress(torrentId: string): Promise<Progress>
-      - [ ] getActiveDownloads(): Promise<Download[]>
-    - [ ] Add playlist methods
-      - [ ] getPlaylists(): Promise<Playlist[]>
-      - [ ] getPlaylist(id: string): Promise<Playlist>
-      - [ ] createPlaylist(name: string, songs: string[]): Promise<string>
-      - [ ] updatePlaylist(id: string, songs: string[]): Promise<void>
-      - [ ] deletePlaylist(id: string): Promise<void>
-  - [ ] Write client tests
-    - [ ] Test parameter validation
-    - [ ] Test response parsing
-    - [ ] Test error handling
+  - [x] Create new Dioxus desktop project
 
 ### AI Setup
 
@@ -219,13 +161,13 @@
       - [ ] Add S3 settings form using Dioxus form handling
       - [ ] Add local storage settings form
     - [ ] Create StorageUsage.rs for displaying current chunk usage
-  - [ ] Add Tauri commands in main.rs
+  - [ ] Add backend functions in main.rs
     - [ ] Add get_storage_settings() -> Result<StorageSettings>
     - [ ] Add save_storage_settings(settings: StorageSettings) -> Result<()>
     - [ ] Add test_s3_connection(settings: S3Settings) -> Result<()>
   - [ ] Implement settings persistence
     - [ ] Add settings table to SQLite
-    - [ ] Add secure credential storage using Tauri's API
+    - [ ] Add secure credential storage using keyring crate or OS keychain
   - [ ] Write tests
     - [ ] Write Dioxus component tests
       - [ ] Test form validation
@@ -234,7 +176,7 @@
         - [ ] Test local storage limit is a positive number
         - [ ] Test local storage limit has reasonable max value
       - [ ] Test form submission
-        - [ ] Test successful form submission calls correct Tauri command
+        - [ ] Test successful form submission calls correct backend function
         - [ ] Test form values are correctly passed to command
         - [ ] Test form is disabled during submission
         - [ ] Test loading state during S3 connection test
@@ -243,7 +185,7 @@
         - [ ] Test connection timeout error message
         - [ ] Test bucket not found error message
         - [ ] Test form remains editable after error
-    - [ ] Write Tauri command tests
+    - [ ] Write backend function tests
       - [ ] Test settings serialization
         - [ ] Test StorageSettings struct serializes to/from JSON
         - [ ] Test S3Settings validation (required fields, formats)
@@ -254,7 +196,7 @@
         - [ ] Test updating existing settings
         - [ ] Test default settings when none exist
       - [ ] Test credential storage
-        - [ ] Test storing S3 credentials in Tauri's secure store
+        - [ ] Test storing S3 credentials in OS secure storage
         - [ ] Test retrieving credentials
         - [ ] Test updating credentials
         - [ ] Test credential encryption/decryption
@@ -266,7 +208,7 @@
       - [ ] Test full settings save flow
         - [ ] Test saving valid S3 settings updates database
         - [ ] Test saving valid local storage limit updates database
-        - [ ] Test credentials are stored in secure storage
+        - [ ] Test credentials are stored in OS secure storage
         - [ ] Test UI reflects saved settings on reload
       - [ ] Test connection validation
         - [ ] Test successful connection to mock S3
@@ -322,7 +264,7 @@
       - [ ] Display release information
       - [ ] Show track list
       - [ ] Add cover art display
-  - [ ] Add Tauri commands
+  - [ ] Add backend functions
     - [ ] Add search_albums(query: &str) -> Result<Vec<Album>>
     - [ ] Add get_album_details(id: &str) -> Result<Album>
   - [ ] Write tests
@@ -331,8 +273,8 @@
       - [ ] Test results display
       - [ ] Test pagination
       - [ ] Test error states
-    - [ ] Write Tauri command tests
-      - [ ] Test command serialization
+    - [ ] Write backend function tests
+      - [ ] Test function serialization
       - [ ] Test error handling
 - [ ] Build album import UI
   - [ ] Create Dioxus components
@@ -345,7 +287,7 @@
         - [ ] Show download/verification progress
         - [ ] Display any errors
       - [ ] Add success/failure states
-  - [ ] Add Tauri commands
+  - [ ] Add backend functions
     - [ ] Add select_folder() -> Result<PathBuf>
     - [ ] Add import_album(album_id: &str, source: DataSource) -> Result<AlbumId>
     - [ ] Add get_import_progress(album_id: &str) -> Result<ImportProgress>
@@ -354,7 +296,7 @@
       - [ ] Test source selection
       - [ ] Test progress display
       - [ ] Test error handling
-    - [ ] Write Tauri command tests
+    - [ ] Write backend function tests
       - [ ] Test folder selection
       - [ ] Test import process
 - [ ] Implement album browser
@@ -521,7 +463,7 @@
     - [ ] Add state persistence
     - [ ] Handle download failures
 
-- [ ] Add Tauri commands
+- [ ] Add backend functions
   - [ ] Add parse_torrent(magnet_or_file: String) -> Result<TorrentInfo>
   - [ ] Add start_download(torrent_id: String, file_mapping: FileMapping) -> Result<()>
   - [ ] Add get_download_progress(torrent_id: String) -> Result<Progress>
@@ -612,7 +554,7 @@
     - [ ] Manage track transitions
     - [ ] Pass through track metadata
 
-- [ ] Add Tauri commands
+- [ ] Add backend functions
 
   - [ ] Add get_stream_formats() -> Result<Vec<Format>>
   - [ ] Add start_stream(track_id: &str, format: Format) -> Result<StreamHandle>
@@ -739,6 +681,33 @@
     - [ ] Add XML serialization
     - [ ] Add JSON serialization
     - [ ] Add JSONP support
+
+## Desktop Application UI
+
+- [ ] Build Dioxus desktop interface
+  - [ ] Replace template with music library layout
+    - [ ] Remove current template components (Hero, Blog, Echo)
+    - [ ] Design main application layout (header, navigation, content area)
+    - [ ] Set up routing for core views (Library, Search, Import, Settings)
+  - [ ] Implement library browsing interface
+    - [ ] Create album grid/list components
+    - [ ] Build artist browser with album grouping
+    - [ ] Add search and filtering controls
+    - [ ] Connect to SQLite database for real data
+  - [ ] Build album import workflow
+    - [ ] Create Discogs search interface
+    - [ ] Build album selection and preview components
+    - [ ] Add data source selection (local folder, torrent)
+    - [ ] Implement import progress tracking UI
+  - [ ] Create settings management interface
+    - [ ] Build storage configuration panel (S3 settings, local cache)
+    - [ ] Add AI provider configuration interface
+    - [ ] Create preferences and options screens
+  - [ ] Add state management and data flow
+    - [ ] Set up Dioxus signals for application state
+    - [ ] Connect UI components to backend storage functions
+    - [ ] Implement error handling and user feedback
+    - [ ] Add loading states for async operations
 
 ## Deployment & Distribution
 
