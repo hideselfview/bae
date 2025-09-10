@@ -235,9 +235,9 @@
     - [x] Implement new() with API key
     - [x] Add search_releases(query: &str) -> Result<Vec<Release>>
     - [x] Add get_release(id: &str) -> Result<Release>
-  - [ ] Add API key management
-    - [ ] Store API key in secure storage
-    - [ ] Add key validation
+  - [x] Add API key management
+    - [x] Store API key in secure storage
+    - [x] Add key validation
 - [x] Create album metadata model
   - [x] Write model tests
     - [x] Test album struct serialization
@@ -257,10 +257,8 @@
     - [x] Add optional fields (bio, image)
 - [x] Build album search UI
   - [x] Create Dioxus components in main.rs
-    - [x] Add search input (no debouncing)
-      - [ ] Add debouncing to search input
-      - [ ] Add results list with pagination
-      - [x] Add basic release result cards
+    - [x] Add search input 
+    - [x] Add basic release result cards
     - [ ] Create AlbumDetails.rs
       - [ ] Display release information
       - [ ] Show track list
