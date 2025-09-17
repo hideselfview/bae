@@ -81,33 +81,88 @@ We're exploring this approach to:
 
 ## Development Setup
 
-1. Clone the repository
-2. Install Rust locally:
+### Prerequisites
 
+This project uses **rustup** for Rust toolchain management (similar to how `nvm` manages Node.js versions). The [`rust-toolchain.toml`](rust-toolchain.toml) file automatically ensures everyone uses the same Rust version and components.
+
+### Installation
+
+1. **Install Rust via rustup** (the official installer):
    ```bash
-   # Install Rust with custom toolchain directory
-   RUSTUP_HOME="$(pwd)/.rustup" CARGO_HOME="$(pwd)/.cargo" ./rustup-init.sh -y
-
-   # Set up environment
-   source .cargo/env
-   
-   # Install Dioxus CLI
-   cargo install dioxus-cli
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   source ~/.cargo/env  # Only needed for current session; rustup adds itself to your PATH automatically
    ```
 
-The project uses a local Rust installation to ensure consistent toolchain versions across all developers. The [`rust-toolchain.toml`](rust-toolchain.toml) file specifies the required Rust version and components.
-
-3. Run the desktop application:
-
+2. **Install Dioxus CLI** globally:
    ```bash
-   # Navigate to the project directory
+   cargo install dioxus-cli --locked
+   ```
+
+3. **Clone and verify** the project setup:
+   ```bash
+   git clone <repository-url>
    cd bae
-   
-   # Set up environment (if not already done)
-   source ../.cargo/env
-   
-   # Run in development mode
-   dx serve --platform desktop
+   rustup show  # Should show: "overridden by '.../rust-toolchain.toml'"
    ```
 
-   The development server provides hot reloading and will automatically rebuild when you make changes to the code.
+### Running the Application
+
+```bash
+cd bae  # Navigate to the Dioxus app directory
+dx serve
+```
+
+The development server provides hot reloading and will automatically rebuild when you make changes.
+
+### How It Works
+
+- **rustup** manages Rust versions globally (like `nvm` for Node.js)  
+- **rust-toolchain.toml** specifies the exact Rust version for this project  
+- When you `cd` into the project, rustup automatically switches to the specified toolchain  
+- **dx CLI** is installed globally
+
+## Development Commands
+
+### Dioxus Commands (dx)
+Use `dx` for Dioxus-specific development with hot reloading and platform targeting:
+
+```bash
+dx serve          # Start development server with hot reloading
+dx build          # Build for production (creates desktop app)
+dx build --release # Production build with optimizations
+dx check          # Quick syntax/type check via dx
+```
+
+### Standard Rust Commands (cargo)
+Use `cargo` for standard Rust development and testing:
+
+```bash
+cargo check       # Fast compile check (no executable)
+cargo build       # Build the binary
+cargo run         # Build and run the binary
+cargo test        # Run tests
+cargo clippy      # Run linter
+cargo fmt         # Format code
+```
+
+### When to Use Which?
+
+- **Use `dx`** for Dioxus app development - it handles UI assets, hot reloading, and cross-platform builds
+- **Use `cargo`** for standard Rust tasks like testing, linting, and when you need direct control over compilation
+
+Both tools respect your `rust-toolchain.toml` and will use the same Rust version automatically.
+
+## Tailwind CSS Setup
+
+The project uses Tailwind CSS for styling. To set up the CSS compilation:
+
+1. **Install Node.js and npm**: https://docs.npmjs.com/downloading-and-installing-node-js-and-npm
+2. **Install Tailwind CSS CLI**: https://tailwindcss.com/docs/installation  
+3. **Start the CSS compiler** (run this in the `bae/` directory):
+
+```bash
+cd bae
+npx tailwindcss -i ./tailwind.css -o ./assets/tailwind.css --watch
+```
+
+The `--watch` flag will automatically rebuild your CSS when you modify Tailwind classes in your Rust code.
