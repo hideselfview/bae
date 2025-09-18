@@ -53,6 +53,7 @@ pub struct DiscogsRelease {
     pub style: Vec<String>,
     pub format: Vec<String>,
     pub country: Option<String>,
+    pub label: Vec<String>,
     pub cover_image: Option<String>,
     pub thumb: Option<String>,
     pub tracklist: Vec<DiscogsTrack>,

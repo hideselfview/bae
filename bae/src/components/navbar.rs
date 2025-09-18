@@ -1,0 +1,40 @@
+use dioxus::prelude::*;
+use crate::Route;
+
+/// Shared navbar component.
+#[component]
+pub fn Navbar() -> Element {
+    rsx! {
+        div {
+            id: "navbar",
+            class: "bg-gray-800 text-white p-4 flex space-x-6",
+            Link {
+                to: Route::Home {},
+                class: "hover:text-blue-300 transition-colors",
+                "Home"
+            }
+            Link {
+                to: Route::Library {},
+                class: "hover:text-blue-300 transition-colors",
+                "Library"
+            }
+            Link {
+                to: Route::AlbumSearch {},
+                class: "hover:text-blue-300 transition-colors",
+                "Search"
+            }
+            Link {
+                to: Route::AlbumImport {},
+                class: "hover:text-blue-300 transition-colors",
+                "Import"
+            }
+            Link {
+                to: Route::Settings {},
+                class: "hover:text-blue-300 transition-colors",
+                "Settings"
+            }
+        }
+
+        Outlet::<Route> {}
+    }
+}

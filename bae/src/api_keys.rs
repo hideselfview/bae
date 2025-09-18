@@ -1,4 +1,3 @@
-use keyring;
 use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -152,11 +151,6 @@ impl ApiKeyManager {
             false
         }
     }
-}
-
-// Public module-level functions that use the singleton
-pub async fn store_api_key(api_key: &str) -> Result<(), ApiKeyError> {
-    get_manager()?.store_api_key(api_key)
 }
 
 pub fn retrieve_api_key() -> Result<String, ApiKeyError> {

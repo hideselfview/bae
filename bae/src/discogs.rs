@@ -30,11 +30,12 @@ struct SearchResponse {
 struct SearchResult {
     id: u64,
     title: String,
-    year: Option<u32>,
+    year: Option<String>,
     genre: Option<Vec<String>>,
     style: Option<Vec<String>>,
     format: Option<Vec<String>>,
     country: Option<String>,
+    label: Option<Vec<String>>,
     cover_image: Option<String>,
     thumb: Option<String>,
     #[serde(rename = "type")]
@@ -108,25 +109,83 @@ impl DiscogsClient {
         }
     }
 
-    /// Search for releases by query string
-    pub async fn search_releases(&self, query: &str) -> Result<Vec<DiscogsRelease>, DiscogsError> {
+    /// Search for masters by query string
+    pub async fn search_masters(&self, query: &str, format: &str) -> Result<Vec<DiscogsRelease>, DiscogsError> {
         let url = format!("{}/database/search", self.base_url);
         
         let mut params = HashMap::new();
         params.insert("q", query);
-        params.insert("type", "release");
+        params.insert("type", "master");
         params.insert("token", &self.api_key);
+        
+        if !format.is_empty() {
+            params.insert("format", format);
+        }
 
         let response = self
             .client
             .get(&url)
             .query(&params)
-            .header("User-Agent", "bae/1.0 +https://github.com/yourusername/bae")
+            .header("User-Agent", "bae/1.0 +https://github.com/hideselfview/bae")
             .send()
             .await?;
 
         if response.status().is_success() {
             let search_response: SearchResponse = response.json().await?;
+            
+            Ok(search_response
+                .results
+                .into_iter()
+                .filter(|r| r.result_type == "master")
+                .map(|r| DiscogsRelease {
+                    id: r.id.to_string(),
+                    title: r.title,
+                    year: r.year.and_then(|y| y.parse().ok()),
+                    genre: r.genre.unwrap_or_default(),
+                    style: r.style.unwrap_or_default(),
+                    format: r.format.unwrap_or_default(),
+                    country: r.country,
+                    label: r.label.unwrap_or_default(),
+                    cover_image: r.cover_image,
+                    thumb: r.thumb,
+                    tracklist: Vec::new(), // Will be populated when getting release details
+                })
+                .collect())
+        } else if response.status() == 429 {
+            Err(DiscogsError::RateLimit)
+        } else if response.status() == 401 {
+            Err(DiscogsError::InvalidApiKey)
+        } else {
+            Err(DiscogsError::Request(
+                response.error_for_status().unwrap_err(),
+            ))
+        }
+    }
+
+    /// Search for releases by master ID
+    pub async fn search_releases_for_master(&self, master_id: &str, format: &str) -> Result<Vec<DiscogsRelease>, DiscogsError> {
+        let url = format!("{}/database/search", self.base_url);
+        
+        let mut params = HashMap::new();
+        params.insert("master_id", master_id);
+        params.insert("type", "release");
+        params.insert("token", &self.api_key);
+        
+        if !format.is_empty() {
+            params.insert("format", format);
+        }
+
+        let response = self
+            .client
+            .get(&url)
+            .query(&params)
+            .header("User-Agent", "bae/1.0 +https://github.com/hideselfview/bae")
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            let search_response: SearchResponse = response.json().await?;
+            
             Ok(search_response
                 .results
                 .into_iter()
@@ -134,11 +193,12 @@ impl DiscogsClient {
                 .map(|r| DiscogsRelease {
                     id: r.id.to_string(),
                     title: r.title,
-                    year: r.year,
+                    year: r.year.and_then(|y| y.parse().ok()),
                     genre: r.genre.unwrap_or_default(),
                     style: r.style.unwrap_or_default(),
                     format: r.format.unwrap_or_default(),
                     country: r.country,
+                    label: r.label.unwrap_or_default(),
                     cover_image: r.cover_image,
                     thumb: r.thumb,
                     tracklist: Vec::new(), // Will be populated when getting release details
@@ -208,6 +268,7 @@ impl DiscogsClient {
                     .map(|f| f.name)
                     .collect(),
                 country: release.country,
+                label: Vec::new(), // Not available in detailed release
                 cover_image,
                 thumb: None, // Not available in detailed release
                 tracklist,
