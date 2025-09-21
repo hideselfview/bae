@@ -53,7 +53,7 @@ pub fn AlbumSearchResult(release: models::DiscogsRelease) -> Element {
             div {
                 class: "mt-4",
                 Link {
-                    to: Route::AlbumImport {},
+                    to: Route::AlbumSearchManager {},
                     class: "bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 transition-colors",
                     "Add to Library"
                 }

@@ -19,10 +19,8 @@ enum Route {
     Home {},
     #[route("/library")]
     Library {},
-    #[route("/search")]
-    AlbumSearchManager {},
     #[route("/import")]
-    AlbumImport {},
+    AlbumSearchManager {},
     #[route("/settings")]
     Settings {},
 }

@@ -22,7 +22,7 @@ pub fn Home() -> Element {
                     Link {
                         to: Route::AlbumSearchManager {},
                         class: "bg-blue-500 text-white px-6 py-3 rounded-lg hover:bg-blue-600 transition-colors",
-                        "Search Albums"
+                        "Import Albums"
                     }
                     Link {
                         to: Route::Library {},
@@ -38,11 +38,11 @@ pub fn Home() -> Element {
                     class: "text-center p-6",
                     h3 {
                         class: "text-xl font-bold mb-3",
-                        "Search & Discover"
+                        "Find & Import"
                     }
                     p {
                         class: "text-gray-600",
-                        "Find albums using the Discogs database with detailed metadata and artwork"
+                        "Find albums using the Discogs database and add them to your library"
                     }
                 }
                 div {
