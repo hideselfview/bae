@@ -44,11 +44,6 @@
 ### Storage Strategy
 
 - [ ] Implement local library storage
-  - [ ] Write storage initialization tests
-    - [ ] Write test for creating temp test directory
-    - [ ] Write test that Storage::new() creates required subdirectories
-    - [ ] Write test that Storage::new() creates SQLite database file
-    - [ ] Write test that verifies database has required tables
   - [ ] Implement Storage struct
     - [ ] Create Storage::new() that creates ~/.bae directory structure
     - [ ] Add SQLite connection initialization
@@ -64,11 +59,6 @@
   - [ ] Add schema for chunk tracking
     - [ ] Create file_chunks table (file_id, chunk_id, chunk_index)
     - [ ] Add indices for efficient chunk lookup
-  - [ ] Write chunking tests
-    - [ ] Write test for splitting file into fixed-size chunks
-    - [ ] Write test for reading data from specific chunk offset
-    - [ ] Write test for chunk header format
-    - [ ] Write test for tracking chunks in SQLite
   - [ ] Implement Chunk struct
     - [ ] Create Chunk::new() that takes data and creates header
     - [ ] Add methods for serializing/deserializing chunks
@@ -82,10 +72,6 @@
     - [ ] List requirements (chunk encryption/decryption)
     - [ ] Compare available Rust encryption crates
     - [ ] Document selection rationale
-  - [ ] Write encryption tests
-    - [ ] Write test for encrypting chunk
-    - [ ] Write test for decrypting chunk
-    - [ ] Write test for key storage
   - [ ] Implement encryption operations
     - [ ] Create function to encrypt chunk
     - [ ] Create function to decrypt chunk
@@ -97,12 +83,6 @@
   - [ ] Research and select S3 library
     - [ ] Compare aws-sdk-rust vs rust-s3
     - [ ] Document selection rationale
-  - [ ] Write S3 storage tests
-    - [ ] Write test for S3 client configuration
-    - [ ] Write test for uploading chunk
-    - [ ] Write test for downloading chunk
-    - [ ] Write test for deleting chunk
-    - [ ] Write test using mock S3 service
   - [ ] Create S3Storage struct
     - [ ] Implement new() with config (bucket, region, credentials)
     - [ ] Add upload_chunk(chunk_id: &str, data: &[u8]) -> Result<()>
@@ -122,12 +102,6 @@
     - [ ] Add methods to map between pieces and chunks
   - [ ] Integrate with S3 storage
 - [ ] Build storage controller
-  - [ ] Write storage controller tests
-    - [ ] Write test for writing chunk (local + upload to S3)
-    - [ ] Write test for reading chunk (check local first, download if needed)
-    - [ ] Write test for chunk eviction (when local storage limit reached)
-    - [ ] Write test for parallel chunk operations
-    - [ ] Write test using mock S3 backend
   - [ ] Create StorageController struct
     - [ ] Implement new() with local and S3 storage configs
     - [ ] Add write_chunk(data: &[u8]) -> Result<ChunkId>
@@ -139,12 +113,6 @@
     - [ ] Handle chunk eviction when storage limit reached
     - [ ] Add buffered reading for streaming
 - [ ] Build library manager
-  - [ ] Write library manager tests
-    - [ ] Write test for importing album from directory
-    - [ ] Write test for importing single track
-    - [ ] Write test for reading track data
-    - [ ] Write test for album metadata operations
-    - [ ] Write test using mock storage controller
   - [ ] Create LibraryManager struct
     - [ ] Implement new() with storage controller and SQLite connection
     - [ ] Add import_album(path: &Path, metadata: AlbumMetadata) -> Result<AlbumId>
@@ -164,61 +132,9 @@
   - [ ] Add backend functions in main.rs
     - [ ] Add get_storage_settings() -> Result<StorageSettings>
     - [ ] Add save_storage_settings(settings: StorageSettings) -> Result<()>
-    - [ ] Add test_s3_connection(settings: S3Settings) -> Result<()>
   - [ ] Implement settings persistence
     - [ ] Add settings table to SQLite
     - [ ] Add secure credential storage using keyring crate or OS keychain
-  - [ ] Write tests
-    - [ ] Write Dioxus component tests
-      - [ ] Test form validation
-        - [ ] Test required fields (access key, secret key, bucket name)
-        - [ ] Test region selector has valid options
-        - [ ] Test local storage limit is a positive number
-        - [ ] Test local storage limit has reasonable max value
-      - [ ] Test form submission
-        - [ ] Test successful form submission calls correct backend function
-        - [ ] Test form values are correctly passed to command
-        - [ ] Test form is disabled during submission
-        - [ ] Test loading state during S3 connection test
-      - [ ] Test error display
-        - [ ] Test invalid credentials error message
-        - [ ] Test connection timeout error message
-        - [ ] Test bucket not found error message
-        - [ ] Test form remains editable after error
-    - [ ] Write backend function tests
-      - [ ] Test settings serialization
-        - [ ] Test StorageSettings struct serializes to/from JSON
-        - [ ] Test S3Settings validation (required fields, formats)
-        - [ ] Test local storage limit validation
-      - [ ] Test SQLite operations
-        - [ ] Test saving settings to database
-        - [ ] Test loading settings from database
-        - [ ] Test updating existing settings
-        - [ ] Test default settings when none exist
-      - [ ] Test credential storage
-        - [ ] Test storing S3 credentials in OS secure storage
-        - [ ] Test retrieving credentials
-        - [ ] Test updating credentials
-        - [ ] Test credential encryption/decryption
-    - [ ] Write integration tests
-      - [ ] Set up test environment with mock S3
-        - [ ] Add MinIO or LocalStack as mock S3 service
-        - [ ] Create test bucket and credentials
-        - [ ] Add helper functions to reset mock S3 state
-      - [ ] Test full settings save flow
-        - [ ] Test saving valid S3 settings updates database
-        - [ ] Test saving valid local storage limit updates database
-        - [ ] Test credentials are stored in OS secure storage
-        - [ ] Test UI reflects saved settings on reload
-      - [ ] Test connection validation
-        - [ ] Test successful connection to mock S3
-        - [ ] Test invalid credentials error handling
-        - [ ] Test invalid bucket error handling
-        - [ ] Test network timeout handling
-      - [ ] Verify settings persistence
-        - [ ] Test settings survive app restart
-        - [ ] Test secure credentials survive app restart
-        - [ ] Test default settings on first run
 
 ### Album Management
 
@@ -226,11 +142,6 @@
   - [x] Build custom Discogs HTTP client using reqwest
     - [ ] Compare available Rust Discogs clients
     - [ ] Document selection rationale
-  - [ ] Write Discogs client tests
-    - [ ] Write test for searching releases
-    - [ ] Write test for getting release details
-    - [ ] Write test for rate limiting handling
-    - [ ] Write test using mock Discogs API
   - [x] Create DiscogsClient struct
     - [x] Implement new() with API key
     - [x] Add search_releases(query: &str) -> Result<Vec<Release>>
@@ -242,9 +153,6 @@
   - [x] Write model tests
     - [x] Test album struct serialization
     - [x] Test DiscogsTrack duration parsing
-    - [ ] Test track struct serialization
-    - [ ] Test artist struct serialization
-    - [ ] Test validation rules
   - [x] Create Album struct
     - [x] Add required fields (id, title, artist, year)
     - [x] Add optional fields (genre, cover art)
@@ -266,15 +174,6 @@
   - [x] Add backend functions
     - [x] Add search_albums(query: &str) -> Result<Vec<Album>>
     - [x] Add get_album_details(id: &str) -> Result<Album>
-  - [ ] Write tests
-    - [ ] Write Dioxus component tests
-      - [ ] Test search input behavior
-      - [ ] Test results display
-      - [ ] Test pagination
-      - [ ] Test error states
-    - [ ] Write backend function tests
-      - [ ] Test function serialization
-      - [ ] Test error handling
 - [x] Build album import UI
   - [x] Create Dioxus components
     - [x] Create AlbumImport.rs
@@ -290,33 +189,7 @@
     - [ ] Add select_folder() -> Result<PathBuf>
     - [ ] Add import_album(album_id: &str, source: DataSource) -> Result<AlbumId>
     - [ ] Add get_import_progress(album_id: &str) -> Result<ImportProgress>
-  - [ ] Write tests
-    - [ ] Write Dioxus component tests
-      - [ ] Test source selection
-      - [ ] Test progress display
-      - [ ] Test error handling
-    - [ ] Write backend function tests
-      - [ ] Test folder selection
-      - [ ] Test import process
 - [ ] Implement album browser
-  - [ ] Write browser logic tests
-    - [ ] Test artist grouping
-      - [ ] Test artists are correctly grouped and counted
-      - [ ] Test artist metadata (name, album count)
-    - [ ] Test album sorting
-      - [ ] Test sorting by year (ascending/descending)
-      - [ ] Test sorting by title
-      - [ ] Test sorting by artist
-    - [ ] Test search functionality
-      - [ ] Test searching by album title
-      - [ ] Test searching by artist name
-      - [ ] Test partial matches
-      - [ ] Test case insensitivity
-    - [ ] Test pagination
-      - [ ] Test first page
-      - [ ] Test middle pages
-      - [ ] Test last page
-      - [ ] Test empty results
   - [ ] Create AlbumBrowser struct
     - [ ] Implement new() with SQLite connection
     - [ ] Add get_artists() -> Result<Vec<Artist>>
@@ -331,22 +204,6 @@
       - [ ] Display album covers
       - [ ] Add hover effects
       - [ ] Handle selection
-  - [ ] Write UI component tests
-    - [ ] Test ArtistView component
-      - [ ] Test artist info display
-      - [ ] Test album grid layout
-      - [ ] Test sorting controls
-      - [ ] Test responsive layout
-    - [ ] Test AlbumGrid component
-      - [ ] Test grid layout
-      - [ ] Test hover effects
-      - [ ] Test album selection
-      - [ ] Test empty state
-    - [ ] Test user interactions
-      - [ ] Test clicking album opens details
-      - [ ] Test sorting changes update display
-      - [ ] Test search input updates results
-      - [ ] Test pagination controls
 
 ### Track Mapping
 
@@ -355,16 +212,9 @@
   - [ ] Create TrackMapper trait
     - [ ] Define map_tracks(files: Vec<PathBuf>, metadata: AlbumMetadata) -> Result<TrackMapping>
     - [ ] Define verify_mapping(mapping: &TrackMapping) -> Result<()>
-  - [ ] Write track mapper tests
-    - [ ] Test mapping validation
-    - [ ] Test error cases (missing files)
-    - [ ] Test track duration calculation
 
 - [ ] Implement one-file-per-track mapper
 
-  - [ ] Write tests
-    - [ ] Test AI matching of files to Discogs tracks
-    - [ ] Test duration validation
   - [ ] Create SimpleTrackMapper struct
     - [ ] Add duration detection using ffmpeg
     - [ ] Integrate with AI for track matching
@@ -378,10 +228,6 @@
   - [ ] Research and select CUE parser library
     - [ ] Compare available Rust CUE sheet parsers
     - [ ] Document selection rationale
-  - [ ] Write CUE parser tests
-    - [ ] Test parsing basic CUE sheets
-    - [ ] Test error cases (malformed CUE)
-    - [ ] Test track index parsing
   - [ ] Create CueSheet struct
     - [ ] Add methods to parse CUE file
     - [ ] Add track index calculation
@@ -389,9 +235,6 @@
 
 - [ ] Implement FLAC + CUE mapper
 
-  - [ ] Write tests
-    - [ ] Test CUE track number matching with Discogs tracks
-    - [ ] Test track boundary calculation
   - [ ] Create FlacCueMapper struct
     - [ ] Add FLAC format validation
     - [ ] Parse CUE sheet track numbers and times
@@ -416,11 +259,6 @@
   - [ ] Research and select libtorrent-rs version
     - [ ] Compare available versions
     - [ ] Document selection rationale
-  - [ ] Write torrent client tests
-    - [ ] Test magnet link parsing
-    - [ ] Test torrent file parsing
-    - [ ] Test file listing
-    - [ ] Test download control
   - [ ] Create TorrentClient struct
     - [ ] Add new() with config
     - [ ] Add add_torrent() for magnet/file
@@ -429,10 +267,6 @@
 
 - [ ] Implement custom storage backend
 
-  - [ ] Write storage tests
-    - [ ] Test piece storage
-    - [ ] Test piece retrieval
-    - [ ] Test integration with chunk system
   - [ ] Create TorrentStorage struct
     - [ ] Implement libtorrent storage interface
     - [ ] Add piece to chunk mapping
@@ -451,11 +285,6 @@
 
 - [ ] Implement download manager
 
-  - [ ] Write download tests
-    - [ ] Test download initiation
-    - [ ] Test progress tracking
-    - [ ] Test pause/resume
-    - [ ] Test error handling
   - [ ] Create DownloadManager struct
     - [ ] Add queue management
     - [ ] Add progress tracking
@@ -476,27 +305,9 @@
 
   - [ ] Compare available options (ffmpeg-next, ffmpeg-sys-next)
   - [ ] Document selection rationale
-  - [ ] Test basic transcoding capabilities
-    - [ ] Test format conversion (FLAC -> MP3/AAC)
-    - [ ] Test bitrate control
-    - [ ] Test seeking within files
-    - [ ] Test frame-level operations
-      - [ ] Test AVFrame creation and management
-      - [ ] Test direct frame input/output
-      - [ ] Test frame timestamp handling
-      - [ ] Test sample format conversion
 
 - [ ] Implement TranscodingService
 
-  - [ ] Write transcoding tests
-    - [ ] Test format detection
-    - [ ] Test output format selection
-    - [ ] Test bitrate/quality settings
-    - [ ] Test error handling (corrupt files, unsupported formats)
-    - [ ] Test frame processing pipeline
-      - [ ] Test decoder frame output
-      - [ ] Test resampler frame handling
-      - [ ] Test encoder frame input
   - [ ] Create TranscodingService struct
     - [ ] Add new() with ffmpeg configuration
     - [ ] Add get_stream_info(path: &Path) -> Result<StreamInfo>
@@ -517,11 +328,6 @@
 
 - [ ] Build streaming buffer system
 
-  - [ ] Write buffer tests
-    - [ ] Test chunk reading
-    - [ ] Test transcoding pipeline
-    - [ ] Test seek operations
-    - [ ] Test concurrent access
   - [ ] Create StreamBuffer struct
     - [ ] Add new() with buffer size configuration
     - [ ] Add write_chunk(chunk: &[u8]) -> Result<()>
@@ -538,11 +344,6 @@
 
 - [ ] Implement CUE-based streaming
 
-  - [ ] Write CUE streaming tests
-    - [ ] Test track boundary detection
-    - [ ] Test seeking within tracks
-    - [ ] Test track transitions
-    - [ ] Test metadata handling
   - [ ] Create CueStreamHandler struct
     - [ ] Add new() with CUE sheet and FLAC file
     - [ ] Add get_track_stream(track_id: &str) -> Result<Stream>
@@ -561,11 +362,6 @@
   - [ ] Add get_stream_progress(handle: StreamHandle) -> Result<Progress>
 
 - [ ] Implement Subsonic streaming integration
-  - [ ] Write streaming endpoint tests
-    - [ ] Test format negotiation (mp3, aac, raw)
-    - [ ] Test bitrate limiting
-    - [ ] Test seeking via time offset
-    - [ ] Test estimated content length
   - [ ] Create StreamingEndpoint struct
     - [ ] Add new() with transcoding service
     - [ ] Add handle_stream(track_id: &str, params: StreamParams) -> Result<Response>
@@ -580,11 +376,6 @@
 
 - [ ] Implement core system endpoints
 
-  - [ ] Write endpoint tests
-    - [ ] Test ping endpoint
-    - [ ] Test getLicense endpoint
-    - [ ] Test version negotiation
-    - [ ] Test format handling (XML/JSON)
   - [ ] Create system endpoints
     - [ ] Add ping() -> Result<Response>
     - [ ] Add getLicense() -> Result<Response>
@@ -592,12 +383,6 @@
 
 - [ ] Implement browsing endpoints
 
-  - [ ] Write browsing tests
-    - [ ] Test getMusicFolders (single root folder)
-    - [ ] Test getIndexes (artist-based hierarchy)
-    - [ ] Test getArtists/getArtist
-    - [ ] Test getAlbum/getAlbumList2
-    - [ ] Test getSong
   - [ ] Create browsing endpoints
     - [ ] Add getMusicFolders() -> Result<Vec<Folder>>
     - [ ] Add getIndexes() -> Result<Index>
@@ -611,10 +396,6 @@
 
 - [ ] Implement media retrieval endpoints
 
-  - [ ] Write media tests
-    - [ ] Test stream endpoint with transcoding
-    - [ ] Test download endpoint
-    - [ ] Test getCoverArt endpoint
   - [ ] Create media endpoints
     - [ ] Add stream(id: &str, format: Option<Format>) -> Result<Stream>
     - [ ] Add download(id: &str) -> Result<Response>
@@ -630,11 +411,6 @@
 
 - [ ] Implement playlist management
 
-  - [ ] Write playlist tests
-    - [ ] Test getPlaylists/getPlaylist
-    - [ ] Test createPlaylist
-    - [ ] Test updatePlaylist
-    - [ ] Test deletePlaylist
   - [ ] Create playlist endpoints
     - [ ] Add getPlaylists() -> Result<Vec<Playlist>>
     - [ ] Add getPlaylist(id: &str) -> Result<Playlist>
@@ -648,11 +424,6 @@
 
 - [ ] Create authentication system
 
-  - [ ] Write auth tests
-    - [ ] Test token generation
-    - [ ] Test token validation
-    - [ ] Test user authentication
-    - [ ] Test password hashing
   - [ ] Implement auth system
     - [ ] Add user management
     - [ ] Add token-based authentication
@@ -668,10 +439,6 @@
     - [ ] Add secure credential storage
 
 - [ ] Add Subsonic response middleware
-  - [ ] Write middleware tests
-    - [ ] Test response envelope
-    - [ ] Test error handling
-    - [ ] Test format selection
   - [ ] Create middleware
     - [ ] Add response envelope wrapper
     - [ ] Add error translation
