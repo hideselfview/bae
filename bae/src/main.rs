@@ -7,7 +7,7 @@ mod api_keys;
 mod components;
 
 use components::*;
-use components::album_search::AlbumReleases;
+use components::album_search::AlbumSearchManager;
 
 #[derive(Debug, Clone, Routable, PartialEq)]
 #[rustfmt::skip]
@@ -18,9 +18,7 @@ enum Route {
     #[route("/library")]
     Library {},
     #[route("/search")]
-    AlbumSearch {},
-    #[route("/releases/:master_id/:master_title")]
-    AlbumReleases { master_id: String, master_title: String },
+    AlbumSearchManager {},
     #[route("/import")]
     AlbumImport {},
     #[route("/settings")]

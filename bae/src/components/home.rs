@@ -20,7 +20,7 @@ pub fn Home() -> Element {
                 div {
                     class: "flex justify-center space-x-4",
                     Link {
-                        to: Route::AlbumSearch {},
+                        to: Route::AlbumSearchManager {},
                         class: "bg-blue-500 text-white px-6 py-3 rounded-lg hover:bg-blue-600 transition-colors",
                         "Search Albums"
                     }

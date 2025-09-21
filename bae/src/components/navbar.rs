@@ -19,7 +19,7 @@ pub fn Navbar() -> Element {
                 "Library"
             }
             Link {
-                to: Route::AlbumSearch {},
+                to: Route::AlbumSearchManager {},
                 class: "hover:text-blue-300 transition-colors",
                 "Search"
             }
