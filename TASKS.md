@@ -259,10 +259,10 @@
   - [x] Create Dioxus components in main.rs
     - [x] Add search input 
     - [x] Add basic release result cards
-    - [ ] Create AlbumDetails.rs
-      - [ ] Display release information
-      - [ ] Show track list
-      - [ ] Add cover art display
+    - [x] Create AlbumDetails.rs
+      - [x] Display release information
+      - [x] Show track list
+      - [x] Add cover art display
   - [x] Add backend functions
     - [x] Add search_albums(query: &str) -> Result<Vec<Album>>
     - [x] Add get_album_details(id: &str) -> Result<Album>
@@ -275,10 +275,10 @@
     - [ ] Write backend function tests
       - [ ] Test function serialization
       - [ ] Test error handling
-- [ ] Build album import UI
-  - [ ] Create Dioxus components
-    - [ ] Create AlbumImport.rs
-      - [ ] Show selected release details
+- [x] Build album import UI
+  - [x] Create Dioxus components
+    - [x] Create AlbumImport.rs
+      - [x] Show selected release details
       - [ ] Add data source selection
         - [ ] Local folder picker
         - [ ] Remote source input (torrent/custom)
@@ -686,7 +686,7 @@
 - [x] Build Dioxus desktop interface
   - [x] Replace template with music library layout
     - [x] Replace Hero component with music-focused home page
-    - [x] Keep Blog component for now (minimal product)
+    - [ ] Keep Blog component for now (minimal product)
     - [x] Design main application layout (header, navigation, content area)
     - [x] Set up routing for core views (Library, Search, Import, Settings)
   - [ ] Implement library browsing interface
@@ -697,18 +697,18 @@
   - [x] Build basic album import workflow
     - [x] Create Discogs search interface (same as album search)
     - [x] Add placeholder import pages
-    - [ ] Build album selection and preview components
+    - [x] Build album selection and preview components
     - [ ] Add data source selection (local folder, torrent)
     - [ ] Implement import progress tracking UI
   - [ ] Create settings management interface
     - [ ] Build storage configuration panel (S3 settings, local cache)
     - [ ] Add AI provider configuration interface
     - [ ] Create preferences and options screens
-  - [ ] Add state management and data flow
-    - [ ] Set up Dioxus signals for application state
-    - [ ] Connect UI components to backend storage functions
-    - [ ] Implement error handling and user feedback
-    - [ ] Add loading states for async operations
+  - [x] Add state management and data flow
+    - [x] Set up Dioxus signals for application state
+    - [x] Connect UI components to backend storage functions
+    - [x] Implement error handling and user feedback
+    - [x] Add loading states for async operations
 
 ## Deployment & Distribution
 
