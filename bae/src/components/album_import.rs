@@ -8,11 +8,11 @@ pub fn AlbumImport() -> Element {
             class: "container mx-auto p-6",
             h1 { 
                 class: "text-3xl font-bold mb-6",
-                "Import Album" 
+                "Add to Library" 
             }
             p { 
                 class: "text-gray-600",
-                "Album import functionality will be implemented here." 
+                "Add to Library functionality will be implemented here." 
             }
         }
     }

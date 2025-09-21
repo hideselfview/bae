@@ -162,7 +162,7 @@ pub fn AlbumSearch() -> Element {
                                         }
                                         button {
                                             class: "text-green-600 hover:text-green-800 underline",
-                                            "Import Album"
+                                            "Add to Library"
                                         }
                                     }
                                 }

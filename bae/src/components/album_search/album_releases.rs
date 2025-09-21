@@ -199,7 +199,7 @@ pub fn AlbumReleases(master_id: String, master_title: String) -> Element {
                                         class: "px-4 py-3 text-sm",
                                         button {
                                             class: "text-green-600 hover:text-green-800 underline",
-                                            "Import Album"
+                                            "Add to Library"
                                         }
                                     }
                                 }

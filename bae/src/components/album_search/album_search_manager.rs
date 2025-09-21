@@ -149,7 +149,7 @@ pub fn AlbumSearchManager() -> Element {
                                                 }
                                                 button {
                                                     class: "text-green-600 hover:text-green-800 underline",
-                                                    "Import Album"
+                                                    "Add to Library"
                                                 }
                                             }
                                         }
@@ -378,7 +378,7 @@ fn AlbumReleasesWithBack(
                                         class: "px-4 py-3 text-sm",
                                         button {
                                             class: "text-green-600 hover:text-green-800 underline",
-                                            "Import Album"
+                                            "Add to Library"
                                         }
                                     }
                                 }
