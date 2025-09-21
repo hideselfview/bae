@@ -1,55 +1,14 @@
 use dioxus::prelude::*;
-use crate::{models, discogs, api_keys};
+use crate::{models, discogs, api_keys, search_context::{SearchContext, SearchView}};
 
-#[derive(Debug, Clone, PartialEq)]
-enum SearchView {
-    SearchResults,
-    ReleaseDetails { master_id: String, master_title: String },
-}
 
 /// Manages the album search state and navigation between search and releases views
 #[component]
 pub fn AlbumSearchManager() -> Element {
-    let mut search_query = use_signal(|| String::new());
-    let mut search_results = use_signal(|| Vec::<models::DiscogsRelease>::new());
-    let mut is_loading = use_signal(|| false);
-    let mut error_message = use_signal(|| None::<String>);
-    let mut current_view = use_signal(|| SearchView::SearchResults);
+    let search_ctx = use_context::<SearchContext>();
+    let search_ctx_clone = search_ctx.clone();
 
-    let search_albums = move |query: String| {
-        spawn(async move {
-            if query.trim().is_empty() {
-                search_results.set(Vec::new());
-                return;
-            }
-
-            is_loading.set(true);
-            error_message.set(None);
-
-            // Get API key from secure storage
-            match api_keys::retrieve_api_key() {
-                Ok(api_key) => {
-                    let client = discogs::DiscogsClient::new(api_key);
-                    
-                    match client.search_masters(&query, "").await {
-                        Ok(results) => {
-                            search_results.set(results);
-                        }
-                        Err(e) => {
-                            error_message.set(Some(format!("Search failed: {}", e)));
-                        }
-                    }
-                }
-                Err(_) => {
-                    error_message.set(Some("No API key configured. Please go to Settings to add your Discogs API key.".to_string()));
-                }
-            }
-            
-            is_loading.set(false);
-        });
-    };
-
-    let view = current_view.read().clone();
+    let view = search_ctx.current_view.read().clone();
     match view {
         SearchView::SearchResults => {
             rsx! {
@@ -65,26 +24,37 @@ pub fn AlbumSearchManager() -> Element {
                         input {
                             class: "flex-1 p-3 border border-gray-300 rounded-lg text-lg",
                             placeholder: "Search for albums, artists, or releases...",
-                            value: "{search_query}",
-                            oninput: move |event| {
-                                search_query.set(event.value());
+                            value: "{search_ctx.search_query}",
+                            oninput: {
+                                let mut search_ctx = search_ctx_clone.clone();
+                                move |event: FormEvent| {
+                                    search_ctx.search_query.set(event.value());
+                                }
                             },
-                            onkeydown: move |event| {
-                                if event.key() == Key::Enter {
-                                    search_albums(search_query.read().clone());
+                            onkeydown: {
+                                let mut search_ctx = search_ctx_clone.clone();
+                                move |event: KeyboardEvent| {
+                                    if event.key() == Key::Enter {
+                                        let query = search_ctx.search_query.read().clone();
+                                        search_ctx.search_albums(query);
+                                    }
                                 }
                             }
                         }
                         button {
                             class: "px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium",
-                            onclick: move |_| {
-                                search_albums(search_query.read().clone());
+                            onclick: {
+                                let mut search_ctx = search_ctx_clone.clone();
+                                move |_| {
+                                    let query = search_ctx.search_query.read().clone();
+                                    search_ctx.search_albums(query);
+                                }
                             },
                             "Search"
                         }
                     }
 
-                    if *is_loading.read() {
+                    if *search_ctx.is_loading.read() {
                         div {
                             class: "text-center py-8",
                             p { 
@@ -92,14 +62,14 @@ pub fn AlbumSearchManager() -> Element {
                                 "Searching..." 
                             }
                         }
-                    } else if let Some(error) = error_message.read().as_ref() {
+                    } else if let Some(error) = search_ctx.error_message.read().as_ref() {
                         div {
                             class: "bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4",
                             "{error}"
                         }
                     }
 
-                    if !search_results.read().is_empty() {
+                    if !search_ctx.search_results.read().is_empty() {
                         div {
                             class: "overflow-x-auto",
                             table {
@@ -117,7 +87,7 @@ pub fn AlbumSearchManager() -> Element {
                                 }
                                 tbody {
                                     class: "divide-y divide-gray-200",
-                                    for result in search_results.read().iter() {
+                                    for result in search_ctx.search_results.read().iter() {
                                         tr {
                                             class: "hover:bg-gray-50",
                                             td {
@@ -170,11 +140,9 @@ pub fn AlbumSearchManager() -> Element {
                                                     onclick: {
                                                         let master_id = result.id.clone();
                                                         let master_title = result.title.clone();
+                                                        let mut search_ctx = search_ctx_clone.clone();
                                                         move |_| {
-                                                            current_view.set(SearchView::ReleaseDetails { 
-                                                                master_id: master_id.clone(), 
-                                                                master_title: master_title.clone() 
-                                                            });
+                                                            search_ctx.navigate_to_releases(master_id.clone(), master_title.clone());
                                                         }
                                                     },
                                                     "View Releases"
@@ -198,7 +166,10 @@ pub fn AlbumSearchManager() -> Element {
                 AlbumReleasesWithBack {
                     master_id: master_id.clone(),
                     master_title: master_title.clone(),
-                    on_back: move |_| current_view.set(SearchView::SearchResults)
+                    on_back: {
+                        let mut search_ctx = search_ctx_clone.clone();
+                        move |_| search_ctx.navigate_back_to_search()
+                    }
                 }
             }
         }

@@ -5,9 +5,11 @@ mod models;
 mod discogs;
 mod api_keys;
 mod components;
+mod search_context;
 
 use components::*;
 use components::album_search::AlbumSearchManager;
+use search_context::SearchContextProvider;
 
 #[derive(Debug, Clone, Routable, PartialEq)]
 #[rustfmt::skip]
@@ -50,7 +52,10 @@ fn make_window() -> WindowBuilder {
 fn App() -> Element {
     rsx! {
         document::Link { rel: "icon", href: FAVICON }
-        document::Link { rel: "stylesheet", href: MAIN_CSS } document::Link { rel: "stylesheet", href: TAILWIND_CSS }
-        Router::<Route> {}
+        document::Link { rel: "stylesheet", href: MAIN_CSS } 
+        document::Link { rel: "stylesheet", href: TAILWIND_CSS }
+        SearchContextProvider {
+            Router::<Route> {}
+        }
     }
 }
