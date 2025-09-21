@@ -16,8 +16,6 @@ use search_context::SearchContextProvider;
 enum Route {
     #[layout(Navbar)]
     #[route("/")]
-    Home {},
-    #[route("/library")]
     Library {},
     #[route("/import")]
     AlbumSearchManager {},

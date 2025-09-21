@@ -9,11 +9,6 @@ pub fn Navbar() -> Element {
             id: "navbar",
             class: "bg-gray-800 text-white p-4 flex space-x-6",
             Link {
-                to: Route::Home {},
-                class: "hover:text-blue-300 transition-colors",
-                "Home"
-            }
-            Link {
                 to: Route::Library {},
                 class: "hover:text-blue-300 transition-colors",
                 "Library"
