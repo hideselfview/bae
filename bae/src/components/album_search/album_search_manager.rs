@@ -149,6 +149,14 @@ pub fn AlbumSearchManager() -> Element {
                                                 }
                                                 button {
                                                     class: "text-green-600 hover:text-green-800 underline",
+                                                    onclick: {
+                                                        let album_title = result.title.clone();
+                                                        let album_id = result.id.clone();
+                                                        move |_| {
+                                                            // TODO: Implement actual library storage
+                                                            println!("Adding master album to library: {} (ID: {})", album_title, album_id);
+                                                        }
+                                                    },
                                                     "Add to Library"
                                                 }
                                             }
@@ -378,6 +386,22 @@ fn AlbumReleasesWithBack(
                                         class: "px-4 py-3 text-sm",
                                         button {
                                             class: "text-green-600 hover:text-green-800 underline",
+                                            onclick: {
+                                                let release_title = result.title.clone();
+                                                let release_id = result.id.clone();
+                                                let release_format = result.format.clone();
+                                                let release_year = result.year;
+                                                move |_| {
+                                                    // TODO: Implement actual library storage
+                                                    let formats = if !release_format.is_empty() {
+                                                        release_format.join(", ")
+                                                    } else {
+                                                        "Unknown".to_string()
+                                                    };
+                                                    println!("Adding release to library: {} (ID: {}, Format: {}, Year: {:?})", 
+                                                             release_title, release_id, formats, release_year);
+                                                }
+                                            },
                                             "Add to Library"
                                         }
                                     }
