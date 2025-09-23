@@ -22,7 +22,7 @@
 
 ## Core Features
 
-### Album Management
+### Album Management & Desktop Interface
 
 - [x] Implement Discogs API integration
   - [x] Build Discogs HTTP client
@@ -31,17 +31,21 @@
 - [x] Create album metadata models
   - [x] Design and test album, track, and artist data structures
   - [x] Implement metadata validation and parsing
-- [x] Build album import interface
-  - [x] Create album search and browsing UI
+- [x] Build desktop application foundation
+  - [x] Create main application layout and navigation
+  - [x] Set up routing system for core application views
+  - [x] Implement application state management and error handling
+- [x] Build album import workflow
+  - [x] Create album search and selection interface
   - [x] Build album selection and preview components
   - [ ] Add data source selection (local folders)
   - [ ] Implement import progress tracking and feedback
   - [ ] Add album import workflow orchestration
-- [ ] Implement library browsing
+- [ ] Implement library browsing system
   - [ ] Build artist and album browsing system
-  - [ ] Create library browsing UI components
-  - [ ] Add search and filtering capabilities
+  - [ ] Create library browsing UI components with search and filtering
   - [ ] Implement sorting and organization features
+- [ ] Create comprehensive settings management interface
 
 ### Storage Strategy
 
@@ -176,17 +180,6 @@
   - [ ] Implement XML/JSON serialization with JSONP support
   - [ ] Add Subsonic-compatible error translation
 
-## Desktop Application UI
-
-- [x] Build desktop application interface
-  - [x] Create main application layout and navigation
-  - [x] Set up routing system for core application views
-  - [ ] Build library browsing interface with search and filtering
-  - [x] Implement album import workflow UI
-    - [x] Create album search and selection interface
-    - [ ] Add data source selection and import progress tracking
-  - [ ] Create comprehensive settings management interface
-  - [x] Implement application state management and error handling
 
 ## Deployment & Distribution
 
