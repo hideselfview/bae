@@ -45,7 +45,7 @@
   - [ ] Build artist and album browsing system
   - [ ] Create library browsing UI components with search and filtering
   - [ ] Implement sorting and organization features
-- [ ] Create comprehensive settings management interface
+- [ ] Create settings management interface
 
 ### Storage Strategy
 
@@ -70,7 +70,7 @@
 - [ ] Build unified storage controller
   - [ ] Create storage abstraction layer
   - [ ] Implement hybrid local/remote storage operations
-  - [ ] Add intelligent chunk caching and eviction
+  - [ ] Add chunk caching and eviction
   - [ ] Build streaming-optimized chunk access
 - [ ] Build library manager
   - [ ] Create library management system
@@ -95,7 +95,7 @@
 
 - [ ] Implement simple track mapping for individual files
   - [ ] Add audio format detection and validation
-  - [ ] Integrate AI for intelligent track matching
+  - [ ] Integrate AI for track matching
   - [ ] Build track mapping persistence system
 
 - [ ] Implement CUE sheet support
@@ -108,7 +108,7 @@
   - [ ] Extend persistence for CUE-based tracks
 
 - [ ] Design AI-powered track matching
-  - [ ] Create AI prompts for intelligent file-to-track matching
+  - [ ] Create AI prompts for file-to-track matching
   - [ ] Build AI validation for CUE sheet mapping
   - [ ] Add manual mapping fallback system
 
@@ -151,7 +151,7 @@
 
 - [ ] Implement core Subsonic system endpoints
   - [ ] Build basic system status and license endpoints
-  - [ ] Add comprehensive error response handling
+  - [ ] Add error response handling
 
 - [ ] Implement Subsonic browsing API
   - [ ] Build library browsing endpoints (folders, artists, albums, songs)
