@@ -34,7 +34,7 @@
 - [x] Build album import interface
   - [x] Create album search and browsing UI
   - [x] Build album selection and preview components
-  - [ ] Add data source selection (local folders, torrents)
+  - [ ] Add data source selection (local folders)
   - [ ] Implement import progress tracking and feedback
   - [ ] Add album import workflow orchestration
 - [ ] Implement library browsing
@@ -63,7 +63,6 @@
   - [ ] Build S3 upload/download operations
   - [ ] Implement remote chunk tracking
   - [ ] Add local cache management with size limits
-  - [ ] Build torrent piece to chunk mapping system
 - [ ] Build unified storage controller
   - [ ] Create storage abstraction layer
   - [ ] Implement hybrid local/remote storage operations
@@ -78,7 +77,7 @@
   - [ ] Add storage usage monitoring and display
   - [ ] Implement settings persistence and credential management
 
-### AI Setup (used in track mapping, torrent file matching)
+### AI Setup (used in track mapping)
 
 - [ ] Select and integrate AI provider for track matching
 - [ ] Implement AI provider configuration and credential management
@@ -109,28 +108,6 @@
   - [ ] Build AI validation for CUE sheet mapping
   - [ ] Add manual mapping fallback system
 
-### Remote Sources
-
-- [ ] Integrate torrent support
-  - [ ] Select and integrate libtorrent library
-  - [ ] Build torrent client with download management
-
-- [ ] Implement torrent-to-storage integration
-  - [ ] Build custom storage backend for libtorrent
-  - [ ] Integrate torrent pieces with chunk system
-  - [ ] Add hybrid local/remote caching for torrents
-
-- [ ] Design AI-powered torrent file matching
-  - [ ] Create AI prompts for torrent file identification
-  - [ ] Build AI validation for downloaded content
-
-- [ ] Build download management system
-  - [ ] Implement download queue and progress tracking
-  - [ ] Add download state persistence and error handling
-
-- [ ] Add torrent management functions
-  - [ ] Implement torrent parsing and download initiation
-  - [ ] Build progress monitoring and status reporting
 
 ## Browsing & Streaming
 
