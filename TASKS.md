@@ -22,6 +22,27 @@
 
 ## Core Features
 
+### Album Management
+
+- [x] Implement Discogs API integration
+  - [x] Build Discogs HTTP client
+  - [x] Add release search and retrieval capabilities
+  - [x] Implement secure API key management
+- [x] Create album metadata models
+  - [x] Design and test album, track, and artist data structures
+  - [x] Implement metadata validation and parsing
+- [x] Build album import interface
+  - [x] Create album search and browsing UI
+  - [x] Build album selection and preview components
+  - [ ] Add data source selection (local folders, torrents)
+  - [ ] Implement import progress tracking and feedback
+  - [ ] Add album import workflow orchestration
+- [ ] Implement library browsing
+  - [ ] Build artist and album browsing system
+  - [ ] Create library browsing UI components
+  - [ ] Add search and filtering capabilities
+  - [ ] Implement sorting and organization features
+
 ### Storage Strategy
 
 - [ ] Implement local library storage
@@ -56,27 +77,6 @@
   - [ ] Build storage configuration UI components
   - [ ] Add storage usage monitoring and display
   - [ ] Implement settings persistence and credential management
-
-### Album Management
-
-- [x] Implement Discogs API integration
-  - [x] Build Discogs HTTP client
-  - [x] Add release search and retrieval capabilities
-  - [x] Implement secure API key management
-- [x] Create album metadata models
-  - [x] Design and test album, track, and artist data structures
-  - [x] Implement metadata validation and parsing
-- [x] Build album import interface
-  - [x] Create album search and browsing UI
-  - [x] Build album selection and preview components
-  - [ ] Add data source selection (local folders, torrents)
-  - [ ] Implement import progress tracking and feedback
-  - [ ] Add album import workflow orchestration
-- [ ] Implement library browsing
-  - [ ] Build artist and album browsing system
-  - [ ] Create library browsing UI components
-  - [ ] Add search and filtering capabilities
-  - [ ] Implement sorting and organization features
 
 ### AI Setup (used in track mapping, torrent file matching)
 
