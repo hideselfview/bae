@@ -20,13 +20,6 @@
 - [x] Set up local Rust development environment with Dioxus tooling
 - [x] Set up Dioxus desktop project structure
 
-### AI Setup
-
-- [ ] Select and integrate AI provider for track matching
-- [ ] Implement AI provider configuration and credential management
-- [ ] Build AI service abstraction layer
-- [ ] Create AI settings interface
-
 ## Core Features
 
 ### Storage Strategy
@@ -84,6 +77,13 @@
   - [ ] Create library browsing UI components
   - [ ] Add search and filtering capabilities
   - [ ] Implement sorting and organization features
+
+### AI Setup (used in track mapping, torrent file matching)
+
+- [ ] Select and integrate AI provider for track matching
+- [ ] Implement AI provider configuration and credential management
+- [ ] Build AI service abstraction layer
+- [ ] Create AI settings interface
 
 ### Track Mapping
 
