@@ -129,7 +129,7 @@
       - [ ] Add S3 settings form using Dioxus form handling
       - [ ] Add local storage settings form
     - [ ] Create StorageUsage.rs for displaying current chunk usage
-  - [ ] Add backend functions in main.rs
+  - [ ] Add functions in main.rs
     - [ ] Add get_storage_settings() -> Result<StorageSettings>
     - [ ] Add save_storage_settings(settings: StorageSettings) -> Result<()>
   - [ ] Implement settings persistence
@@ -163,29 +163,28 @@
   - [x] Create Artist struct
     - [x] Add required fields (id, name)
     - [x] Add optional fields (bio, image)
-- [x] Build album search UI
-  - [x] Create Dioxus components in main.rs
+- [x] Build album import UI (includes search)
+  - [x] Create album search components
     - [x] Add search input 
     - [x] Add basic release result cards
     - [x] Create AlbumDetails.rs
       - [x] Display release information
       - [x] Show track list
       - [x] Add cover art display
-  - [x] Add backend functions
-    - [x] Add search_albums(query: &str) -> Result<Vec<Album>>
-    - [x] Add get_album_details(id: &str) -> Result<Album>
-- [x] Build album import UI
-  - [x] Create Dioxus components
+  - [x] Create import workflow components
     - [x] Create AlbumImport.rs
       - [x] Show selected release details
       - [ ] Add data source selection
         - [ ] Local folder picker
         - [ ] Remote source input (torrent/custom)
+  - [x] Add functions
+    - [x] Add search_albums(query: &str) -> Result<Vec<Album>>
+    - [x] Add get_album_details(id: &str) -> Result<Album>
       - [ ] Add import progress
         - [ ] Show download/verification progress
         - [ ] Display any errors
       - [ ] Add success/failure states
-  - [ ] Add backend functions
+  - [ ] Add functions
     - [ ] Add select_folder() -> Result<PathBuf>
     - [ ] Add import_album(album_id: &str, source: DataSource) -> Result<AlbumId>
     - [ ] Add get_import_progress(album_id: &str) -> Result<ImportProgress>
@@ -291,7 +290,7 @@
     - [ ] Add state persistence
     - [ ] Handle download failures
 
-- [ ] Add backend functions
+- [ ] Add functions
   - [ ] Add parse_torrent(magnet_or_file: String) -> Result<TorrentInfo>
   - [ ] Add start_download(torrent_id: String, file_mapping: FileMapping) -> Result<()>
   - [ ] Add get_download_progress(torrent_id: String) -> Result<Progress>
@@ -354,7 +353,7 @@
     - [ ] Manage track transitions
     - [ ] Pass through track metadata
 
-- [ ] Add backend functions
+- [ ] Add functions
 
   - [ ] Add get_stream_formats() -> Result<Vec<Format>>
   - [ ] Add start_stream(track_id: &str, format: Format) -> Result<StreamHandle>
@@ -455,7 +454,7 @@
     - [x] Replace Hero component with music-focused home page
     - [ ] Keep Blog component for now (minimal product)
     - [x] Design main application layout (header, navigation, content area)
-    - [x] Set up routing for core views (Library, Search, Import, Settings)
+    - [x] Set up routing for core views (Library, Import, Settings)
   - [ ] Implement library browsing interface
     - [ ] Create album grid/list components
     - [ ] Build artist browser with album grouping
@@ -473,7 +472,7 @@
     - [ ] Create preferences and options screens
   - [x] Add state management and data flow
     - [x] Set up Dioxus signals for application state
-    - [x] Connect UI components to backend storage functions
+    - [x] Connect UI components to storage functions
     - [x] Implement error handling and user feedback
     - [x] Add loading states for async operations
 
