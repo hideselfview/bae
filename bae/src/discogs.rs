@@ -38,6 +38,7 @@ struct SearchResult {
     label: Option<Vec<String>>,
     cover_image: Option<String>,
     thumb: Option<String>,
+    master_id: Option<u64>,
     #[serde(rename = "type")]
     result_type: String,
 }
@@ -64,6 +65,7 @@ struct ReleaseResponse {
     images: Option<Vec<Image>>,
     tracklist: Option<Vec<TrackResponse>>,
     artists: Option<Vec<ArtistResponse>>,
+    master_id: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -149,6 +151,7 @@ impl DiscogsClient {
                     cover_image: r.cover_image,
                     thumb: r.thumb,
                     tracklist: Vec::new(), // Will be populated when getting release details
+                    master_id: None, // This is a master, so no master_id
                 })
                 .collect())
         } else if response.status() == 429 {
@@ -202,6 +205,7 @@ impl DiscogsClient {
                     cover_image: r.cover_image,
                     thumb: r.thumb,
                     tracklist: Vec::new(), // Will be populated when getting release details
+                    master_id: r.master_id.map(|id| id.to_string()), // Use master_id from search result
                 })
                 .collect())
         } else if response.status() == 429 {
@@ -272,6 +276,7 @@ impl DiscogsClient {
                 cover_image,
                 thumb: None, // Not available in detailed release
                 tracklist,
+                master_id: release.master_id.map(|id| id.to_string()), // Use master_id from detailed release
             })
         } else if response.status() == 404 {
             Err(DiscogsError::NotFound)

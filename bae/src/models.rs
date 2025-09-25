@@ -43,6 +43,89 @@ pub struct AlbumMetadata {
     pub cover_art_url: Option<String>,
 }
 
+/// Represents a Discogs master release search result
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DiscogsMaster {
+    pub id: String,
+    pub title: String,
+    pub year: Option<u32>,
+    pub thumb: Option<String>,
+    pub label: Vec<String>,
+    pub country: Option<String>,
+    pub tracklist: Vec<DiscogsTrack>,
+}
+
+/// Represents an item that can be imported (either a master or specific release)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ImportItem {
+    Master(DiscogsMaster),
+    Release(DiscogsRelease),
+}
+
+impl ImportItem {
+    pub fn title(&self) -> &str {
+        match self {
+            ImportItem::Master(master) => &master.title,
+            ImportItem::Release(release) => &release.title,
+        }
+    }
+
+    pub fn year(&self) -> Option<u32> {
+        match self {
+            ImportItem::Master(master) => master.year,
+            ImportItem::Release(release) => release.year,
+        }
+    }
+
+    pub fn thumb(&self) -> Option<&String> {
+        match self {
+            ImportItem::Master(master) => master.thumb.as_ref(),
+            ImportItem::Release(release) => release.thumb.as_ref(),
+        }
+    }
+
+    pub fn label(&self) -> &[String] {
+        match self {
+            ImportItem::Master(master) => &master.label,
+            ImportItem::Release(release) => &release.label,
+        }
+    }
+
+    pub fn country(&self) -> Option<&String> {
+        match self {
+            ImportItem::Master(master) => master.country.as_ref(),
+            ImportItem::Release(release) => release.country.as_ref(),
+        }
+    }
+
+    pub fn format(&self) -> &[String] {
+        match self {
+            ImportItem::Master(_) => &[],
+            ImportItem::Release(release) => &release.format,
+        }
+    }
+
+    pub fn is_master(&self) -> bool {
+        matches!(self, ImportItem::Master(_))
+    }
+
+    /// Get the master ID for database storage
+    pub fn master_id(&self) -> Option<&str> {
+        match self {
+            ImportItem::Master(master) => Some(&master.id),
+            ImportItem::Release(release) => release.master_id.as_deref(),
+        }
+    }
+
+    /// Get the tracklist for AI matching
+    pub fn tracklist(&self) -> &[DiscogsTrack] {
+        match self {
+            ImportItem::Master(master) => &master.tracklist,
+            ImportItem::Release(release) => &release.tracklist,
+        }
+    }
+}
+
 /// Represents a Discogs release search result
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DiscogsRelease {
@@ -57,6 +140,7 @@ pub struct DiscogsRelease {
     pub cover_image: Option<String>,
     pub thumb: Option<String>,
     pub tracklist: Vec<DiscogsTrack>,
+    pub master_id: Option<String>, // Reference to the master release
 }
 
 /// Represents a track from Discogs

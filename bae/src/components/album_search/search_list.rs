@@ -1,10 +1,35 @@
 use dioxus::prelude::*;
-use crate::search_context::SearchContext;
-use super::search_item::SearchItem;
+use crate::{search_context::SearchContext, models::ImportItem};
+use super::{search_item::SearchItem, import_workflow::ImportWorkflow};
 
 #[component]
 pub fn SearchList() -> Element {
     let search_ctx = use_context::<SearchContext>();
+    let selected_import_item = use_signal(|| None::<ImportItem>);
+
+    let on_import_item = {
+        let mut selected_import_item = selected_import_item;
+        move |item: ImportItem| {
+            selected_import_item.set(Some(item));
+        }
+    };
+
+    let on_back_from_import = {
+        let mut selected_import_item = selected_import_item;
+        move |_| {
+            selected_import_item.set(None);
+        }
+    };
+
+    // If an item is selected for import, show the import workflow
+    if let Some(item) = selected_import_item.read().as_ref() {
+        return rsx! {
+            ImportWorkflow {
+                item: item.clone(),
+                on_back: on_back_from_import
+            }
+        };
+    }
 
     if search_ctx.search_results.read().is_empty() {
         return rsx! { div {} };
@@ -31,7 +56,8 @@ pub fn SearchList() -> Element {
                     for result in search_ctx.search_results.read().iter() {
                         SearchItem {
                             key: "{result.id}",
-                            result: result.clone()
+                            result: result.clone(),
+                            on_import: on_import_item
                         }
                     }
                 }

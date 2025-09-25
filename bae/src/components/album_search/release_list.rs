@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 use crate::{models, discogs, api_keys};
-use super::release_item::ReleaseItem;
+use super::{release_item::ReleaseItem, import_workflow::ImportWorkflow};
 
 #[component]
 pub fn ReleaseList(
@@ -12,6 +12,7 @@ pub fn ReleaseList(
     let mut search_results = use_signal(|| Vec::<models::DiscogsRelease>::new());
     let mut is_loading = use_signal(|| false);
     let mut error_message = use_signal(|| None::<String>);
+    let selected_import_item = use_signal(|| None::<models::ImportItem>);
 
     let master_id_clone1 = master_id.clone();
     let master_id_clone2 = master_id.clone();
@@ -75,6 +76,31 @@ pub fn ReleaseList(
             is_loading.set(false);
         });
     };
+
+    let on_import_release = {
+        let mut selected_import_item = selected_import_item;
+        move |release: models::DiscogsRelease| {
+            let import_item = models::ImportItem::Release(release);
+            selected_import_item.set(Some(import_item));
+        }
+    };
+
+    let on_back_from_import = {
+        let mut selected_import_item = selected_import_item;
+        move |_| {
+            selected_import_item.set(None);
+        }
+    };
+
+    // If an item is selected for import, show the import workflow
+    if let Some(item) = selected_import_item.read().as_ref() {
+        return rsx! {
+            ImportWorkflow {
+                item: item.clone(),
+                on_back: on_back_from_import
+            }
+        };
+    }
 
     rsx! {
         div {
@@ -148,7 +174,8 @@ pub fn ReleaseList(
                             for result in search_results.read().iter() {
                                 ReleaseItem {
                                     key: "{result.id}",
-                                    result: result.clone()
+                                    result: result.clone(),
+                                    on_import: on_import_release
                                 }
                             }
                         }
