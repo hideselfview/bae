@@ -3,9 +3,9 @@ use crate::album_import_context::{AlbumImportContext, SearchView};
 use super::{search_form::SearchForm, release_list::ReleaseList};
 
 
-/// Manages the album import workflow and navigation between search and releases views
+/// Manages the import workflow and navigation between search and releases views
 #[component]
-pub fn AlbumImportManager() -> Element {
+pub fn ImportWorkflowManager() -> Element {
     let album_import_ctx = use_context::<AlbumImportContext>();
     let album_import_ctx_clone = album_import_ctx.clone();
 

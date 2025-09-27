@@ -8,7 +8,7 @@ mod components;
 mod album_import_context;
 
 use components::*;
-use components::album_import::AlbumImportManager;
+use components::album_import::ImportWorkflowManager;
 use album_import_context::AlbumImportContextProvider;
 
 #[derive(Debug, Clone, Routable, PartialEq)]
@@ -18,7 +18,7 @@ enum Route {
     #[route("/")]
     Library {},
     #[route("/import")]
-    AlbumImportManager {},
+    ImportWorkflowManager {},
     #[route("/settings")]
     Settings {},
 }
