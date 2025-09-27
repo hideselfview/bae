@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 use crate::album_import_context::{AlbumImportContext, SearchView};
-use super::{search_form::SearchForm, release_list::ReleaseList};
+use super::{search_page::SearchPage, release_list::ReleaseList};
 
 
 /// Manages the import workflow and navigation between search and releases views
@@ -19,7 +19,7 @@ pub fn ImportWorkflowManager() -> Element {
     match current_view {
         SearchView::SearchResults => {
             rsx! {
-                SearchForm {}
+                SearchPage {}
             }
         }
         SearchView::ReleaseDetails { master_id, master_title } => {
