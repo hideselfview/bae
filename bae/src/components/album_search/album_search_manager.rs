@@ -1,20 +1,20 @@
 use dioxus::prelude::*;
-use crate::search_context::{SearchContext, SearchView};
+use crate::album_import_context::{AlbumImportContext, SearchView};
 use super::{search_form::SearchForm, release_list::ReleaseList};
 
 
 /// Manages the album search state and navigation between search and releases views
 #[component]
 pub fn AlbumSearchManager() -> Element {
-    let search_ctx = use_context::<SearchContext>();
-    let search_ctx_clone = search_ctx.clone();
+    let album_import_ctx = use_context::<AlbumImportContext>();
+    let album_import_ctx_clone = album_import_ctx.clone();
 
     let on_release_back = {
-        let mut search_ctx = search_ctx_clone.clone();
-        move |_| search_ctx.navigate_back_to_search()
+        let mut album_import_ctx = album_import_ctx_clone.clone();
+        move |_| album_import_ctx.navigate_back_to_search()
     };
 
-    let current_view = search_ctx.current_view.read().clone();
+    let current_view = album_import_ctx.current_view.read().clone();
 
     match current_view {
         SearchView::SearchResults => {

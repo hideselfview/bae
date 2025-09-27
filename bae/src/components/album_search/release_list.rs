@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use crate::{models, search_context::SearchContext};
+use crate::{models, album_import_context::AlbumImportContext};
 use crate::models::DiscogsMasterReleaseVersion;
 use super::{release_item::ReleaseItem, import_workflow::ImportWorkflow};
 
@@ -9,7 +9,7 @@ pub fn ReleaseList(
     master_title: String,
     on_back: EventHandler<()>
 ) -> Element {
-    let search_ctx = use_context::<SearchContext>();
+    let album_import_ctx = use_context::<AlbumImportContext>();
     let release_results = use_signal(|| Vec::<DiscogsMasterReleaseVersion>::new());
     let selected_import_item = use_signal(|| None::<models::ImportItem>);
 
@@ -17,21 +17,21 @@ pub fn ReleaseList(
     
     // Load releases on component mount
     use_effect({
-        let search_ctx = search_ctx.clone();
+        let album_import_ctx = album_import_ctx.clone();
         let release_results = release_results.clone();
         
         move || {
             let master_id = master_id_clone1.clone();
             let mut release_results = release_results.clone();
-            let mut search_ctx = search_ctx.clone();
+            let mut album_import_ctx = album_import_ctx.clone();
 
             spawn(async move {
-                match search_ctx.get_master_versions(master_id).await {
+                match album_import_ctx.get_master_versions(master_id).await {
                     Ok(versions) => {
                         release_results.set(versions);
                     }
                     Err(_) => {
-                        // Error is already handled by search_ctx
+                        // Error is already handled by album_import_ctx
                     }
                 }
             });
@@ -42,20 +42,20 @@ pub fn ReleaseList(
     let on_import_release = {
         let selected_import_item = selected_import_item;
         let master_id_for_import = master_id.clone();
-        let search_ctx = search_ctx.clone();
+        let album_import_ctx = album_import_ctx.clone();
         move |version: DiscogsMasterReleaseVersion| {
             let release_id = version.id.to_string();
             let master_id = master_id_for_import.clone();
             let mut selected_import_item = selected_import_item.clone();
-            let mut search_ctx = search_ctx.clone();
+            let mut album_import_ctx = album_import_ctx.clone();
             
             spawn(async move {
-                match search_ctx.import_release(release_id, master_id).await {
+                match album_import_ctx.import_release(release_id, master_id).await {
                     Ok(import_item) => {
                         selected_import_item.set(Some(import_item));
                     }
                     Err(_) => {
-                        // Error is already handled by search_ctx
+                        // Error is already handled by album_import_ctx
                     }
                 }
             });
@@ -99,7 +99,7 @@ pub fn ReleaseList(
             }
             
 
-            if *search_ctx.is_loading_versions.read() {
+            if *album_import_ctx.is_loading_versions.read() {
                 div {
                     class: "text-center py-8",
                     p { 
@@ -107,7 +107,7 @@ pub fn ReleaseList(
                         "Loading releases..." 
                     }
                 }
-            } else if let Some(error) = search_ctx.error_message.read().as_ref() {
+            } else if let Some(error) = album_import_ctx.error_message.read().as_ref() {
                 div {
                     class: "bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4",
                     "{error}"

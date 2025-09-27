@@ -5,11 +5,11 @@ mod models;
 mod discogs;
 mod api_keys;
 mod components;
-mod search_context;
+mod album_import_context;
 
 use components::*;
 use components::album_search::AlbumSearchManager;
-use search_context::SearchContextProvider;
+use album_import_context::AlbumImportContextProvider;
 
 #[derive(Debug, Clone, Routable, PartialEq)]
 #[rustfmt::skip]
@@ -50,7 +50,7 @@ fn App() -> Element {
         document::Link { rel: "icon", href: FAVICON }
         document::Link { rel: "stylesheet", href: MAIN_CSS } 
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
-        SearchContextProvider {
+        AlbumImportContextProvider {
             Router::<Route> {}
         }
     }

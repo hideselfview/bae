@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use crate::search_context::SearchContext;
+use crate::album_import_context::AlbumImportContext;
 use crate::discogs::DiscogsSearchResult;
 
 #[derive(Props, PartialEq, Clone)]
@@ -10,7 +10,7 @@ pub struct SearchItemProps {
 
 #[component]
 pub fn SearchItem(props: SearchItemProps) -> Element {
-    let search_ctx = use_context::<SearchContext>();
+    let album_import_ctx = use_context::<AlbumImportContext>();
 
     rsx! {
         tr {
@@ -69,14 +69,14 @@ pub fn SearchItem(props: SearchItemProps) -> Element {
                     onclick: {
                         let master_id = props.result.id.to_string();
                         let master_title = props.result.title.clone();
-                        let mut search_ctx = search_ctx.clone();
+                        let mut album_import_ctx = album_import_ctx.clone();
                         move |_| {
-                            search_ctx.navigate_to_releases(master_id.clone(), master_title.clone());
+                            album_import_ctx.navigate_to_releases(master_id.clone(), master_title.clone());
                         }
                     },
                     "View Releases"
                 }
-                if *search_ctx.is_importing_master.read() {
+                if *album_import_ctx.is_importing_master.read() {
                     span {
                         class: "text-gray-500",
                         "Importing..."

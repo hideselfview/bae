@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 use crate::models::DiscogsMasterReleaseVersion;
-use crate::search_context::SearchContext;
+use crate::album_import_context::AlbumImportContext;
 
 #[derive(Props, PartialEq, Clone)]
 pub struct ReleaseItemProps {
@@ -10,7 +10,7 @@ pub struct ReleaseItemProps {
 
 #[component]
 pub fn ReleaseItem(props: ReleaseItemProps) -> Element {
-    let search_ctx = use_context::<SearchContext>();
+    let album_import_ctx = use_context::<AlbumImportContext>();
     rsx! {
         tr {
             class: "hover:bg-gray-50",
@@ -67,7 +67,7 @@ pub fn ReleaseItem(props: ReleaseItemProps) -> Element {
             }
             td {
                 class: "px-4 py-3 text-sm",
-                if *search_ctx.is_importing_release.read() {
+                if *album_import_ctx.is_importing_release.read() {
                     span {
                         class: "text-gray-500",
                         "Importing..."

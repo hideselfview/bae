@@ -1,26 +1,26 @@
 use dioxus::prelude::*;
-use crate::{search_context::SearchContext, models::ImportItem};
+use crate::{album_import_context::AlbumImportContext, models::ImportItem};
 use super::{search_item::SearchItem, import_workflow::ImportWorkflow};
 
 #[component]
 pub fn SearchList() -> Element {
-    let search_ctx = use_context::<SearchContext>();
+    let album_import_ctx = use_context::<AlbumImportContext>();
     let selected_import_item = use_signal(|| None::<ImportItem>);
 
     let on_import_item = {
         let selected_import_item = selected_import_item;
-        let search_ctx = search_ctx.clone();
+        let album_import_ctx = album_import_ctx.clone();
         move |master_id: String| {
             let mut selected_import_item = selected_import_item.clone();
-            let mut search_ctx = search_ctx.clone();
+            let mut album_import_ctx = album_import_ctx.clone();
             spawn(async move {
                 // Fetch full master details using the search context
-                match search_ctx.import_master(master_id).await {
+                match album_import_ctx.import_master(master_id).await {
                     Ok(import_item) => {
                         selected_import_item.set(Some(import_item));
                     }
                     Err(_) => {
-                        // Error is already handled by search_ctx
+                        // Error is already handled by album_import_ctx
                     }
                 }
             });
@@ -44,7 +44,7 @@ pub fn SearchList() -> Element {
         };
     }
 
-    if search_ctx.search_results.read().is_empty() {
+    if album_import_ctx.search_results.read().is_empty() {
         return rsx! { div {} };
     }
 
@@ -66,7 +66,7 @@ pub fn SearchList() -> Element {
                 }
                 tbody {
                     class: "divide-y divide-gray-200",
-                    for result in search_ctx.search_results.read().iter() {
+                    for result in album_import_ctx.search_results.read().iter() {
                         SearchItem {
                             key: "{result.id}",
                             result: result.clone(),

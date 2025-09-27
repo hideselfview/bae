@@ -10,7 +10,7 @@ pub enum SearchView {
 }
 
 #[derive(Clone)]
-pub struct SearchContext {
+pub struct AlbumImportContext {
     pub search_query: Signal<String>,
     pub search_results: Signal<Vec<DiscogsSearchResult>>,
     pub is_searching_masters: Signal<bool>,
@@ -22,7 +22,7 @@ pub struct SearchContext {
     client: Option<discogs::DiscogsClient>, // Single client instance
 }
 
-impl SearchContext {
+impl AlbumImportContext {
     
     fn get_client(&mut self) -> Result<&discogs::DiscogsClient, String> {
         if self.client.is_none() {
@@ -168,8 +168,8 @@ impl SearchContext {
 
 /// Provider component to make search context available throughout the app
 #[component]
-pub fn SearchContextProvider(children: Element) -> Element {
-    let search_ctx = SearchContext {
+pub fn AlbumImportContextProvider(children: Element) -> Element {
+    let album_import_ctx = AlbumImportContext {
         search_query: use_signal(|| String::new()),
         search_results: use_signal(|| Vec::new()),
         is_searching_masters: use_signal(|| false),
@@ -181,7 +181,7 @@ pub fn SearchContextProvider(children: Element) -> Element {
         client: None,
     };
     
-    use_context_provider(move || search_ctx);
+    use_context_provider(move || album_import_ctx);
     
     rsx! {
         {children}
