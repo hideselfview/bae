@@ -1,5 +1,6 @@
 use dioxus::prelude::*;
-use crate::{models, discogs, api_keys};
+use crate::{models, search_context::SearchContext};
+use crate::models::DiscogsMasterReleaseVersion;
 use super::{release_item::ReleaseItem, import_workflow::ImportWorkflow};
 
 #[component]
@@ -8,80 +9,56 @@ pub fn ReleaseList(
     master_title: String,
     on_back: EventHandler<()>
 ) -> Element {
-    let mut search_format = use_signal(|| "".to_string());
-    let mut search_results = use_signal(|| Vec::<models::DiscogsRelease>::new());
-    let mut is_loading = use_signal(|| false);
-    let mut error_message = use_signal(|| None::<String>);
+    let search_ctx = use_context::<SearchContext>();
+    let release_results = use_signal(|| Vec::<DiscogsMasterReleaseVersion>::new());
     let selected_import_item = use_signal(|| None::<models::ImportItem>);
 
     let master_id_clone1 = master_id.clone();
-    let master_id_clone2 = master_id.clone();
     
     // Load releases on component mount
-    use_effect(move || {
-        let master_id = master_id_clone1.clone();
-        spawn(async move {
-            is_loading.set(true);
-            error_message.set(None);
+    use_effect({
+        let search_ctx = search_ctx.clone();
+        let release_results = release_results.clone();
+        
+        move || {
+            let master_id = master_id_clone1.clone();
+            let mut release_results = release_results.clone();
+            let mut search_ctx = search_ctx.clone();
 
-            // Get API key from secure storage
-            match api_keys::retrieve_api_key() {
-                Ok(api_key) => {
-                    let client = discogs::DiscogsClient::new(api_key);
-                    
-                    match client.search_releases_for_master(&master_id, "").await {
-                        Ok(results) => {
-                            search_results.set(results);
-                        }
-                        Err(e) => {
-                            error_message.set(Some(format!("Search failed: {}", e)));
-                        }
+            spawn(async move {
+                match search_ctx.get_master_versions(master_id).await {
+                    Ok(versions) => {
+                        release_results.set(versions);
+                    }
+                    Err(_) => {
+                        // Error is already handled by search_ctx
                     }
                 }
-                Err(_) => {
-                    error_message.set(Some("No API key configured. Please go to Settings to add your Discogs API key.".to_string()));
-                }
-            }
-            
-            is_loading.set(false);
-        });
+            });
+        }
     });
 
-    let on_format_change = move |event: FormEvent| {
-        let master_id = master_id_clone2.clone();
-        search_format.set(event.value());
-        spawn(async move {
-            is_loading.set(true);
-            error_message.set(None);
-
-            // Get API key from secure storage
-            match api_keys::retrieve_api_key() {
-                Ok(api_key) => {
-                    let client = discogs::DiscogsClient::new(api_key);
-                    
-                    match client.search_releases_for_master(&master_id, &event.value()).await {
-                        Ok(results) => {
-                            search_results.set(results);
-                        }
-                        Err(e) => {
-                            error_message.set(Some(format!("Search failed: {}", e)));
-                        }
-                    }
-                }
-                Err(_) => {
-                    error_message.set(Some("No API key configured. Please go to Settings to add your Discogs API key.".to_string()));
-                }
-            }
-            
-            is_loading.set(false);
-        });
-    };
 
     let on_import_release = {
-        let mut selected_import_item = selected_import_item;
-        move |release: models::DiscogsRelease| {
-            let import_item = models::ImportItem::Release(release);
-            selected_import_item.set(Some(import_item));
+        let selected_import_item = selected_import_item;
+        let master_id_for_import = master_id.clone();
+        let search_ctx = search_ctx.clone();
+        move |version: DiscogsMasterReleaseVersion| {
+            let release_id = version.id.to_string();
+            let master_id = master_id_for_import.clone();
+            let mut selected_import_item = selected_import_item.clone();
+            let mut search_ctx = search_ctx.clone();
+            
+            spawn(async move {
+                match search_ctx.import_release(release_id, master_id).await {
+                    Ok(import_item) => {
+                        selected_import_item.set(Some(import_item));
+                    }
+                    Err(_) => {
+                        // Error is already handled by search_ctx
+                    }
+                }
+            });
         }
     };
 
@@ -121,23 +98,8 @@ pub fn ReleaseList(
                 }
             }
             
-            div {
-                class: "mb-6 flex gap-2",
-                select {
-                    class: "px-3 py-3 border border-gray-300 rounded-lg text-lg bg-white",
-                    value: "{search_format}",
-                    onchange: on_format_change,
-                    option { value: "", "All Formats" }
-                    option { value: "Vinyl", "Vinyl" }
-                    option { value: "CD", "CD" }
-                    option { value: "Cassette", "Cassette" }
-                    option { value: "Digital", "Digital" }
-                    option { value: "DVD", "DVD" }
-                    option { value: "Blu-ray", "Blu-ray" }
-                }
-            }
 
-            if *is_loading.read() {
+            if *search_ctx.is_loading_versions.read() {
                 div {
                     class: "text-center py-8",
                     p { 
@@ -145,14 +107,14 @@ pub fn ReleaseList(
                         "Loading releases..." 
                     }
                 }
-            } else if let Some(error) = error_message.read().as_ref() {
+            } else if let Some(error) = search_ctx.error_message.read().as_ref() {
                 div {
                     class: "bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4",
                     "{error}"
                 }
             }
 
-            if !search_results.read().is_empty() {
+            if !release_results.read().is_empty() {
                 div {
                     class: "overflow-x-auto",
                     table {
@@ -162,20 +124,21 @@ pub fn ReleaseList(
                                 class: "bg-gray-50",
                                 th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider", "Cover" }
                                 th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider", "Title" }
-                                th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider", "Year" }
                                 th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider", "Label" }
+                                th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider", "Catalog #" }
                                 th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider", "Country" }
                                 th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider", "Format" }
+                                th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider", "Released" }
                                 th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider", "Actions" }
                             }
                         }
                         tbody {
                             class: "divide-y divide-gray-200",
-                            for result in search_results.read().iter() {
+                            for result in release_results.read().iter() {
                                 ReleaseItem {
                                     key: "{result.id}",
                                     result: result.clone(),
-                                    on_import: on_import_release
+                                    on_import: on_import_release.clone()
                                 }
                             }
                         }

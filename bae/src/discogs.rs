@@ -1,4 +1,4 @@
-use crate::models::{DiscogsRelease, DiscogsTrack};
+use crate::models::{DiscogsRelease, DiscogsTrack, DiscogsMasterReleaseVersion, DiscogsMaster};
 use reqwest::{Client, Error as ReqwestError};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -21,26 +21,26 @@ pub enum DiscogsError {
 /// Discogs search response wrapper
 #[derive(Debug, Deserialize)]
 struct SearchResponse {
-    results: Vec<SearchResult>,
+    results: Vec<DiscogsSearchResult>,
     pagination: Pagination,
 }
 
 /// Individual search result
-#[derive(Debug, Deserialize)]
-struct SearchResult {
-    id: u64,
-    title: String,
-    year: Option<String>,
-    genre: Option<Vec<String>>,
-    style: Option<Vec<String>>,
-    format: Option<Vec<String>>,
-    country: Option<String>,
-    label: Option<Vec<String>>,
-    cover_image: Option<String>,
-    thumb: Option<String>,
-    master_id: Option<u64>,
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct DiscogsSearchResult {
+    pub id: u64,
+    pub title: String,
+    pub year: Option<String>,
+    pub genre: Option<Vec<String>>,
+    pub style: Option<Vec<String>>,
+    pub format: Option<Vec<String>>,
+    pub country: Option<String>,
+    pub label: Option<Vec<String>>,
+    pub cover_image: Option<String>,
+    pub thumb: Option<String>,
+    pub master_id: Option<u64>,
     #[serde(rename = "type")]
-    result_type: String,
+    pub result_type: String,
 }
 
 /// Discogs API pagination info
@@ -50,6 +50,40 @@ struct Pagination {
     page: u32,
     per_page: u32,
     items: u32,
+}
+
+/// Master versions response wrapper
+#[derive(Debug, Deserialize)]
+struct MasterVersionsResponse {
+    versions: Vec<VersionResponse>,
+    pagination: Pagination,
+}
+
+/// Individual version from master versions API
+#[derive(Debug, Deserialize)]
+struct VersionResponse {
+    id: u64,
+    title: String,
+    format: Vec<String>,
+    label: Vec<String>,
+    catno: String,
+    country: String,
+    released: Option<String>,
+    thumb: Option<String>,
+}
+
+/// Master detail response from Discogs
+#[derive(Debug, Deserialize)]
+struct MasterResponse {
+    id: u64,
+    title: String,
+    year: Option<u32>,
+    thumb: Option<String>,
+    images: Option<Vec<Image>>,
+    tracklist: Option<Vec<TrackResponse>>,
+    artists: Option<Vec<ArtistResponse>>,
+    genres: Option<Vec<String>>,
+    styles: Option<Vec<String>>,
 }
 
 /// Detailed release response from Discogs
@@ -96,6 +130,7 @@ struct ArtistResponse {
     id: u64,
 }
 
+#[derive(Clone)]
 pub struct DiscogsClient {
     client: Client,
     api_key: String,
@@ -112,7 +147,7 @@ impl DiscogsClient {
     }
 
     /// Search for masters by query string
-    pub async fn search_masters(&self, query: &str, format: &str) -> Result<Vec<DiscogsRelease>, DiscogsError> {
+    pub async fn search_masters(&self, query: &str, format: &str) -> Result<Vec<DiscogsSearchResult>, DiscogsError> {
         let url = format!("{}/database/search", self.base_url);
         
         let mut params = HashMap::new();
@@ -139,20 +174,6 @@ impl DiscogsClient {
                 .results
                 .into_iter()
                 .filter(|r| r.result_type == "master")
-                .map(|r| DiscogsRelease {
-                    id: r.id.to_string(),
-                    title: r.title,
-                    year: r.year.and_then(|y| y.parse().ok()),
-                    genre: r.genre.unwrap_or_default(),
-                    style: r.style.unwrap_or_default(),
-                    format: r.format.unwrap_or_default(),
-                    country: r.country,
-                    label: r.label.unwrap_or_default(),
-                    cover_image: r.cover_image,
-                    thumb: r.thumb,
-                    tracklist: Vec::new(), // Will be populated when getting release details
-                    master_id: None, // This is a master, so no master_id
-                })
                 .collect())
         } else if response.status() == 429 {
             Err(DiscogsError::RateLimit)
@@ -165,18 +186,12 @@ impl DiscogsClient {
         }
     }
 
-    /// Search for releases by master ID
-    pub async fn search_releases_for_master(&self, master_id: &str, format: &str) -> Result<Vec<DiscogsRelease>, DiscogsError> {
-        let url = format!("{}/database/search", self.base_url);
+    /// Get detailed information about a master release
+    pub async fn get_master(&self, master_id: &str) -> Result<DiscogsMaster, DiscogsError> {
+        let url = format!("{}/masters/{}", self.base_url, master_id);
         
         let mut params = HashMap::new();
-        params.insert("master_id", master_id);
-        params.insert("type", "release");
         params.insert("token", &self.api_key);
-        
-        if !format.is_empty() {
-            params.insert("format", format);
-        }
 
         let response = self
             .client
@@ -187,27 +202,37 @@ impl DiscogsClient {
             .await?;
 
         if response.status().is_success() {
-            let search_response: SearchResponse = response.json().await?;
+            let master: MasterResponse = response.json().await?;
             
-            Ok(search_response
-                .results
+            let tracklist = master
+                .tracklist
+                .unwrap_or_default()
                 .into_iter()
-                .filter(|r| r.result_type == "release")
-                .map(|r| DiscogsRelease {
-                    id: r.id.to_string(),
-                    title: r.title,
-                    year: r.year.and_then(|y| y.parse().ok()),
-                    genre: r.genre.unwrap_or_default(),
-                    style: r.style.unwrap_or_default(),
-                    format: r.format.unwrap_or_default(),
-                    country: r.country,
-                    label: r.label.unwrap_or_default(),
-                    cover_image: r.cover_image,
-                    thumb: r.thumb,
-                    tracklist: Vec::new(), // Will be populated when getting release details
-                    master_id: r.master_id.map(|id| id.to_string()), // Use master_id from search result
+                .map(|t| DiscogsTrack {
+                    position: t.position,
+                    title: t.title,
+                    duration: t.duration,
                 })
-                .collect())
+                .collect();
+
+            // Extract label from artists (masters don't have direct label field)
+            let label = master
+                .artists
+                .as_ref()
+                .map(|artists| artists.iter().map(|a| a.name.clone()).collect())
+                .unwrap_or_default();
+
+            Ok(DiscogsMaster {
+                id: master.id.to_string(),
+                title: master.title,
+                year: master.year,
+                thumb: master.thumb,
+                label,
+                country: None, // Masters don't have country info
+                tracklist,
+            })
+        } else if response.status() == 404 {
+            Err(DiscogsError::NotFound)
         } else if response.status() == 429 {
             Err(DiscogsError::RateLimit)
         } else if response.status() == 401 {
@@ -218,6 +243,54 @@ impl DiscogsClient {
             ))
         }
     }
+
+    /// Get versions of a master release
+    pub async fn get_master_versions(&self, master_id: &str) -> Result<Vec<DiscogsMasterReleaseVersion>, DiscogsError> {
+        let url = format!("{}/masters/{}/versions", self.base_url, master_id);
+        
+        let per_page = "100".to_string();
+        let mut params = HashMap::new();
+        params.insert("token", &self.api_key);
+        params.insert("per_page", &per_page); // Get more results per page
+
+        let response = self
+            .client
+            .get(&url)
+            .query(&params)
+            .header("User-Agent", "bae/1.0 +https://github.com/hideselfview/bae")
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            let versions_response: MasterVersionsResponse = response.json().await?;
+            
+            Ok(versions_response
+                .versions
+                .into_iter()
+                .map(|v| DiscogsMasterReleaseVersion {
+                    id: v.id,
+                    title: v.title,
+                    format: v.format,
+                    label: v.label,
+                    catno: v.catno,
+                    country: v.country,
+                    released: v.released,
+                    thumb: v.thumb,
+                })
+                .collect())
+        } else if response.status() == 429 {
+            Err(DiscogsError::RateLimit)
+        } else if response.status() == 401 {
+            Err(DiscogsError::InvalidApiKey)
+        } else if response.status() == 404 {
+            Err(DiscogsError::NotFound)
+        } else {
+            Err(DiscogsError::Request(
+                response.error_for_status().unwrap_err(),
+            ))
+        }
+    }
+
 
     /// Get detailed information about a specific release
     pub async fn get_release(&self, id: &str) -> Result<DiscogsRelease, DiscogsError> {

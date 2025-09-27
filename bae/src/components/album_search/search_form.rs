@@ -50,7 +50,7 @@ pub fn SearchForm() -> Element {
                 }
             }
 
-            if *search_ctx.is_loading.read() {
+            if *search_ctx.is_searching_masters.read() {
                 div {
                     class: "text-center py-8",
                     p { 

@@ -43,7 +43,7 @@ pub struct AlbumMetadata {
     pub cover_art_url: Option<String>,
 }
 
-/// Represents a Discogs master release search result
+/// Represents a Discogs master (full data from master detail API)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DiscogsMaster {
     pub id: String,
@@ -124,6 +124,19 @@ impl ImportItem {
             ImportItem::Release(release) => &release.tracklist,
         }
     }
+}
+
+/// Represents a release version from master versions API
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DiscogsMasterReleaseVersion {
+    pub id: u64,
+    pub title: String,
+    pub format: Vec<String>,
+    pub label: Vec<String>,
+    pub catno: String,
+    pub country: String,
+    pub released: Option<String>,
+    pub thumb: Option<String>,
 }
 
 /// Represents a Discogs release search result

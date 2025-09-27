@@ -1,14 +1,16 @@
 use dioxus::prelude::*;
-use crate::models;
+use crate::models::DiscogsMasterReleaseVersion;
+use crate::search_context::SearchContext;
 
 #[derive(Props, PartialEq, Clone)]
 pub struct ReleaseItemProps {
-    pub result: models::DiscogsRelease,
-    pub on_import: EventHandler<models::DiscogsRelease>,
+    pub result: DiscogsMasterReleaseVersion,
+    pub on_import: EventHandler<DiscogsMasterReleaseVersion>,
 }
 
 #[component]
 pub fn ReleaseItem(props: ReleaseItemProps) -> Element {
+    let search_ctx = use_context::<SearchContext>();
     rsx! {
         tr {
             class: "hover:bg-gray-50",
@@ -33,14 +35,6 @@ pub fn ReleaseItem(props: ReleaseItemProps) -> Element {
             }
             td {
                 class: "px-4 py-3 text-sm text-gray-500",
-                if let Some(year) = props.result.year {
-                    "{year}"
-                } else {
-                    "-"
-                }
-            }
-            td {
-                class: "px-4 py-3 text-sm text-gray-500",
                 if let Some(first_label) = props.result.label.first() {
                     "{first_label}"
                 } else {
@@ -49,11 +43,11 @@ pub fn ReleaseItem(props: ReleaseItemProps) -> Element {
             }
             td {
                 class: "px-4 py-3 text-sm text-gray-500",
-                if let Some(country) = &props.result.country {
-                    "{country}"
-                } else {
-                    "-"
-                }
+                "{props.result.catno}"
+            }
+            td {
+                class: "px-4 py-3 text-sm text-gray-500",
+                "{props.result.country}"
             }
             td {
                 class: "px-4 py-3 text-sm text-gray-500",
@@ -64,13 +58,28 @@ pub fn ReleaseItem(props: ReleaseItemProps) -> Element {
                 }
             }
             td {
+                class: "px-4 py-3 text-sm text-gray-500",
+                if let Some(released) = &props.result.released {
+                    "{released}"
+                } else {
+                    "-"
+                }
+            }
+            td {
                 class: "px-4 py-3 text-sm",
-                button {
-                    class: "text-green-600 hover:text-green-800 underline",
-                    onclick: move |_| {
-                        props.on_import.call(props.result.clone());
-                    },
-                    "Add to Library"
+                if *search_ctx.is_importing_release.read() {
+                    span {
+                        class: "text-gray-500",
+                        "Importing..."
+                    }
+                } else {
+                    button {
+                        class: "text-green-600 hover:text-green-800 underline",
+                        onclick: move |_| {
+                            props.on_import.call(props.result.clone());
+                        },
+                        "Add to Library"
+                    }
                 }
             }
         }

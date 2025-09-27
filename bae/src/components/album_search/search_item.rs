@@ -1,10 +1,11 @@
 use dioxus::prelude::*;
-use crate::{models, search_context::SearchContext};
+use crate::search_context::SearchContext;
+use crate::discogs::DiscogsSearchResult;
 
 #[derive(Props, PartialEq, Clone)]
 pub struct SearchItemProps {
-    pub result: models::DiscogsRelease,
-    pub on_import: EventHandler<models::ImportItem>,
+    pub result: DiscogsSearchResult,
+    pub on_import: EventHandler<String>,
 }
 
 #[component]
@@ -35,7 +36,7 @@ pub fn SearchItem(props: SearchItemProps) -> Element {
             }
             td {
                 class: "px-4 py-3 text-sm text-gray-500",
-                if let Some(year) = props.result.year {
+                if let Some(year) = &props.result.year {
                     "{year}"
                 } else {
                     "Unknown"
@@ -43,8 +44,12 @@ pub fn SearchItem(props: SearchItemProps) -> Element {
             }
             td {
                 class: "px-4 py-3 text-sm text-gray-500",
-                if let Some(first_label) = props.result.label.first() {
-                    "{first_label}"
+                if let Some(labels) = &props.result.label {
+                    if let Some(first_label) = labels.first() {
+                        "{first_label}"
+                    } else {
+                        "Unknown"
+                    }
                 } else {
                     "Unknown"
                 }
@@ -62,7 +67,7 @@ pub fn SearchItem(props: SearchItemProps) -> Element {
                 button {
                     class: "text-blue-600 hover:text-blue-800 underline",
                     onclick: {
-                        let master_id = props.result.id.clone();
+                        let master_id = props.result.id.to_string();
                         let master_title = props.result.title.clone();
                         let mut search_ctx = search_ctx.clone();
                         move |_| {
@@ -71,26 +76,23 @@ pub fn SearchItem(props: SearchItemProps) -> Element {
                     },
                     "View Releases"
                 }
-                button {
-                    class: "text-green-600 hover:text-green-800 underline",
-                    onclick: {
-                        let result = props.result.clone();
-                        let on_import = props.on_import.clone();
-                        move |_| {
-                            let master = models::DiscogsMaster {
-                                id: result.id.clone(),
-                                title: result.title.clone(),
-                                year: result.year,
-                                thumb: result.thumb.clone(),
-                                label: result.label.clone(),
-                                country: result.country.clone(),
-                                tracklist: Vec::new(), // Will be populated when fetching master details
-                            };
-                            let import_item = models::ImportItem::Master(master);
-                            on_import.call(import_item);
-                        }
-                    },
-                    "Add to Library"
+                if *search_ctx.is_importing_master.read() {
+                    span {
+                        class: "text-gray-500",
+                        "Importing..."
+                    }
+                } else {
+                    button {
+                        class: "text-green-600 hover:text-green-800 underline",
+                        onclick: {
+                            let master_id = props.result.id.to_string();
+                            let on_import = props.on_import.clone();
+                            move |_| {
+                                on_import.call(master_id.clone());
+                            }
+                        },
+                        "Add to Library"
+                    }
                 }
             }
         }

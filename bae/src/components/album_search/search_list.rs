@@ -8,9 +8,22 @@ pub fn SearchList() -> Element {
     let selected_import_item = use_signal(|| None::<ImportItem>);
 
     let on_import_item = {
-        let mut selected_import_item = selected_import_item;
-        move |item: ImportItem| {
-            selected_import_item.set(Some(item));
+        let selected_import_item = selected_import_item;
+        let search_ctx = search_ctx.clone();
+        move |master_id: String| {
+            let mut selected_import_item = selected_import_item.clone();
+            let mut search_ctx = search_ctx.clone();
+            spawn(async move {
+                // Fetch full master details using the search context
+                match search_ctx.import_master(master_id).await {
+                    Ok(import_item) => {
+                        selected_import_item.set(Some(import_item));
+                    }
+                    Err(_) => {
+                        // Error is already handled by search_ctx
+                    }
+                }
+            });
         }
     };
 
@@ -57,7 +70,7 @@ pub fn SearchList() -> Element {
                         SearchItem {
                             key: "{result.id}",
                             result: result.clone(),
-                            on_import: on_import_item
+                            on_import: on_import_item.clone()
                         }
                     }
                 }
