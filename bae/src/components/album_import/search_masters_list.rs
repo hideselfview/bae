@@ -1,9 +1,9 @@
 use dioxus::prelude::*;
 use crate::{album_import_context::AlbumImportContext, models::ImportItem};
-use super::{search_item::SearchItem, import_workflow::ImportWorkflow};
+use super::{search_masters_item::SearchMastersItem, import_workflow::ImportWorkflow};
 
 #[component]
-pub fn SearchList() -> Element {
+pub fn SearchMastersList() -> Element {
     let album_import_ctx = use_context::<AlbumImportContext>();
     let selected_import_item = use_signal(|| None::<ImportItem>);
 
@@ -67,7 +67,7 @@ pub fn SearchList() -> Element {
                 tbody {
                     class: "divide-y divide-gray-200",
                     for result in album_import_ctx.search_results.read().iter() {
-                        SearchItem {
+                        SearchMastersItem {
                             key: "{result.id}",
                             result: result.clone(),
                             on_import: on_import_item.clone()

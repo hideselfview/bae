@@ -3,13 +3,13 @@ use crate::album_import_context::AlbumImportContext;
 use crate::discogs::DiscogsSearchResult;
 
 #[derive(Props, PartialEq, Clone)]
-pub struct SearchItemProps {
+pub struct SearchMastersItemProps {
     pub result: DiscogsSearchResult,
     pub on_import: EventHandler<String>,
 }
 
 #[component]
-pub fn SearchItem(props: SearchItemProps) -> Element {
+pub fn SearchMastersItem(props: SearchMastersItemProps) -> Element {
     let album_import_ctx = use_context::<AlbumImportContext>();
 
     rsx! {

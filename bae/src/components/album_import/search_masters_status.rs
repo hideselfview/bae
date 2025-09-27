@@ -1,9 +1,9 @@
 use dioxus::prelude::*;
 use crate::album_import_context::AlbumImportContext;
 
-/// Displays loading and error states for search operations
+/// Displays loading and error states for search masters operations
 #[component]
-pub fn SearchStatus() -> Element {
+pub fn SearchMastersStatus() -> Element {
     let album_import_ctx = use_context::<AlbumImportContext>();
 
     rsx! {

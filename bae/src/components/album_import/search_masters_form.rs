@@ -1,9 +1,9 @@
 use dioxus::prelude::*;
 use crate::album_import_context::AlbumImportContext;
 
-/// Search input form with text field and search button
+/// Search masters input form with text field and search button
 #[component]
-pub fn SearchForm() -> Element {
+pub fn SearchMastersForm() -> Element {
     let album_import_ctx = use_context::<AlbumImportContext>();
     let album_import_ctx_clone = album_import_ctx.clone();
 
