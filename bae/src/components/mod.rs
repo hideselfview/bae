@@ -1,5 +1,5 @@
 pub mod library;
-pub mod album_search;
+pub mod album_import;
 pub mod settings;
 pub mod navbar;
 

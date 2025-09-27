@@ -14,7 +14,7 @@ pub fn Navbar() -> Element {
                 "Library"
             }
             Link {
-                to: Route::AlbumSearchManager {},
+                to: Route::AlbumImportManager {},
                 class: "hover:text-blue-300 transition-colors",
                 "Import"
             }
