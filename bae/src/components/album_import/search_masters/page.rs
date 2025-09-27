@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use super::{search_masters_form::SearchMastersForm, search_masters_status::SearchMastersStatus, search_masters_list::SearchMastersList};
+use super::{form::SearchMastersForm, status::SearchMastersStatus, list::SearchMastersList};
 
 /// Main search masters page that orchestrates the search UI components
 #[component]

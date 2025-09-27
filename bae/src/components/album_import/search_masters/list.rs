@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 use crate::{album_import_context::AlbumImportContext, models::ImportItem};
-use super::{search_masters_item::SearchMastersItem, import_workflow::ImportWorkflow};
+use super::{item::SearchMastersItem, super::import_workflow::ImportWorkflow};
 
 #[component]
 pub fn SearchMastersList() -> Element {
