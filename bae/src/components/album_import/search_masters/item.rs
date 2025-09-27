@@ -55,14 +55,6 @@ pub fn SearchMastersItem(props: SearchMastersItemProps) -> Element {
                 }
             }
             td {
-                class: "px-4 py-3 text-sm text-gray-500",
-                if let Some(country) = &props.result.country {
-                    "{country}"
-                } else {
-                    "-"
-                }
-            }
-            td {
                 class: "px-4 py-3 text-sm space-x-2",
                 button {
                     class: "text-blue-600 hover:text-blue-800 underline",
