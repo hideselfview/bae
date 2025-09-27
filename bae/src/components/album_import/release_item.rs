@@ -35,8 +35,8 @@ pub fn ReleaseItem(props: ReleaseItemProps) -> Element {
             }
             td {
                 class: "px-4 py-3 text-sm text-gray-500",
-                if let Some(first_label) = props.result.label.first() {
-                    "{first_label}"
+                if !props.result.label.is_empty() {
+                    "{props.result.label}"
                 } else {
                     "-"
                 }
@@ -52,7 +52,7 @@ pub fn ReleaseItem(props: ReleaseItemProps) -> Element {
             td {
                 class: "px-4 py-3 text-sm text-gray-500",
                 if !props.result.format.is_empty() {
-                    "{props.result.format.join(\", \")}"
+                    "{props.result.format}"
                 } else {
                     "-"
                 }

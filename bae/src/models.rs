@@ -131,8 +131,8 @@ impl ImportItem {
 pub struct DiscogsMasterReleaseVersion {
     pub id: u64,
     pub title: String,
-    pub format: Vec<String>,
-    pub label: Vec<String>,
+    pub format: String,  // Fixed: format is a string in the API response
+    pub label: String,   // Fixed: label is a string in the API response
     pub catno: String,
     pub country: String,
     pub released: Option<String>,

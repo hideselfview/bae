@@ -64,8 +64,8 @@ struct MasterVersionsResponse {
 struct VersionResponse {
     id: u64,
     title: String,
-    format: Vec<String>,
-    label: Vec<String>,
+    format: String,  // Fixed: format is a string, not Vec<String>
+    label: String,   // Fixed: label is a string, not Vec<String>
     catno: String,
     country: String,
     released: Option<String>,
@@ -262,7 +262,15 @@ impl DiscogsClient {
             .await?;
 
         if response.status().is_success() {
-            let versions_response: MasterVersionsResponse = response.json().await?;
+            // Get the raw response text first for debugging on error
+            let response_text = response.text().await?;
+            
+            let versions_response: MasterVersionsResponse = serde_json::from_str(&response_text)
+                .map_err(|e| {
+                    println!("JSON parsing error for master_id {}: {}", master_id, e);
+                    println!("Raw response: {}", response_text);
+                    e
+                })?;
             
             Ok(versions_response
                 .versions
@@ -279,12 +287,17 @@ impl DiscogsClient {
                 })
                 .collect())
         } else if response.status() == 429 {
+            println!("Rate limit hit for master_id {}", master_id);
             Err(DiscogsError::RateLimit)
         } else if response.status() == 401 {
+            println!("Invalid API key for master_id {}", master_id);
             Err(DiscogsError::InvalidApiKey)
         } else if response.status() == 404 {
+            println!("Master not found: {}", master_id);
             Err(DiscogsError::NotFound)
         } else {
+            let status = response.status();
+            println!("API error for master_id {}: Status {}", master_id, status);
             Err(DiscogsError::Request(
                 response.error_for_status().unwrap_err(),
             ))
