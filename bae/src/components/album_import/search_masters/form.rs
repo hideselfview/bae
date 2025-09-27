@@ -12,6 +12,11 @@ pub fn SearchMastersForm() -> Element {
             class: "mb-6 flex gap-2",
             input {
                 class: "flex-1 p-3 border border-gray-300 rounded-lg text-lg",
+                onmounted: move |element| {
+                    spawn(async move {
+                        let _ = element.set_focus(true).await;
+                    });
+                },
                 placeholder: "Search for albums, artists, or releases...",
                 value: "{album_import_ctx.search_query}",
                 oninput: {
