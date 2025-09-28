@@ -3,6 +3,7 @@ name = "bae"
 version = "0.1.0"
 authors = ["dima"]
 edition = "2021"
+build = "build.rs"
 
 [dependencies]
 dioxus = { version = "0.6.0", features = ["router", "desktop"] }

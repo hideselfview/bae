@@ -52,7 +52,7 @@ pub fn SearchMastersList() -> Element {
         div {
             class: "overflow-x-auto",
             table {
-                class: "w-full border-collapse bg-white rounded-lg shadow-lg",
+                class: "w-full border-collapse bg-white rounded-lg shadow-lg text-left",
                 thead {
                     tr {
                         class: "bg-gray-50",

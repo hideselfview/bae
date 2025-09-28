@@ -154,15 +154,32 @@ Both tools respect your `rust-toolchain.toml` and will use the same Rust version
 
 ## Tailwind CSS Setup
 
-The project uses Tailwind CSS for styling. To set up the CSS compilation:
+The project uses Tailwind CSS for styling with automatic compilation during builds.
+
+### Prerequisites
 
 1. **Install Node.js and npm**: https://docs.npmjs.com/downloading-and-installing-node-js-and-npm
-2. **Install Tailwind CSS CLI**: https://tailwindcss.com/docs/installation  
-3. **Start the CSS compiler** (run this in the `bae/` directory):
+2. **Install project dependencies**: Run `npm install` in the `bae/` directory to install Tailwind CSS v4
+
+### How It Works
+
+- **Automatic compilation**: The `build.rs` script automatically runs `tailwindcss` during every `cargo build`
+- **Source scanning**: Tailwind scans your Rust files (`src/**/*.rs`) for class names
+- **Optimized output**: Only the CSS classes you actually use are included in the final `assets/tailwind.css` file
+- **No manual steps**: Just run `cargo build` or `dx serve` and Tailwind CSS is automatically generated
+
+### Manual Compilation (Optional)
+
+If you need to manually regenerate the CSS:
 
 ```bash
 cd bae
-npx tailwindcss -i ./tailwind.css -o ./assets/tailwind.css --watch
+npx tailwindcss -i tailwind.css -o assets/tailwind.css
 ```
 
-The `--watch` flag will automatically rebuild your CSS when you modify Tailwind classes in your Rust code.
+### Tailwind CSS v4 Features
+
+This project uses Tailwind CSS v4 with the new CSS-based configuration:
+- **CSS Configuration**: Uses `@import "tailwindcss"` and `@source` directives in `tailwind.css`
+- **Local Installation**: Tailwind CSS is installed as a local dependency (version pinned in `package.json`)
+- **Automatic CLI**: Uses `npx tailwindcss` to run the locally installed version
