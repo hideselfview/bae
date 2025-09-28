@@ -281,24 +281,16 @@ impl LibraryManager {
             
             println!("  Created {} chunks", chunks.len());
             
-            // Save chunk records to database and optionally upload to cloud
+            // Save chunk records to database and upload to cloud
             for chunk in &chunks {
                 let (storage_location, is_local) = if let Some(cloud_storage) = &self.cloud_storage {
-                    // Upload to cloud storage
+                    // Upload to cloud storage - fail import if upload fails
                     println!("    Uploading chunk {} to cloud storage", chunk.id);
-                    match cloud_storage.upload_chunk_file(&chunk.id, &chunk.temp_path).await {
-                        Ok(cloud_location) => {
-                            println!("    Successfully uploaded to {}", cloud_location);
-                            (cloud_location, false)
-                        }
-                        Err(e) => {
-                            println!("    Cloud upload failed: {}, storing locally", e);
-                            let local_location = format!("local:{}", chunk.temp_path.display());
-                            (local_location, true)
-                        }
-                    }
+                    let cloud_location = cloud_storage.upload_chunk_file(&chunk.id, &chunk.temp_path).await?;
+                    println!("    Successfully uploaded to {}", cloud_location);
+                    (cloud_location, false)
                 } else {
-                    // Store locally only
+                    // Store locally only when no cloud storage configured
                     let local_location = format!("local:{}", chunk.temp_path.display());
                     (local_location, true)
                 };
