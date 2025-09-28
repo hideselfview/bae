@@ -10,6 +10,7 @@ mod database;
 mod library;
 mod chunking;
 mod encryption;
+mod cloud_storage;
 
 use components::*;
 use components::album_import::ImportWorkflowManager;

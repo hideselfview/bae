@@ -1,6 +1,7 @@
 use crate::database::{Database, DbAlbum, DbTrack, DbFile, DbChunk};
 use crate::models::ImportItem;
 use crate::chunking::{ChunkingService, ChunkingError};
+use crate::cloud_storage::{CloudStorageManager, CloudStorageError};
 use std::path::{Path, PathBuf};
 use std::fs;
 use thiserror::Error;
@@ -17,6 +18,8 @@ pub enum LibraryError {
     TrackMapping(String),
     #[error("Chunking error: {0}")]
     Chunking(#[from] ChunkingError),
+    #[error("Cloud storage error: {0}")]
+    CloudStorage(#[from] CloudStorageError),
 }
 
 /// The main library manager that coordinates all import operations
@@ -31,6 +34,7 @@ pub struct LibraryManager {
     database: Database,
     library_path: PathBuf,
     chunking_service: ChunkingService,
+    cloud_storage: Option<CloudStorageManager>,
 }
 
 impl LibraryManager {
@@ -50,7 +54,36 @@ impl LibraryManager {
             database,
             library_path,
             chunking_service,
+            cloud_storage: None, // Cloud storage is optional
         })
+    }
+
+    /// Enable cloud storage with the given manager
+    pub fn enable_cloud_storage(&mut self, cloud_storage: CloudStorageManager) {
+        self.cloud_storage = Some(cloud_storage);
+    }
+
+    /// Check if cloud storage is enabled
+    pub fn has_cloud_storage(&self) -> bool {
+        self.cloud_storage.is_some()
+    }
+
+    /// Try to configure cloud storage from environment variables
+    pub async fn try_configure_cloud_storage(&mut self) -> Result<bool, LibraryError> {
+        use crate::cloud_storage::S3Config;
+        
+        match S3Config::from_env() {
+            Ok(config) => {
+                println!("LibraryManager: Configuring S3 cloud storage (bucket: {})", config.bucket_name);
+                let cloud_storage = CloudStorageManager::new_s3(config).await?;
+                self.enable_cloud_storage(cloud_storage);
+                Ok(true)
+            }
+            Err(_) => {
+                println!("LibraryManager: No cloud storage configuration found, using local storage only");
+                Ok(false)
+            }
+        }
     }
 
     /// Import an album from Discogs metadata and local folder
@@ -248,13 +281,29 @@ impl LibraryManager {
             
             println!("  Created {} chunks", chunks.len());
             
-            // Save chunk records to database
+            // Save chunk records to database and optionally upload to cloud
             for chunk in &chunks {
-                // For now, chunks are stored locally in temp directory
-                // TODO: Upload to S3 and update storage_location
-                let storage_location = format!("local:{}", chunk.temp_path.display());
-                let db_chunk = DbChunk::from_file_chunk(chunk, &storage_location, true);
+                let (storage_location, is_local) = if let Some(cloud_storage) = &self.cloud_storage {
+                    // Upload to cloud storage
+                    println!("    Uploading chunk {} to cloud storage", chunk.id);
+                    match cloud_storage.upload_chunk_file(&chunk.id, &chunk.temp_path).await {
+                        Ok(cloud_location) => {
+                            println!("    Successfully uploaded to {}", cloud_location);
+                            (cloud_location, false)
+                        }
+                        Err(e) => {
+                            println!("    Cloud upload failed: {}, storing locally", e);
+                            let local_location = format!("local:{}", chunk.temp_path.display());
+                            (local_location, true)
+                        }
+                    }
+                } else {
+                    // Store locally only
+                    let local_location = format!("local:{}", chunk.temp_path.display());
+                    (local_location, true)
+                };
                 
+                let db_chunk = DbChunk::from_file_chunk(chunk, &storage_location, is_local);
                 self.database.insert_chunk(&db_chunk).await?;
             }
             
@@ -281,4 +330,56 @@ struct FileMapping {
     track_id: String,
     source_path: PathBuf,
     track_title: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+    use crate::models::DiscogsMaster;
+
+    #[tokio::test]
+    async fn test_library_manager_with_mock_cloud_storage() {
+        // Create temporary directory for test library
+        let temp_dir = TempDir::new().unwrap();
+        let library_path = temp_dir.path().join("test_library");
+        std::fs::create_dir_all(&library_path).unwrap();
+        
+        // Create library manager
+        let mut library_manager = LibraryManager::new(library_path).await.unwrap();
+        
+        // Enable mock cloud storage
+        let cloud_storage = CloudStorageManager::new_mock();
+        library_manager.enable_cloud_storage(cloud_storage);
+        
+        assert!(library_manager.has_cloud_storage());
+        
+        // Test creating an album (without actual files for simplicity)
+        let master = DiscogsMaster {
+            id: "123".to_string(),
+            title: "Test Album".to_string(),
+            year: Some(2023),
+            thumb: Some("http://example.com/thumb.jpg".to_string()),
+            tracklist: vec![],
+            label: vec!["Test Label".to_string()],
+            country: Some("US".to_string()),
+        };
+        
+        let _import_item = ImportItem::Master(master);
+        
+        // This would normally process files, but we're just testing the setup
+        // The actual file processing is tested in the chunking module
+        println!("Library manager with cloud storage created successfully");
+    }
+
+    #[tokio::test]
+    async fn test_library_manager_without_cloud_storage() {
+        let temp_dir = TempDir::new().unwrap();
+        let library_path = temp_dir.path().join("test_library_2");
+        std::fs::create_dir_all(&library_path).unwrap();
+        
+        let library_manager = LibraryManager::new(library_path).await.unwrap();
+        
+        assert!(!library_manager.has_cloud_storage());
+    }
 }

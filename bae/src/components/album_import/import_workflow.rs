@@ -56,9 +56,16 @@ pub async fn on_import_started_async(item: &ImportItem, folder_path: &str) -> Re
     
     // Initialize library manager
     let library_path = get_library_path();
-    let library_manager = LibraryManager::new(library_path)
+    let mut library_manager = LibraryManager::new(library_path)
         .await
         .map_err(|e| format!("Failed to initialize library: {}", e))?;
+    
+    // Try to configure cloud storage from environment variables
+    match library_manager.try_configure_cloud_storage().await {
+        Ok(true) => println!("Cloud storage configured successfully"),
+        Ok(false) => println!("Using local storage only"),
+        Err(e) => println!("Warning: Cloud storage configuration failed: {}", e),
+    }
     
     // Import the album
     let album_id = library_manager
