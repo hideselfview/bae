@@ -319,9 +319,9 @@ async fn get_album(
     }
 }
 
-/// Stream a song (placeholder - will implement chunk reassembly)
+/// Stream a song - reassemble encrypted chunks into audio stream
 async fn stream_song(
-    Query(mut params): Query<HashMap<String, String>>,
+    Query(params): Query<HashMap<String, String>>,
     State(state): State<SubsonicState>,
 ) -> impl IntoResponse {
     let song_id = match params.get("id") {
@@ -331,9 +331,24 @@ async fn stream_song(
         }
     };
 
-    // TODO: Implement actual streaming with chunk reassembly
-    // For now, return a placeholder response
-    (StatusCode::NOT_IMPLEMENTED, "Streaming not yet implemented").into_response()
+    println!("Streaming request for song ID: {}", song_id);
+
+    match stream_track_chunks(&state.library_manager, &song_id).await {
+        Ok(audio_data) => {
+            // Return the reassembled audio with proper headers
+            let headers = [
+                ("Content-Type", "audio/flac"), // TODO: Detect actual format
+                ("Content-Length", &audio_data.len().to_string()),
+                ("Accept-Ranges", "bytes"),
+            ];
+            
+            (StatusCode::OK, headers, audio_data).into_response()
+        }
+        Err(e) => {
+            println!("Streaming error for song {}: {}", song_id, e);
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("Streaming error: {}", e)).into_response()
+        }
+    }
 }
 
 /// Load artists from database and group by first letter
@@ -466,4 +481,82 @@ async fn load_album_with_songs(
             "song": songs
         }
     }))
+}
+
+/// Stream track chunks - reassemble encrypted chunks into audio data
+async fn stream_track_chunks(
+    library_manager: &LibraryManager,
+    track_id: &str,
+) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    println!("Starting chunk reassembly for track: {}", track_id);
+    
+    // Get files for this track
+    let files = library_manager.get_files_for_track(track_id).await?;
+    if files.is_empty() {
+        return Err("No files found for track".into());
+    }
+    
+    // For now, just handle the first file (most tracks have one file)
+    let file = &files[0];
+    println!("Processing file: {} ({} bytes)", file.original_filename, file.file_size);
+    
+    // Get chunks for this file
+    let chunks = library_manager.get_chunks_for_file(&file.id).await?;
+    if chunks.is_empty() {
+        return Err("No chunks found for file".into());
+    }
+    
+    println!("Found {} chunks to reassemble", chunks.len());
+    
+    // Sort chunks by index to ensure correct order
+    let mut sorted_chunks = chunks;
+    sorted_chunks.sort_by_key(|c| c.chunk_index);
+    
+    // Reassemble chunks into audio data
+    let mut audio_data = Vec::new();
+    
+    for chunk in sorted_chunks {
+        println!("Processing chunk {} (index {})", chunk.id, chunk.chunk_index);
+        
+        // Download and decrypt chunk
+        let chunk_data = download_and_decrypt_chunk(library_manager, &chunk).await?;
+        audio_data.extend_from_slice(&chunk_data);
+    }
+    
+    println!("Successfully reassembled {} bytes of audio data", audio_data.len());
+    Ok(audio_data)
+}
+
+/// Download and decrypt a single chunk
+async fn download_and_decrypt_chunk(
+    library_manager: &LibraryManager,
+    chunk: &crate::database::DbChunk,
+) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    use crate::chunking::ChunkingService;
+    use crate::encryption::EncryptionService;
+    use std::path::Path;
+    
+    if chunk.is_local {
+        // Read from local storage
+        let local_path = chunk.storage_location.strip_prefix("local:")
+            .ok_or("Invalid local storage location")?;
+        
+        println!("Reading chunk from local path: {}", local_path);
+        
+        // Read the encrypted chunk file
+        let encrypted_data = tokio::fs::read(local_path).await?;
+        
+        // Decrypt the chunk
+        let encryption_service = EncryptionService::new()?;
+        let decrypted_data = encryption_service.decrypt_chunk(&encrypted_data)?;
+        
+        Ok(decrypted_data)
+    } else {
+        // Download from cloud storage
+        println!("Downloading chunk from cloud: {}", chunk.storage_location);
+        
+        // TODO: Implement cloud download
+        // For now, return an error
+        Err("Cloud storage download not yet implemented".into())
+    }
 }

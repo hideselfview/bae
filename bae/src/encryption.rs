@@ -194,6 +194,23 @@ impl EncryptionService {
         Ok(plaintext)
     }
 
+    /// Decrypt a chunk from its serialized format
+    /// This reads the chunk file and decrypts it back to original data
+    pub fn decrypt_chunk(&self, chunk_bytes: &[u8]) -> Result<Vec<u8>, EncryptionError> {
+        // Parse the encrypted chunk from bytes
+        let encrypted_chunk = EncryptedChunk::from_bytes(chunk_bytes)?;
+        
+        // Verify the key ID matches (for security)
+        if encrypted_chunk.key_id != self.key_id {
+            return Err(EncryptionError::Decryption(
+                format!("Key ID mismatch: expected {}, got {}", self.key_id, encrypted_chunk.key_id)
+            ));
+        }
+        
+        // Decrypt using the nonce and encrypted data
+        self.decrypt(&encrypted_chunk.encrypted_data, &encrypted_chunk.nonce)
+    }
+
     /// Generate a new 256-bit master key
     fn generate_master_key() -> Result<Key<Aes256Gcm>, EncryptionError> {
         Ok(Aes256Gcm::generate_key(OsRng))

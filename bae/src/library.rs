@@ -314,6 +314,16 @@ impl LibraryManager {
     pub async fn get_tracks(&self, album_id: &str) -> Result<Vec<DbTrack>, LibraryError> {
         Ok(self.database.get_tracks_for_album(album_id).await?)
     }
+
+    /// Get files for a specific track
+    pub async fn get_files_for_track(&self, track_id: &str) -> Result<Vec<DbFile>, LibraryError> {
+        Ok(self.database.get_files_for_track(track_id).await?)
+    }
+
+    /// Get chunks for a specific file
+    pub async fn get_chunks_for_file(&self, file_id: &str) -> Result<Vec<DbChunk>, LibraryError> {
+        Ok(self.database.get_chunks_for_file(file_id).await?)
+    }
 }
 
 /// Represents a mapping between a track and its source audio file
