@@ -179,68 +179,31 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                         }
                         
                         div {
-                            class: "space-y-4",
-                            // Local Folder Option
+                            class: "border border-gray-200 rounded-lg p-4",
                             div {
-                                class: "border border-gray-200 rounded-lg p-4",
+                                class: "flex items-center justify-between",
                                 div {
-                                    class: "flex items-center justify-between",
-                                    div {
-                                        class: "flex items-center space-x-3",
-                                        input {
-                                            r#type: "radio",
-                                            name: "data_source",
-                                            value: "local",
-                                            id: "local_folder",
-                                            checked: true,
-                                            class: "text-blue-600"
-                                        }
-                                        label {
-                                            r#for: "local_folder",
-                                            class: "text-sm font-medium text-gray-900",
-                                            "Local Folder"
-                                        }
-                                    }
-                                    button {
-                                        class: "px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700",
-                                        onclick: move |_| {
-                                            // TODO: Implement actual folder picker
-                                            let folder_path = "/Users/dima/Music/Example Album".to_string();
-                                            if let Err(e) = on_folder_selected(folder_path.clone()) {
-                                                println!("Folder selection error: {}", e);
-                                            } else {
-                                                on_folder_select(folder_path);
-                                            }
-                                        },
-                                        "Select Folder"
-                                    }
+                                    class: "text-sm font-medium text-gray-900",
+                                    "Select a folder containing your music files"
                                 }
-                                if let Some(folder) = selected_folder.read().as_ref() {
-                                    div {
-                                        class: "mt-2 text-sm text-gray-600",
-                                        "Selected: {folder}"
-                                    }
+                                button {
+                                    class: "px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700",
+                                    onclick: move |_| {
+                                        // TODO: Implement actual folder picker
+                                        let folder_path = "/Users/dima/Music/Example Album".to_string();
+                                        if let Err(e) = on_folder_selected(folder_path.clone()) {
+                                            println!("Folder selection error: {}", e);
+                                        } else {
+                                            on_folder_select(folder_path);
+                                        }
+                                    },
+                                    "Select Folder"
                                 }
                             }
-
-                            // Future: Remote sources could go here
-                            div {
-                                class: "border border-gray-200 rounded-lg p-4 opacity-50",
+                            if let Some(folder) = selected_folder.read().as_ref() {
                                 div {
-                                    class: "flex items-center space-x-3",
-                                    input {
-                                        r#type: "radio",
-                                        name: "data_source",
-                                        value: "remote",
-                                        id: "remote_source",
-                                        disabled: true,
-                                        class: "text-blue-600"
-                                    }
-                                    label {
-                                        r#for: "remote_source",
-                                        class: "text-sm font-medium text-gray-500",
-                                        "Remote Source (Coming Soon)"
-                                    }
+                                    class: "mt-2 text-sm text-gray-600",
+                                    "Selected: {folder}"
                                 }
                             }
                         }
