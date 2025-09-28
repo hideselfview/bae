@@ -32,6 +32,7 @@ pub struct DbTrack {
     pub title: String,
     pub track_number: Option<i32>,
     pub duration_ms: Option<i64>,
+    
     pub artist_name: Option<String>, // Can differ from album artist
     pub discogs_position: Option<String>, // e.g., "A1", "1", "1-1"
     pub created_at: DateTime<Utc>,
