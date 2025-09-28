@@ -13,6 +13,7 @@ mod encryption;
 mod cloud_storage;
 mod cache;
 mod checkout;
+mod cue_flac;
 mod subsonic;
 
 use components::*;
