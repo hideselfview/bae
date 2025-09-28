@@ -8,6 +8,7 @@ mod components;
 mod album_import_context;
 mod database;
 mod library;
+mod chunking;
 
 use components::*;
 use components::album_import::ImportWorkflowManager;

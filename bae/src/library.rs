@@ -1,5 +1,6 @@
-use crate::database::{Database, DbAlbum, DbTrack};
+use crate::database::{Database, DbAlbum, DbTrack, DbFile, DbChunk};
 use crate::models::ImportItem;
+use crate::chunking::{ChunkingService, ChunkingError};
 use std::path::{Path, PathBuf};
 use std::fs;
 use thiserror::Error;
@@ -14,6 +15,8 @@ pub enum LibraryError {
     Import(String),
     #[error("Track mapping error: {0}")]
     TrackMapping(String),
+    #[error("Chunking error: {0}")]
+    Chunking(#[from] ChunkingError),
 }
 
 /// The main library manager that coordinates all import operations
@@ -27,6 +30,7 @@ pub enum LibraryError {
 pub struct LibraryManager {
     database: Database,
     library_path: PathBuf,
+    chunking_service: ChunkingService,
 }
 
 impl LibraryManager {
@@ -39,9 +43,13 @@ impl LibraryManager {
         let db_path = library_path.join("library.db");
         let database = Database::new(db_path.to_str().unwrap()).await?;
         
+        // Initialize chunking service
+        let chunking_service = ChunkingService::new()?;
+        
         Ok(LibraryManager {
             database,
             library_path,
+            chunking_service,
         })
     }
 
@@ -203,16 +211,54 @@ impl LibraryManager {
         Ok(audio_files)
     }
 
-    /// Process audio files (placeholder for chunking/encryption/upload)
+    /// Process audio files - chunk, encrypt, and store metadata
     async fn process_audio_files(&self, mappings: &[FileMapping]) -> Result<(), LibraryError> {
         for mapping in mappings {
             println!("LibraryManager: Processing file {} for track {}", 
                     mapping.source_path.display(), mapping.track_title);
             
-            // TODO: Implement file chunking, encryption, and cloud upload
-            // For now, just validate that the file exists and is readable
-            let metadata = fs::metadata(&mapping.source_path)?;
-            println!("  File size: {} bytes", metadata.len());
+            // Get file metadata
+            let file_metadata = fs::metadata(&mapping.source_path)?;
+            let file_size = file_metadata.len() as i64;
+            
+            // Extract file format from extension
+            let format = mapping.source_path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .unwrap_or("unknown")
+                .to_lowercase();
+            
+            // Create file record
+            let filename = mapping.source_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("unknown");
+                
+            let db_file = DbFile::new(&mapping.track_id, filename, file_size, &format);
+            let file_id = db_file.id.clone();
+            
+            // Save file record to database
+            self.database.insert_file(&db_file).await?;
+            
+            // Chunk the file
+            println!("  Chunking file: {} bytes", file_size);
+            let chunks = self.chunking_service
+                .chunk_file(&mapping.source_path, &file_id)
+                .await?;
+            
+            println!("  Created {} chunks", chunks.len());
+            
+            // Save chunk records to database
+            for chunk in &chunks {
+                // For now, chunks are stored locally in temp directory
+                // TODO: Upload to S3 and update storage_location
+                let storage_location = format!("local:{}", chunk.temp_path.display());
+                let db_chunk = DbChunk::from_file_chunk(chunk, &storage_location, true);
+                
+                self.database.insert_chunk(&db_chunk).await?;
+            }
+            
+            println!("  Successfully processed file with {} chunks", chunks.len());
         }
         
         Ok(())

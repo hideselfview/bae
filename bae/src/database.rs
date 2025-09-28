@@ -275,6 +275,106 @@ impl Database {
         
         Ok(tracks)
     }
+
+    /// Insert a new file record
+    pub async fn insert_file(&self, file: &DbFile) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO files (
+                id, track_id, original_filename, file_size, format, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&file.id)
+        .bind(&file.track_id)
+        .bind(&file.original_filename)
+        .bind(file.file_size)
+        .bind(&file.format)
+        .bind(file.created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        
+        Ok(())
+    }
+
+    /// Insert a new chunk record
+    pub async fn insert_chunk(&self, chunk: &DbChunk) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO chunks (
+                id, file_id, chunk_index, chunk_size, encrypted_size, 
+                checksum, storage_location, is_local, last_accessed, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&chunk.id)
+        .bind(&chunk.file_id)
+        .bind(chunk.chunk_index)
+        .bind(chunk.chunk_size)
+        .bind(chunk.encrypted_size)
+        .bind(&chunk.checksum)
+        .bind(&chunk.storage_location)
+        .bind(chunk.is_local)
+        .bind(chunk.last_accessed.as_ref().map(|dt| dt.to_rfc3339()))
+        .bind(chunk.created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        
+        Ok(())
+    }
+
+    /// Get chunks for a file
+    pub async fn get_chunks_for_file(&self, file_id: &str) -> Result<Vec<DbChunk>, sqlx::Error> {
+        let rows = sqlx::query("SELECT * FROM chunks WHERE file_id = ? ORDER BY chunk_index")
+            .bind(file_id)
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut chunks = Vec::new();
+        for row in rows {
+            chunks.push(DbChunk {
+                id: row.get("id"),
+                file_id: row.get("file_id"),
+                chunk_index: row.get("chunk_index"),
+                chunk_size: row.get("chunk_size"),
+                encrypted_size: row.get("encrypted_size"),
+                checksum: row.get("checksum"),
+                storage_location: row.get("storage_location"),
+                is_local: row.get("is_local"),
+                last_accessed: row.get::<Option<String>, _>("last_accessed")
+                    .map(|s| DateTime::parse_from_rfc3339(&s).unwrap().with_timezone(&Utc)),
+                created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
+                    .unwrap()
+                    .with_timezone(&Utc),
+            });
+        }
+        
+        Ok(chunks)
+    }
+
+    /// Get files for a track
+    pub async fn get_files_for_track(&self, track_id: &str) -> Result<Vec<DbFile>, sqlx::Error> {
+        let rows = sqlx::query("SELECT * FROM files WHERE track_id = ?")
+            .bind(track_id)
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut files = Vec::new();
+        for row in rows {
+            files.push(DbFile {
+                id: row.get("id"),
+                track_id: row.get("track_id"),
+                original_filename: row.get("original_filename"),
+                file_size: row.get("file_size"),
+                format: row.get("format"),
+                created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
+                    .unwrap()
+                    .with_timezone(&Utc),
+            });
+        }
+        
+        Ok(files)
+    }
 }
 
 /// Helper functions for creating database records from Discogs data
@@ -330,6 +430,45 @@ impl DbTrack {
             duration_ms: None, // Will be filled in during track mapping
             artist_name: None, // Will be filled in during track mapping
             discogs_position: Some(discogs_track.position.clone()),
+            created_at: Utc::now(),
+        }
+    }
+}
+
+impl DbFile {
+    pub fn new(
+        track_id: &str,
+        original_filename: &str,
+        file_size: i64,
+        format: &str,
+    ) -> Self {
+        DbFile {
+            id: Uuid::new_v4().to_string(),
+            track_id: track_id.to_string(),
+            original_filename: original_filename.to_string(),
+            file_size,
+            format: format.to_string(),
+            created_at: Utc::now(),
+        }
+    }
+}
+
+impl DbChunk {
+    pub fn from_file_chunk(
+        file_chunk: &crate::chunking::FileChunk,
+        storage_location: &str,
+        is_local: bool,
+    ) -> Self {
+        DbChunk {
+            id: file_chunk.id.clone(),
+            file_id: file_chunk.file_id.clone(),
+            chunk_index: file_chunk.chunk_index,
+            chunk_size: file_chunk.original_size as i64,
+            encrypted_size: file_chunk.encrypted_size as i64,
+            checksum: file_chunk.checksum.clone(),
+            storage_location: storage_location.to_string(),
+            is_local,
+            last_accessed: if is_local { Some(Utc::now()) } else { None },
             created_at: Utc::now(),
         }
     }
