@@ -11,6 +11,7 @@ mod library;
 mod chunking;
 mod encryption;
 mod cloud_storage;
+mod cache;
 mod subsonic;
 
 use components::*;
