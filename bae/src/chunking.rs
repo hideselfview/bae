@@ -4,13 +4,14 @@ use std::io::{Read, Write, BufReader, BufWriter};
 use thiserror::Error;
 use sha2::{Sha256, Digest};
 use uuid::Uuid;
+use crate::encryption::{EncryptionService, EncryptedChunk, EncryptionError};
 
 #[derive(Error, Debug)]
 pub enum ChunkingError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("Encryption error: {0}")]
-    Encryption(String),
+    Encryption(#[from] EncryptionError),
     #[error("Chunk validation error: {0}")]
     Validation(String),
 }
@@ -48,6 +49,7 @@ pub struct FileChunk {
 /// Main chunking service that handles file splitting and encryption
 pub struct ChunkingService {
     config: ChunkingConfig,
+    encryption_service: EncryptionService,
 }
 
 impl ChunkingService {
@@ -62,7 +64,34 @@ impl ChunkingService {
         // Ensure temp directory exists
         std::fs::create_dir_all(&config.temp_dir)?;
         
-        Ok(ChunkingService { config })
+        // Initialize encryption service
+        let encryption_service = EncryptionService::new()?;
+        
+        Ok(ChunkingService { 
+            config,
+            encryption_service,
+        })
+    }
+
+    /// Create a new chunking service for testing (uses in-memory encryption)
+    pub fn new_for_testing() -> Result<Self, ChunkingError> {
+        let config = ChunkingConfig::default();
+        Self::new_for_testing_with_config(config)
+    }
+
+    /// Create a new chunking service for testing with custom configuration
+    pub fn new_for_testing_with_config(config: ChunkingConfig) -> Result<Self, ChunkingError> {
+        // Ensure temp directory exists
+        std::fs::create_dir_all(&config.temp_dir)?;
+        
+        // Initialize encryption service with in-memory storage for testing
+        let test_key_id = format!("chunking_test_key_{}", uuid::Uuid::new_v4());
+        let encryption_service = EncryptionService::new_for_testing(test_key_id)?;
+        
+        Ok(ChunkingService { 
+            config,
+            encryption_service,
+        })
     }
 
     /// Split a file into encrypted chunks
@@ -107,17 +136,23 @@ impl ChunkingService {
         hasher.update(data);
         let checksum = format!("{:x}", hasher.finalize());
         
-        // For now, we'll do simple "encryption" (XOR with a key)
-        // TODO: Replace with proper AES encryption
-        let encrypted_data = self.simple_encrypt(data);
+        // Encrypt with AES-256-GCM
+        let (encrypted_data, nonce) = self.encryption_service.encrypt(data)?;
         
-        // Write encrypted chunk to temp file
+        // Create encrypted chunk with metadata
+        let encrypted_chunk = EncryptedChunk::new(
+            encrypted_data,
+            nonce,
+            self.encryption_service.key_id().to_string(),
+        );
+        
+        // Serialize and write encrypted chunk to temp file
         let temp_filename = format!("chunk_{}_{}.enc", file_id, chunk_index);
         let temp_path = self.config.temp_dir.join(temp_filename);
         
         let temp_file = File::create(&temp_path)?;
         let mut writer = BufWriter::new(temp_file);
-        writer.write_all(&encrypted_data)?;
+        writer.write_all(&encrypted_chunk.to_bytes())?;
         writer.flush()?;
         
         Ok(FileChunk {
@@ -125,34 +160,12 @@ impl ChunkingService {
             file_id: file_id.to_string(),
             chunk_index,
             original_size: data.len(),
-            encrypted_size: encrypted_data.len(),
+            encrypted_size: encrypted_chunk.to_bytes().len(),
             checksum,
             temp_path,
         })
     }
 
-    /// Simple encryption placeholder (XOR with fixed key)
-    /// TODO: Replace with proper AES-256-GCM encryption
-    fn simple_encrypt(&self, data: &[u8]) -> Vec<u8> {
-        // Simple XOR encryption with a repeating key
-        // This is NOT secure - just a placeholder for the real encryption
-        let key = b"bae_temp_key_123"; // 16 bytes
-        let mut encrypted = Vec::with_capacity(data.len());
-        
-        for (i, &byte) in data.iter().enumerate() {
-            let key_byte = key[i % key.len()];
-            encrypted.push(byte ^ key_byte);
-        }
-        
-        encrypted
-    }
-
-    /// Simple decryption placeholder (reverse XOR)
-    /// TODO: Replace with proper AES-256-GCM decryption
-    pub fn simple_decrypt(&self, encrypted_data: &[u8]) -> Vec<u8> {
-        // XOR is symmetric, so decryption is the same as encryption
-        self.simple_encrypt(encrypted_data)
-    }
 
     /// Reassemble chunks back into the original file
     /// This is used for playback and verification
@@ -167,11 +180,17 @@ impl ChunkingService {
         let mut writer = BufWriter::new(output_file);
         
         for chunk in &sorted_chunks {
-            // Read encrypted chunk data
-            let encrypted_data = std::fs::read(&chunk.temp_path)?;
+            // Read encrypted chunk file
+            let chunk_bytes = std::fs::read(&chunk.temp_path)?;
+            
+            // Deserialize encrypted chunk
+            let encrypted_chunk = EncryptedChunk::from_bytes(&chunk_bytes)?;
             
             // Decrypt chunk data
-            let decrypted_data = self.simple_decrypt(&encrypted_data);
+            let decrypted_data = self.encryption_service.decrypt(
+                &encrypted_chunk.encrypted_data,
+                &encrypted_chunk.nonce,
+            )?;
             
             // Verify checksum
             let mut hasher = Sha256::new();
@@ -250,7 +269,7 @@ mod tests {
             chunk_size: 10, // Very small chunks for testing
             temp_dir: std::env::temp_dir().join("bae_test_chunks"),
         };
-        let chunking_service = ChunkingService::new_with_config(config).unwrap();
+        let chunking_service = ChunkingService::new_for_testing_with_config(config).unwrap();
         
         // Chunk the file
         let file_id = "test_file_123";
@@ -274,7 +293,7 @@ mod tests {
 
     #[test]
     fn test_chunk_stats() {
-        let chunking_service = ChunkingService::new().unwrap();
+        let chunking_service = ChunkingService::new_for_testing().unwrap();
         
         // Test with exact multiple of chunk size
         let stats = chunking_service.calculate_chunk_stats(2048 * 1024); // 2MB

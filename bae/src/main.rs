@@ -9,6 +9,7 @@ mod album_import_context;
 mod database;
 mod library;
 mod chunking;
+mod encryption;
 
 use components::*;
 use components::album_import::ImportWorkflowManager;
