@@ -14,8 +14,10 @@ fn get_library_path() -> PathBuf {
 #[component]
 pub fn Library() -> Element {
     let mut albums = use_signal(|| Vec::<DbAlbum>::new());
+    let mut filtered_albums = use_signal(|| Vec::<DbAlbum>::new());
     let mut loading = use_signal(|| true);
     let mut error = use_signal(|| None::<String>);
+    let mut search_query = use_signal(|| String::new());
 
     // Load albums on component mount
     use_effect(move || {
@@ -25,7 +27,8 @@ pub fn Library() -> Element {
             
             match load_albums().await {
                 Ok(album_list) => {
-                    albums.set(album_list);
+                    albums.set(album_list.clone());
+                    filtered_albums.set(album_list);
                     loading.set(false);
                 }
                 Err(e) => {
@@ -36,12 +39,51 @@ pub fn Library() -> Element {
         });
     });
 
+    // Filter albums when search query changes
+    use_effect({
+        let albums = albums.clone();
+        let search_query = search_query.clone();
+        move || {
+            let query = search_query().to_lowercase();
+            if query.is_empty() {
+                filtered_albums.set(albums());
+            } else {
+                let filtered = albums().into_iter()
+                    .filter(|album| {
+                        album.title.to_lowercase().contains(&query) ||
+                        album.artist_name.to_lowercase().contains(&query)
+                    })
+                    .collect();
+                filtered_albums.set(filtered);
+            }
+        }
+    });
+
     rsx! {
         div {
             class: "container mx-auto p-6",
-            h1 { 
-                class: "text-3xl font-bold mb-6 text-white",
-                "Music Library" 
+            div {
+                class: "flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6",
+                h1 { 
+                    class: "text-3xl font-bold text-white mb-4 sm:mb-0",
+                    "Music Library" 
+                }
+                
+                // Search bar
+                div {
+                    class: "relative",
+                    input {
+                        r#type: "text",
+                        placeholder: "Search albums or artists...",
+                        class: "w-full sm:w-80 px-4 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500",
+                        value: "{search_query()}",
+                        oninput: move |evt| search_query.set(evt.value()),
+                    }
+                    div {
+                        class: "absolute right-3 top-2.5 text-gray-400",
+                        "🔍"
+                    }
+                }
             }
             
             if loading() {
@@ -85,8 +127,42 @@ pub fn Library() -> Element {
                         "Import Album"
                     }
                 }
+            } else if filtered_albums().is_empty() {
+                div {
+                    class: "text-center py-12",
+                    div {
+                        class: "text-gray-400 text-6xl mb-4",
+                        "🔍"
+                    }
+                    h2 {
+                        class: "text-2xl font-bold text-gray-300 mb-2",
+                        "No albums found"
+                    }
+                    p {
+                        class: "text-gray-500 mb-4",
+                        "Try a different search term or browse all albums"
+                    }
+                    button {
+                        class: "bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded",
+                        onclick: move |_| search_query.set(String::new()),
+                        "Clear Search"
+                    }
+                }
             } else {
-                AlbumGrid { albums: albums() }
+                div {
+                    // Results counter
+                    if !search_query().is_empty() {
+                        div {
+                            class: "mb-4 text-gray-400 text-sm",
+                            {format!("Found {} album{} matching \"{}\"", 
+                                filtered_albums().len(),
+                                if filtered_albums().len() == 1 { "" } else { "s" },
+                                search_query()
+                            )}
+                        }
+                    }
+                    AlbumGrid { albums: filtered_albums() }
+                }
             }
         }
     }
