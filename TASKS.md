@@ -1,9 +1,9 @@
 # bae Implementation Progress
 
 > [!NOTE]  
-> bae is in **pre-implementation**, meaning: we are defining the problem and
-> sketching a solution. Our goal is to produce an minimal product. With that
-> in mind, here are some things that are probably out of scope:
+> bae has moved beyond **pre-implementation** and now has a working core system!
+> We have a functional album import workflow with encrypted chunk storage.
+> Our current focus is expanding functionality while keeping these things out of scope:
 >
 > - Scanning or monitoring files for changes
 > - Checking disk space
@@ -14,6 +14,25 @@
 > - Key rotation
 > - Retry mechanisms
 > - Caching, prefetching, optimization
+
+## ✅ Currently Working Features
+
+**Complete Album Import Pipeline:**
+- Search Discogs for albums (masters and releases)
+- Select local folder with audio files  
+- Real-time import with progress tracking
+- Automatic file-to-track mapping
+- AES-256-GCM encryption of all chunks
+- SQLite database storage of metadata
+- Secure key management via system keyring
+
+**What happens when you import an album:**
+1. Search Discogs API for album metadata
+2. Select local folder containing music files
+3. Create album/track records in SQLite database
+4. Split each audio file into 1MB encrypted chunks
+5. Store chunk metadata with integrity checksums
+6. Files are now ready for cloud storage upload
 
 ## Setup & Initial Infrastructure
 
@@ -38,9 +57,9 @@
 - [x] Build album import workflow
   - [x] Create album search and selection interface
   - [x] Build album selection and preview components
-  - [ ] Add data source selection (local folders)
-  - [ ] Implement import progress tracking and feedback
-  - [ ] Add album import workflow orchestration
+  - [x] Add data source selection (local folders)
+  - [x] Implement import progress tracking and feedback
+  - [x] Add album import workflow orchestration
 - [ ] Implement library browsing system
   - [ ] Build artist and album browsing system
   - [ ] Create library browsing UI components with search and filtering
@@ -49,19 +68,19 @@
 
 ### Storage Strategy
 
-- [ ] Implement local library storage
-  - [ ] Set up local storage directory structure
-  - [ ] Initialize SQLite database with proper schema
-  - [ ] Design database tables for albums, tracks, and chunks
-- [ ] Create file chunking system
-  - [ ] Design chunk format and structure
-  - [ ] Implement chunk creation and management
-  - [ ] Add chunk tracking and indexing
-  - [ ] Build chunk reading and assembly operations
-- [ ] Integrate encryption for chunk security
-  - [ ] Select and integrate encryption library
-  - [ ] Implement chunk encryption and decryption
-  - [ ] Add encryption key management
+- [x] Implement local library storage
+  - [x] Set up local storage directory structure
+  - [x] Initialize SQLite database with proper schema
+  - [x] Design database tables for albums, tracks, and chunks
+- [x] Create file chunking system
+  - [x] Design chunk format and structure
+  - [x] Implement chunk creation and management
+  - [x] Add chunk tracking and indexing
+  - [x] Build chunk reading and assembly operations
+- [x] Integrate encryption for chunk security
+  - [x] Select and integrate encryption library (AES-256-GCM)
+  - [x] Implement chunk encryption and decryption
+  - [x] Add encryption key management (system keyring + in-memory for testing)
 - [ ] Implement S3 storage integration
   - [ ] Select and configure S3 client library
   - [ ] Build S3 upload/download operations
@@ -72,10 +91,10 @@
   - [ ] Implement hybrid local/remote storage operations
   - [ ] Add chunk caching and eviction
   - [ ] Build streaming-optimized chunk access
-- [ ] Build library manager
-  - [ ] Create library management system
-  - [ ] Implement album and track import workflows
-  - [ ] Build track-to-chunk mapping and playback system
+- [x] Build library manager
+  - [x] Create library management system
+  - [x] Implement album and track import workflows
+  - [x] Build track-to-chunk mapping system (playback system pending)
 - [ ] Create storage settings interface
   - [ ] Build storage configuration UI components
   - [ ] Add storage usage monitoring and display
@@ -90,13 +109,13 @@
 
 ### Track Mapping
 
-- [ ] Implement track mapping system
-  - [ ] Design track mapping abstraction and interfaces
+- [x] Implement track mapping system
+  - [x] Design track mapping abstraction and interfaces
 
-- [ ] Implement simple track mapping for individual files
-  - [ ] Add audio format detection and validation
-  - [ ] Integrate AI for track matching
-  - [ ] Build track mapping persistence system
+- [x] Implement simple track mapping for individual files
+  - [x] Add audio format detection and validation
+  - [ ] Integrate AI for track matching (using simple filename-based mapping for now)
+  - [x] Build track mapping persistence system
 
 - [ ] Implement CUE sheet support
   - [ ] Select and integrate CUE sheet parser
