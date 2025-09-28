@@ -15,25 +15,6 @@
 > - Retry mechanisms
 > - Caching, prefetching, optimization
 
-## ✅ Currently Working Features
-
-**Complete Album Import Pipeline:**
-- Search Discogs for albums (masters and releases)
-- Select local folder with audio files  
-- Real-time import with progress tracking
-- Automatic file-to-track mapping
-- AES-256-GCM encryption of all chunks
-- SQLite database storage of metadata
-- Secure key management via system keyring
-
-**What happens when you import an album:**
-1. Search Discogs API for album metadata
-2. Select local folder containing music files
-3. Create album/track records in SQLite database
-4. Split each audio file into 1MB encrypted chunks
-5. Store chunk metadata with integrity checksums
-6. Files are now ready for cloud storage upload
-
 ## Setup & Initial Infrastructure
 
 - [x] Set up local Rust development environment with Dioxus tooling
@@ -53,6 +34,7 @@
 - [x] Build desktop application foundation
   - [x] Create main application layout and navigation
   - [x] Set up routing system for core application views
+  - [x] Add album detail route (/album/:id) with navigation
   - [x] Implement application state management and error handling
 - [x] Build album import workflow
   - [x] Create album search and selection interface
@@ -60,10 +42,12 @@
   - [x] Add data source selection (local folders)
   - [x] Implement import progress tracking and feedback
   - [x] Add album import workflow orchestration
-- [ ] Implement library browsing system
-  - [ ] Build artist and album browsing system
-  - [ ] Create library browsing UI components with search and filtering
-  - [ ] Implement sorting and organization features
+- [x] Implement library browsing system
+  - [x] Build artist and album browsing system
+  - [x] Create library browsing UI components with search and filtering
+  - [x] Add album detail view with tracklist and metadata
+  - [x] Implement click-through navigation from library to album details
+  - [ ] Implement sorting and organization features (pending)
 - [ ] Create settings management interface
 
 ### Storage Strategy
@@ -81,11 +65,11 @@
   - [x] Select and integrate encryption library (AES-256-GCM)
   - [x] Implement chunk encryption and decryption
   - [x] Add encryption key management (system keyring + in-memory for testing)
-- [ ] Implement S3 storage integration
-  - [ ] Select and configure S3 client library
-  - [ ] Build S3 upload/download operations
-  - [ ] Implement remote chunk tracking
-  - [ ] Add local cache management with size limits
+- [x] Implement S3 storage integration
+  - [x] Select and configure S3 client library (AWS SDK)
+  - [x] Build S3 upload/download operations
+  - [x] Implement remote chunk tracking
+  - [ ] Add local cache management with size limits (pending)
 - [ ] Build unified storage controller
   - [ ] Create storage abstraction layer
   - [ ] Implement hybrid local/remote storage operations
@@ -168,18 +152,19 @@
 
 ### Subsonic API Implementation
 
-- [ ] Implement core Subsonic system endpoints
-  - [ ] Build basic system status and license endpoints
-  - [ ] Add error response handling
+- [x] Implement core Subsonic system endpoints
+  - [x] Build basic system status and license endpoints (ping, getLicense)
+  - [x] Add error response handling with proper Subsonic envelope
 
-- [ ] Implement Subsonic browsing API
-  - [ ] Build library browsing endpoints (folders, artists, albums, songs)
-  - [ ] Add XML and JSON response formatting
-  - [ ] Implement Subsonic response envelope system
+- [x] Implement Subsonic browsing API
+  - [x] Set up Axum web server foundation running on localhost:4533
+  - [x] Build library browsing endpoints (getArtists, getAlbumList, getAlbum)
+  - [x] Add JSON response formatting with Subsonic 1.16.1 envelope
+  - [x] Implement Subsonic response envelope system
+  - [x] Integrate with LibraryManager for database access
 
 - [ ] Implement media streaming endpoints
-  - [ ] Build streaming, download, and cover art endpoints
-  - [ ] Integrate streaming endpoints with transcoding system
+  - [ ] Build streaming endpoint with chunk reassembly from encrypted storage
   - [ ] Add HTTP range request support for seeking
   - [ ] Implement Discogs cover art proxy with caching
 
