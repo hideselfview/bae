@@ -298,9 +298,14 @@ impl CloudStorageManager {
         self.storage.upload_chunk(chunk_id, &data).await
     }
 
+    /// Download chunk data from cloud storage
+    pub async fn download_chunk(&self, storage_location: &str) -> Result<Vec<u8>, CloudStorageError> {
+        self.storage.download_chunk(storage_location).await
+    }
+
     /// Download a chunk from cloud storage to local file
     pub async fn download_chunk_to_file(&self, storage_location: &str, file_path: &Path) -> Result<(), CloudStorageError> {
-        let data = self.storage.download_chunk(storage_location).await?;
+        let data = self.download_chunk(storage_location).await?;
         fs::write(file_path, data).await?;
         Ok(())
     }

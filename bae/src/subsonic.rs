@@ -555,8 +555,22 @@ async fn download_and_decrypt_chunk(
         // Download from cloud storage
         println!("Downloading chunk from cloud: {}", chunk.storage_location);
         
-        // TODO: Implement cloud download
-        // For now, return an error
-        Err("Cloud storage download not yet implemented".into())
+        // Initialize cloud storage manager
+        let config = crate::cloud_storage::S3Config::from_env()
+            .map_err(|e| format!("Failed to load S3 config: {}", e))?;
+        let cloud_storage = crate::cloud_storage::CloudStorageManager::new_s3(config).await
+            .map_err(|e| format!("Failed to initialize cloud storage: {}", e))?;
+        
+        // Download encrypted chunk data
+        let encrypted_data = cloud_storage.download_chunk(&chunk.storage_location).await
+            .map_err(|e| format!("Failed to download chunk: {}", e))?;
+        
+        // Decrypt the chunk
+        let encryption_service = EncryptionService::new()
+            .map_err(|e| format!("Failed to initialize encryption: {}", e))?;
+        let decrypted_data = encryption_service.decrypt_chunk(&encrypted_data)
+            .map_err(|e| format!("Failed to decrypt chunk: {}", e))?;
+        
+        Ok(decrypted_data)
     }
 }
