@@ -557,6 +557,9 @@
   .text-green-700 {
     color: var(--color-green-700);
   }
+  .text-red-600 {
+    color: var(--color-red-600);
+  }
   .text-red-700 {
     color: var(--color-red-700);
   }

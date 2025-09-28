@@ -1,36 +1,91 @@
 use dioxus::prelude::*;
 use crate::models::ImportItem;
+use crate::library::LibraryManager;
+use rfd::AsyncFileDialog;
+use std::path::{Path, PathBuf};
 
-/// Stub functions for import workflow callbacks
-/// These will be implemented when we add the actual file operations
+/// Import workflow functions using the LibraryManager
 
 /// Callback for when user selects a folder for import
 pub fn on_folder_selected(folder_path: String) -> Result<(), String> {
-    // TODO: Validate folder path and check for audio files
-    println!("Selected folder: {}", folder_path);
+    let path = Path::new(&folder_path);
+    
+    // Check if path exists and is a directory
+    if !path.exists() {
+        return Err("Selected path does not exist".to_string());
+    }
+    
+    if !path.is_dir() {
+        return Err("Selected path is not a directory".to_string());
+    }
+    
+    // Check for audio files
+    let audio_extensions = ["mp3", "flac", "wav", "m4a", "aac", "ogg"];
+    let mut has_audio_files = false;
+    
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            if let Some(extension) = entry.path().extension() {
+                if let Some(ext_str) = extension.to_str() {
+                    if audio_extensions.contains(&ext_str.to_lowercase().as_str()) {
+                        has_audio_files = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    
+    if !has_audio_files {
+        return Err("No audio files found in selected folder".to_string());
+    }
+    
+    println!("Selected folder: {} (contains audio files)", folder_path);
     Ok(())
 }
 
-/// Callback for when import process starts
+/// Get the default library path (in user's home directory)
+fn get_library_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    PathBuf::from(home).join(".bae").join("library")
+}
+
+/// Callback for when import process starts - now uses real LibraryManager
+pub async fn on_import_started_async(item: &ImportItem, folder_path: &str) -> Result<String, String> {
+    println!("Starting real import for {} from folder: {}", item.title(), folder_path);
+    
+    // Initialize library manager
+    let library_path = get_library_path();
+    let library_manager = LibraryManager::new(library_path)
+        .await
+        .map_err(|e| format!("Failed to initialize library: {}", e))?;
+    
+    // Import the album
+    let album_id = library_manager
+        .import_album(item, Path::new(folder_path))
+        .await
+        .map_err(|e| format!("Import failed: {}", e))?;
+    
+    println!("Successfully imported album with ID: {}", album_id);
+    Ok(album_id)
+}
+
+/// Legacy sync wrapper for the import process
 pub fn on_import_started(item: &ImportItem, folder_path: &str) -> Result<(), String> {
-    // TODO: Start actual import process
-    println!("Starting import for {:?} from folder: {}", item.title(), folder_path);
-    println!("Master ID: {:?}", item.master_id());
-    println!("Tracklist: {:?}", item.tracklist());
+    println!("Import started for {} from {}", item.title(), folder_path);
+    // The actual async import will be handled in the UI component
     Ok(())
 }
 
 /// Callback for when import process completes
 pub fn on_import_completed(item: &ImportItem, folder_path: &str) -> Result<(), String> {
-    // TODO: Save to database, update library, etc.
-    println!("Import completed for {:?} from folder: {}", item.title(), folder_path);
+    println!("Import completed for {} from folder: {}", item.title(), folder_path);
     Ok(())
 }
 
 /// Callback for when import process fails
 pub fn on_import_failed(item: &ImportItem, folder_path: &str, error: &str) {
-    // TODO: Handle import failure, show error to user
-    println!("Import failed for {:?} from folder: {} - Error: {}", item.title(), folder_path, error);
+    println!("Import failed for {} from folder: {} - Error: {}", item.title(), folder_path, error);
 }
 
 #[derive(Props, PartialEq, Clone)]
@@ -51,11 +106,23 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
     let current_step = use_signal(|| ImportStep::DataSourceSelection);
     let selected_folder = use_signal(|| None::<String>);
     let import_progress = use_signal(|| 0u8);
+    let folder_error = use_signal(|| None::<String>);
 
-    let mut on_folder_select = {
+    let on_folder_select = {
         let mut selected_folder = selected_folder;
+        let mut folder_error = folder_error;
         move |folder_path: String| {
             selected_folder.set(Some(folder_path));
+            folder_error.set(None); // Clear any previous errors
+        }
+    };
+
+    let on_folder_error = {
+        let mut folder_error = folder_error;
+        let mut selected_folder = selected_folder;
+        move |error: String| {
+            folder_error.set(Some(error));
+            selected_folder.set(None); // Clear selection on error
         }
     };
 
@@ -74,20 +141,31 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                 current_step.set(ImportStep::ImportProgress);
                 import_progress.set(0);
                 
-                // Simulate import progress with a simple timer
+                // Start real import process
                 let item_clone = item.clone();
                 let folder_clone = folder.clone();
                 spawn(async move {
-                    for i in 1..=20 {
-                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                        import_progress.set((i * 5) as u8);
-                    }
+                    // Update progress to show we're starting
+                    import_progress.set(10);
                     
-                    // Complete the import
-                    if let Err(e) = on_import_completed(&item_clone, &folder_clone) {
-                        on_import_failed(&item_clone, &folder_clone, &e);
-                    } else {
-                        current_step.set(ImportStep::ImportComplete);
+                    // Perform the actual import
+                    match on_import_started_async(&item_clone, &folder_clone).await {
+                        Ok(album_id) => {
+                            import_progress.set(100);
+                            println!("Import successful! Album ID: {}", album_id);
+                            
+                            // Complete the import
+                            if let Err(e) = on_import_completed(&item_clone, &folder_clone) {
+                                on_import_failed(&item_clone, &folder_clone, &e);
+                            } else {
+                                current_step.set(ImportStep::ImportComplete);
+                            }
+                        }
+                        Err(e) => {
+                            println!("Import failed: {}", e);
+                            on_import_failed(&item_clone, &folder_clone, &e);
+                            // Stay on the current step to show the error
+                        }
                     }
                 });
             }
@@ -114,7 +192,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                             "← Back to Search"
                         }
                         h1 {
-                            class: "text-2xl font-bold text-gray-900",
+                            class: "text-2xl font-bold text-white",
                             "Import Album"
                         }
                     }
@@ -132,7 +210,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                                 }
                             } else {
                                 div {
-                                    class: "w-24 h-24 bg-gray-200 rounded flex items-center justify-center",
+                                    class: "w-24 h-24 bg-gray-200 rounded flex items-center justify-center text-gray-500 text-sm",
                                     "No Image"
                                 }
                             }
@@ -182,20 +260,31 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                             class: "border border-gray-200 rounded-lg p-4",
                             div {
                                 class: "flex items-center justify-between",
-                                div {
-                                    class: "text-sm font-medium text-gray-900",
-                                    "Select a folder containing your music files"
+                                if selected_folder.read().is_none() {
+                                    div {
+                                        class: "text-sm font-medium text-gray-900",
+                                        "Select a folder containing your music files"
+                                    }
                                 }
                                 button {
                                     class: "px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700",
                                     onclick: move |_| {
-                                        // TODO: Implement actual folder picker
-                                        let folder_path = "/Users/dima/Music/Example Album".to_string();
-                                        if let Err(e) = on_folder_selected(folder_path.clone()) {
-                                            println!("Folder selection error: {}", e);
-                                        } else {
-                                            on_folder_select(folder_path);
-                                        }
+                                        let mut on_folder_select = on_folder_select.clone();
+                                        let mut on_folder_error = on_folder_error.clone();
+                                        spawn(async move {
+                                            if let Some(folder_handle) = AsyncFileDialog::new()
+                                                .set_title("Select Music Folder")
+                                                .pick_folder()
+                                                .await
+                                            {
+                                                let folder_path = folder_handle.path().to_string_lossy().to_string();
+                                                if let Err(e) = on_folder_selected(folder_path.clone()) {
+                                                    on_folder_error(e);
+                                                } else {
+                                                    on_folder_select(folder_path);
+                                                }
+                                            }
+                                        });
                                     },
                                     "Select Folder"
                                 }
@@ -204,6 +293,12 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                                 div {
                                     class: "mt-2 text-sm text-gray-600",
                                     "Selected: {folder}"
+                                }
+                            }
+                            if let Some(error) = folder_error.read().as_ref() {
+                                div {
+                                    class: "mt-2 text-sm text-red-600",
+                                    "Error: {error}"
                                 }
                             }
                         }

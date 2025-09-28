@@ -92,11 +92,22 @@ impl AlbumImportContext {
             }
         };
 
+        // Find the thumbnail from search results
+        let search_thumb = self.search_results.read()
+            .iter()
+            .find(|result| result.id.to_string() == master_id)
+            .and_then(|result| result.thumb.clone());
+
         self.is_importing_master.set(true);
         self.error_message.set(None);
 
         let result = match client.get_master(&master_id).await {
-            Ok(master) => {
+            Ok(mut master) => {
+                // If master has no thumbnail but search results had one, use the search thumbnail
+                if master.thumb.is_none() && search_thumb.is_some() {
+                    master.thumb = search_thumb;
+                    println!("AlbumImportContext: Using search thumbnail for master {}", master.title);
+                }
                 let import_item = ImportItem::Master(master);
                 Ok(import_item)
             }

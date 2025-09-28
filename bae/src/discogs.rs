@@ -196,7 +196,8 @@ impl DiscogsClient {
             // TODO fix this
             let label = Vec::new();
 
-            Ok(DiscogsMaster {
+            
+            let discogs_master = DiscogsMaster {
                 id: master.id.to_string(),
                 title: master.title,
                 year: master.year,
@@ -204,7 +205,9 @@ impl DiscogsClient {
                 label,
                 country: None, // Masters don't have country info
                 tracklist,
-            })
+            };
+            
+            Ok(discogs_master)
         } else if response.status() == 404 {
             Err(DiscogsError::NotFound)
         } else if response.status() == 429 {

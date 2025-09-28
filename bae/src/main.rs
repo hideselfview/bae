@@ -6,6 +6,8 @@ mod discogs;
 mod api_keys;
 mod components;
 mod album_import_context;
+mod database;
+mod library;
 
 use components::*;
 use components::album_import::ImportWorkflowManager;
