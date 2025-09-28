@@ -11,7 +11,7 @@ use serde::{Serialize, Deserialize};
 /// - Chunks uploaded to cloud storage
 /// - Local cache management for recently used chunks
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DbAlbum {
     pub id: String,
     pub title: String,
