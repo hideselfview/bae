@@ -1,0 +1,251 @@
+use dioxus::prelude::*;
+use crate::library::{LibraryManager, LibraryError};
+use crate::database::{DbAlbum, DbTrack};
+use crate::Route;
+use std::path::PathBuf;
+
+/// Get the library path (same as other components)
+fn get_library_path() -> PathBuf {
+    let home_dir = dirs::home_dir().expect("Failed to get home directory");
+    home_dir.join("Music").join("bae")
+}
+
+/// Album detail page showing album info and tracklist
+#[component]
+pub fn AlbumDetail(album_id: String) -> Element {
+    let mut album = use_signal(|| None::<DbAlbum>);
+    let mut tracks = use_signal(|| Vec::<DbTrack>::new());
+    let mut loading = use_signal(|| true);
+    let mut error = use_signal(|| None::<String>);
+
+    // Load album and tracks on component mount
+    use_effect({
+        let album_id = album_id.clone();
+        move || {
+            spawn({
+                let album_id = album_id.clone();
+                async move {
+                    loading.set(true);
+                    error.set(None);
+                    
+                    match load_album_details(&album_id).await {
+                        Ok((album_data, tracks_data)) => {
+                            album.set(Some(album_data));
+                            tracks.set(tracks_data);
+                            loading.set(false);
+                        }
+                        Err(e) => {
+                            error.set(Some(format!("Failed to load album: {}", e)));
+                            loading.set(false);
+                        }
+                    }
+                }
+            });
+        }
+    });
+
+    rsx! {
+        div {
+            class: "container mx-auto p-6",
+            
+            // Back button
+            div {
+                class: "mb-6",
+                Link {
+                    to: Route::Library {},
+                    class: "inline-flex items-center text-blue-400 hover:text-blue-300 transition-colors",
+                    "← Back to Library"
+                }
+            }
+            
+            if loading() {
+                div {
+                    class: "flex justify-center items-center py-12",
+                    div {
+                        class: "animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"
+                    }
+                    p {
+                        class: "ml-4 text-gray-300",
+                        "Loading album details..."
+                    }
+                }
+            } else if let Some(err) = error() {
+                div {
+                    class: "bg-red-900 border border-red-700 text-red-100 px-4 py-3 rounded mb-4",
+                    p { "{err}" }
+                }
+            } else if let Some(album_data) = album() {
+                AlbumDetailView { album: album_data, tracks: tracks() }
+            }
+        }
+    }
+}
+
+/// Album detail view component
+#[component]
+fn AlbumDetailView(album: DbAlbum, tracks: Vec<DbTrack>) -> Element {
+    rsx! {
+        div {
+            class: "grid grid-cols-1 lg:grid-cols-3 gap-8",
+            
+            // Album artwork and info
+            div {
+                class: "lg:col-span-1",
+                div {
+                    class: "bg-gray-800 rounded-lg p-6",
+                    
+                    // Album cover
+                    div {
+                        class: "aspect-square bg-gray-700 rounded-lg mb-6 flex items-center justify-center overflow-hidden",
+                        if let Some(cover_url) = &album.cover_art_url {
+                            img {
+                                src: "{cover_url}",
+                                alt: "Album cover for {album.title}",
+                                class: "w-full h-full object-cover"
+                            }
+                        } else {
+                            div {
+                                class: "text-gray-500 text-6xl",
+                                "🎵"
+                            }
+                        }
+                    }
+                    
+                    // Album metadata
+                    div {
+                        h1 {
+                            class: "text-2xl font-bold text-white mb-2",
+                            "{album.title}"
+                        }
+                        p {
+                            class: "text-lg text-gray-300 mb-4",
+                            "{album.artist_name}"
+                        }
+                        
+                        div {
+                            class: "space-y-2 text-sm text-gray-400",
+                            if let Some(year) = album.year {
+                                div {
+                                    span { class: "font-medium", "Year: " }
+                                    span { "{year}" }
+                                }
+                            }
+                            if let Some(discogs_id) = &album.discogs_master_id {
+                                div {
+                                    span { class: "font-medium", "Discogs Master ID: " }
+                                    span { "{discogs_id}" }
+                                }
+                            }
+                            if let Some(release_id) = &album.discogs_release_id {
+                                div {
+                                    span { class: "font-medium", "Discogs Release ID: " }
+                                    span { "{release_id}" }
+                                }
+                            }
+                            div {
+                                span { class: "font-medium", "Tracks: " }
+                                span { "{tracks.len()}" }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Tracklist
+            div {
+                class: "lg:col-span-2",
+                div {
+                    class: "bg-gray-800 rounded-lg p-6",
+                    h2 {
+                        class: "text-xl font-bold text-white mb-4",
+                        "Tracklist"
+                    }
+                    
+                    if tracks.is_empty() {
+                        div {
+                            class: "text-center py-8 text-gray-400",
+                            p { "No tracks found for this album." }
+                        }
+                    } else {
+                        div {
+                            class: "space-y-2",
+                            for track in tracks {
+                                TrackRow { track }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Individual track row component
+#[component]
+fn TrackRow(track: DbTrack) -> Element {
+    rsx! {
+        div {
+            class: "flex items-center py-3 px-4 rounded-lg hover:bg-gray-700 transition-colors group",
+            
+            // Track number
+            div {
+                class: "w-12 text-right text-gray-400 text-sm font-mono",
+                if let Some(track_num) = track.track_number {
+                    "{track_num}."
+                } else {
+                    "—"
+                }
+            }
+            
+            // Track info
+            div {
+                class: "flex-1 ml-4",
+                h3 {
+                    class: "text-white font-medium group-hover:text-blue-300 transition-colors",
+                    "{track.title}"
+                }
+                if let Some(artist) = &track.artist_name {
+                    p {
+                        class: "text-gray-400 text-sm",
+                        "{artist}"
+                    }
+                }
+            }
+            
+            // Duration (if available)
+            div {
+                class: "text-gray-400 text-sm font-mono",
+                if let Some(duration_ms) = track.duration_ms {
+                    {format_duration(duration_ms)}
+                } else {
+                    "—:—"
+                }
+            }
+        }
+    }
+}
+
+/// Format duration from milliseconds to MM:SS
+fn format_duration(duration_ms: i64) -> String {
+    let total_seconds = duration_ms / 1000;
+    let minutes = total_seconds / 60;
+    let seconds = total_seconds % 60;
+    format!("{}:{:02}", minutes, seconds)
+}
+
+/// Load album and tracks from the database
+async fn load_album_details(album_id: &str) -> Result<(DbAlbum, Vec<DbTrack>), LibraryError> {
+    let library_path = get_library_path();
+    let library_manager = LibraryManager::new(library_path).await?;
+    
+    // Get all albums to find the one we want
+    let albums = library_manager.get_albums().await?;
+    let album = albums.into_iter()
+        .find(|a| a.id == album_id)
+        .ok_or_else(|| LibraryError::Import("Album not found".to_string()))?;
+    
+    // Get tracks for this album
+    let tracks = library_manager.get_tracks(album_id).await?;
+    
+    Ok((album, tracks))
+}

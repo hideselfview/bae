@@ -112,10 +112,10 @@ fn AlbumCard(album: DbAlbum) -> Element {
         div {
             class: "bg-gray-800 rounded-lg overflow-hidden shadow-lg hover:shadow-xl transition-shadow duration-300 cursor-pointer",
             onclick: {
-                let album_title = album.title.clone();
+                let album_id = album.id.clone();
+                let navigator = navigator();
                 move |_| {
-                    println!("Clicked album: {}", album_title);
-                    // TODO: Navigate to album detail view
+                    navigator.push(Route::AlbumDetail { album_id: album_id.clone() });
                 }
             },
             

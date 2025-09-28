@@ -24,7 +24,7 @@ pub struct DbAlbum {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DbTrack {
     pub id: String,
     pub album_id: String,
