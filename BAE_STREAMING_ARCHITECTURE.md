@@ -207,6 +207,7 @@ TODO: Implement proper user management and token-based auth.
 - Cannot parse `.cue` files for track boundaries
 - Cannot seek to specific positions within large files
 - Cannot map CUE tracks to Discogs tracklists
+- See `BAE_CUE_FLAC_SPEC.md` for complete implementation plan
 
 **Transcoding:**
 - No format conversion (FLAC → MP3 for bandwidth)

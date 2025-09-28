@@ -82,10 +82,12 @@ bae uses a cloud-first storage approach with optional local checkouts:
 ### Import Process
 1. **User selects source folder** containing album files
 2. **File scanning** identifies audio files and matches them to Discogs tracklist
-3. **Chunking and encryption** splits files into 1MB AES-256-GCM encrypted chunks
-4. **Cloud upload** stores all chunks in S3 storage
-5. **Local checkout** source folder remains as-is for seeding/backup (optional)
-6. **Database records** chunk locations and source folder path
+3. **Format detection** handles both individual tracks and CUE/FLAC albums
+4. **FLAC header extraction** stores headers in database for instant streaming (CUE/FLAC only)
+5. **Chunking and encryption** splits files into 1MB AES-256-GCM encrypted chunks
+6. **Cloud upload** stores all chunks in S3 storage
+7. **Local checkout** source folder remains as-is for seeding/backup (optional)
+8. **Database records** chunk locations, source folder path, and track positions (CUE/FLAC)
 
 ### Storage Locations
 - **Primary storage**: S3 cloud storage (encrypted chunks)
@@ -110,6 +112,7 @@ bae uses a cloud-first storage approach with optional local checkouts:
 - `CloudStorageManager` handles S3 upload/download
 - `CacheManager` manages local chunk cache with size limits
 - `CheckoutManager` handles source folder lifecycle
+- `CueFlacProcessor` handles CUE sheet parsing and FLAC header extraction (see `BAE_CUE_FLAC_SPEC.md`)
 
 **UI Components:**
 - `SearchList` displays `Vec<DiscogsSearchResult>`
