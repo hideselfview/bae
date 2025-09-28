@@ -490,6 +490,10 @@ async fn stream_track_chunks(
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     println!("Starting chunk reassembly for track: {}", track_id);
     
+    // Initialize cache manager for this streaming session
+    let cache_manager = crate::cache::CacheManager::new().await
+        .map_err(|e| format!("Failed to initialize cache: {}", e))?;
+    
     // Get files for this track
     let files = library_manager.get_files_for_track(track_id).await?;
     if files.is_empty() {
@@ -518,8 +522,8 @@ async fn stream_track_chunks(
     for chunk in sorted_chunks {
         println!("Processing chunk {} (index {})", chunk.id, chunk.chunk_index);
         
-        // Download and decrypt chunk
-        let chunk_data = download_and_decrypt_chunk(library_manager, &chunk).await?;
+        // Download and decrypt chunk (with caching)
+        let chunk_data = download_and_decrypt_chunk(library_manager, &chunk, &cache_manager).await?;
         audio_data.extend_from_slice(&chunk_data);
     }
     
@@ -527,30 +531,35 @@ async fn stream_track_chunks(
     Ok(audio_data)
 }
 
-/// Download and decrypt a single chunk
+/// Download and decrypt a single chunk with caching
 async fn download_and_decrypt_chunk(
     library_manager: &LibraryManager,
     chunk: &crate::database::DbChunk,
+    cache_manager: &crate::cache::CacheManager,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-    use crate::chunking::ChunkingService;
     use crate::encryption::EncryptionService;
-    use std::path::Path;
     
-    if chunk.is_local {
-        // Read from local storage
+    // Check cache first (for both local and cloud chunks)
+    if let Some(cached_encrypted_data) = cache_manager.get_chunk(&chunk.id).await
+        .map_err(|e| format!("Cache error: {}", e))? {
+        
+        // Cache hit - decrypt and return
+        let encryption_service = EncryptionService::new()
+            .map_err(|e| format!("Failed to initialize encryption: {}", e))?;
+        let decrypted_data = encryption_service.decrypt_chunk(&cached_encrypted_data)
+            .map_err(|e| format!("Failed to decrypt cached chunk: {}", e))?;
+        
+        return Ok(decrypted_data);
+    }
+    
+    // Cache miss - need to download
+    let encrypted_data = if chunk.is_local {
+        // Read from local storage (legacy support)
         let local_path = chunk.storage_location.strip_prefix("local:")
             .ok_or("Invalid local storage location")?;
         
         println!("Reading chunk from local path: {}", local_path);
-        
-        // Read the encrypted chunk file
-        let encrypted_data = tokio::fs::read(local_path).await?;
-        
-        // Decrypt the chunk
-        let encryption_service = EncryptionService::new()?;
-        let decrypted_data = encryption_service.decrypt_chunk(&encrypted_data)?;
-        
-        Ok(decrypted_data)
+        tokio::fs::read(local_path).await?
     } else {
         // Download from cloud storage
         println!("Downloading chunk from cloud: {}", chunk.storage_location);
@@ -562,15 +571,20 @@ async fn download_and_decrypt_chunk(
             .map_err(|e| format!("Failed to initialize cloud storage: {}", e))?;
         
         // Download encrypted chunk data
-        let encrypted_data = cloud_storage.download_chunk(&chunk.storage_location).await
-            .map_err(|e| format!("Failed to download chunk: {}", e))?;
-        
-        // Decrypt the chunk
-        let encryption_service = EncryptionService::new()
-            .map_err(|e| format!("Failed to initialize encryption: {}", e))?;
-        let decrypted_data = encryption_service.decrypt_chunk(&encrypted_data)
-            .map_err(|e| format!("Failed to decrypt chunk: {}", e))?;
-        
-        Ok(decrypted_data)
+        cloud_storage.download_chunk(&chunk.storage_location).await
+            .map_err(|e| format!("Failed to download chunk: {}", e))?
+    };
+    
+    // Store in cache for future requests
+    if let Err(e) = cache_manager.put_chunk(&chunk.id, &encrypted_data).await {
+        println!("Warning: Failed to cache chunk {}: {}", chunk.id, e);
     }
+    
+    // Decrypt and return
+    let encryption_service = EncryptionService::new()
+        .map_err(|e| format!("Failed to initialize encryption: {}", e))?;
+    let decrypted_data = encryption_service.decrypt_chunk(&encrypted_data)
+        .map_err(|e| format!("Failed to decrypt chunk: {}", e))?;
+    
+    Ok(decrypted_data)
 }
