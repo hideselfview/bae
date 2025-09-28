@@ -273,10 +273,11 @@ impl LibraryManager {
             // Save file record to database
             self.database.insert_file(&db_file).await?;
             
-            // Chunk the file
+            // Chunk the file directly to final storage location
             println!("  Chunking file: {} bytes", file_size);
+            let chunks_dir = self.library_path.join("chunks");
             let chunks = self.chunking_service
-                .chunk_file(&mapping.source_path, &file_id)
+                .chunk_file(&mapping.source_path, &file_id, &chunks_dir)
                 .await?;
             
             println!("  Created {} chunks", chunks.len());
@@ -286,12 +287,13 @@ impl LibraryManager {
                 let (storage_location, is_local) = if let Some(cloud_storage) = &self.cloud_storage {
                     // Upload to cloud storage - fail import if upload fails
                     println!("    Uploading chunk {} to cloud storage", chunk.id);
-                    let cloud_location = cloud_storage.upload_chunk_file(&chunk.id, &chunk.temp_path).await?;
+                    let cloud_location = cloud_storage.upload_chunk_file(&chunk.id, &chunk.final_path).await?;
                     println!("    Successfully uploaded to {}", cloud_location);
                     (cloud_location, false)
                 } else {
-                    // Store locally only when no cloud storage configured
-                    let local_location = format!("local:{}", chunk.temp_path.display());
+                    // Chunks are already in permanent local storage
+                    let local_location = format!("local:{}", chunk.final_path.display());
+                    println!("    Chunk stored locally: {}", local_location);
                     (local_location, true)
                 };
                 

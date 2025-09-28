@@ -43,7 +43,7 @@ pub struct FileChunk {
     pub original_size: usize,
     pub encrypted_size: usize,
     pub checksum: String,
-    pub temp_path: std::path::PathBuf,
+    pub final_path: std::path::PathBuf,
 }
 
 /// Main chunking service that handles file splitting and encryption
@@ -94,9 +94,9 @@ impl ChunkingService {
         })
     }
 
-    /// Split a file into encrypted chunks
+    /// Split a file into encrypted chunks, writing directly to output directory
     /// Returns a list of chunks that need to be uploaded to storage
-    pub async fn chunk_file(&self, file_path: &Path, file_id: &str) -> Result<Vec<FileChunk>, ChunkingError> {
+    pub async fn chunk_file(&self, file_path: &Path, file_id: &str, output_dir: &Path) -> Result<Vec<FileChunk>, ChunkingError> {
         println!("ChunkingService: Starting to chunk file: {}", file_path.display());
         
         let file = File::open(file_path)?;
@@ -115,7 +115,7 @@ impl ChunkingService {
             
             // Create chunk with actual data size
             let chunk_data = &buffer[..bytes_read];
-            let chunk = self.create_chunk(file_id, chunk_index, chunk_data).await?;
+            let chunk = self.create_chunk(file_id, chunk_index, chunk_data, output_dir).await?;
             
             chunks.push(chunk);
             chunk_index += 1;
@@ -127,8 +127,8 @@ impl ChunkingService {
         Ok(chunks)
     }
 
-    /// Create a single encrypted chunk from data
-    async fn create_chunk(&self, file_id: &str, chunk_index: i32, data: &[u8]) -> Result<FileChunk, ChunkingError> {
+    /// Create a single encrypted chunk from data, writing directly to output directory
+    async fn create_chunk(&self, file_id: &str, chunk_index: i32, data: &[u8], output_dir: &Path) -> Result<FileChunk, ChunkingError> {
         let chunk_id = Uuid::new_v4().to_string();
         
         // Calculate checksum of original data
@@ -146,12 +146,15 @@ impl ChunkingService {
             self.encryption_service.key_id().to_string(),
         );
         
-        // Serialize and write encrypted chunk to temp file
-        let temp_filename = format!("chunk_{}_{}.enc", file_id, chunk_index);
-        let temp_path = self.config.temp_dir.join(temp_filename);
+        // Serialize and write encrypted chunk directly to final location
+        let chunk_filename = format!("{}.enc", chunk_id);
+        let final_path = output_dir.join(chunk_filename);
         
-        let temp_file = File::create(&temp_path)?;
-        let mut writer = BufWriter::new(temp_file);
+        // Ensure output directory exists
+        tokio::fs::create_dir_all(output_dir).await.map_err(|e| ChunkingError::Io(e))?;
+        
+        let chunk_file = File::create(&final_path)?;
+        let mut writer = BufWriter::new(chunk_file);
         writer.write_all(&encrypted_chunk.to_bytes())?;
         writer.flush()?;
         
@@ -162,7 +165,7 @@ impl ChunkingService {
             original_size: data.len(),
             encrypted_size: encrypted_chunk.to_bytes().len(),
             checksum,
-            temp_path,
+            final_path,
         })
     }
 
@@ -181,7 +184,7 @@ impl ChunkingService {
         
         for chunk in &sorted_chunks {
             // Read encrypted chunk file
-            let chunk_bytes = std::fs::read(&chunk.temp_path)?;
+            let chunk_bytes = std::fs::read(&chunk.final_path)?;
             
             // Deserialize encrypted chunk
             let encrypted_chunk = EncryptedChunk::from_bytes(&chunk_bytes)?;
@@ -213,11 +216,11 @@ impl ChunkingService {
         Ok(())
     }
 
-    /// Clean up temporary chunk files
-    pub fn cleanup_temp_chunks(&self, chunks: &[FileChunk]) -> Result<(), ChunkingError> {
+    /// Clean up chunk files (now removes final files, use with caution)
+    pub fn cleanup_chunks(&self, chunks: &[FileChunk]) -> Result<(), ChunkingError> {
         for chunk in chunks {
-            if chunk.temp_path.exists() {
-                std::fs::remove_file(&chunk.temp_path)?;
+            if chunk.final_path.exists() {
+                std::fs::remove_file(&chunk.final_path)?;
             }
         }
         Ok(())
