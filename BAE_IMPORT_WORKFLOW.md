@@ -75,6 +75,28 @@ GET /releases/{release_id}
 
 This fetches complete release data including tracklist for import. bae converts this to `DiscogsRelease` with fields like `id`, `title`, `year`, `tracklist`, `formats`, `labels`, and `master_id`.
 
+## Storage Model
+
+bae uses a cloud-first storage approach with optional local checkouts:
+
+### Import Process
+1. **User selects source folder** containing album files
+2. **File scanning** identifies audio files and matches them to Discogs tracklist
+3. **Chunking and encryption** splits files into 1MB AES-256-GCM encrypted chunks
+4. **Cloud upload** stores all chunks in S3 storage
+5. **Local checkout** source folder remains as-is for seeding/backup (optional)
+6. **Database records** chunk locations and source folder path
+
+### Storage Locations
+- **Primary storage**: S3 cloud storage (encrypted chunks)
+- **Source checkout**: Original folder on disk (unencrypted files)
+- **Streaming cache**: `~/.bae/cache/` (encrypted chunks, LRU eviction)
+
+### Checkout Management
+- Source folders can be deleted after successful import
+- bae can recreate checkouts by downloading and reassembling chunks from S3
+- Useful for torrent seeding or local backup needs
+
 ## Implementation Requirements
 
 **Discogs API Client Methods:**
@@ -82,6 +104,12 @@ This fetches complete release data including tracklist for import. bae converts 
 - `get_master_versions()` → `Vec<DiscogsMasterReleaseVersion>`
 - `get_master()` → `DiscogsMaster`
 - `get_release()` → `DiscogsRelease`
+
+**Storage Components:**
+- `ChunkingService` splits files into encrypted chunks
+- `CloudStorageManager` handles S3 upload/download
+- `CacheManager` manages local chunk cache with size limits
+- `CheckoutManager` handles source folder lifecycle
 
 **UI Components:**
 - `SearchList` displays `Vec<DiscogsSearchResult>`

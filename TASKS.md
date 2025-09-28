@@ -2,8 +2,9 @@
 
 > [!NOTE]  
 > bae has moved beyond **pre-implementation** and now has a working core system!
-> We have a functional album import workflow with encrypted chunk storage.
-> Our current focus is expanding functionality while keeping these things out of scope:
+> We have a functional album import workflow with encrypted chunk storage and basic Subsonic streaming.
+> **Current Architecture**: Cloud-first storage with S3 as primary, local cache for streaming, optional source folder checkouts.
+> Our current focus is completing the cloud-first storage model while keeping these things out of scope:
 >
 > - Scanning or monitoring files for changes
 > - Checking disk space
@@ -69,12 +70,14 @@
   - [x] Select and configure S3 client library (AWS SDK)
   - [x] Build S3 upload/download operations
   - [x] Implement remote chunk tracking
-  - [ ] Add local cache management with size limits (pending)
-- [ ] Build unified storage controller
-  - [ ] Create storage abstraction layer
-  - [ ] Implement hybrid local/remote storage operations
-  - [ ] Add chunk caching and eviction
-  - [ ] Build streaming-optimized chunk access
+  - [x] Add hash-based chunk partitioning for scalability
+  - [x] Complete cloud chunk download in streaming pipeline
+- [x] Build cloud-first storage system
+  - [x] Update import flow to be cloud-first (no local ~/Music storage)
+  - [x] Implement CacheManager for local chunk caching with LRU eviction
+  - [x] Implement CheckoutManager for source folder lifecycle
+  - [x] Integrate cache layer into streaming pipeline
+  - [x] Add source folder path tracking to database schema
 - [x] Build library manager
   - [x] Create library management system
   - [x] Implement album and track import workflows
@@ -163,8 +166,10 @@
   - [x] Implement Subsonic response envelope system
   - [x] Integrate with LibraryManager for database access
 
-- [ ] Implement media streaming endpoints
-  - [ ] Build streaming endpoint with chunk reassembly from encrypted storage
+- [x] Implement media streaming endpoints
+  - [x] Build streaming endpoint with chunk reassembly from encrypted storage
+  - [x] Add chunk download from cloud storage
+  - [x] Integrate cache layer for high-performance streaming
   - [ ] Add HTTP range request support for seeking
   - [ ] Implement Discogs cover art proxy with caching
 
@@ -191,3 +196,20 @@
 - [ ] Implement auto-update functionality
 - [ ] Create user documentation
 - [ ] Build backup and restore functionality
+
+## Current Import Process
+
+**What happens when you import an album:**
+
+1. **User selects source folder** containing album files
+2. **File scanning** identifies audio files and matches them to Discogs tracklist  
+3. **Chunking** splits files into 1MB AES-256-GCM encrypted chunks
+4. **Cloud upload** stores all chunks in S3 with hash-based partitioning (`chunks/ab/cd/chunk_uuid.enc`)
+5. **Source folder tracking** records original folder path for optional checkout recreation
+6. **Database storage** saves album/track metadata and S3 chunk locations
+7. **Import completion** - chunks exist only in S3, source folder remains for seeding/backup
+
+**For streaming:**
+- Cache-first streaming: Check local cache → Download from S3 → Cache → Decrypt → Stream
+- Cache uses LRU eviction with configurable size limits (default: 1GB, 10K chunks)
+- CheckoutManager can recreate original files from cloud chunks for seeding/backup
