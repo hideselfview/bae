@@ -119,9 +119,17 @@ impl S3CloudStorage {
         })
     }
 
-    /// Generate S3 key for a chunk
+    /// Generate S3 key for a chunk using hash-based partitioning
+    /// Example: chunk_abcd1234-5678-9abc-def0-123456789abc -> chunks/ab/cd/chunk_abcd1234-5678-9abc-def0-123456789abc.enc
     fn chunk_key(&self, chunk_id: &str) -> String {
-        format!("chunks/{}", chunk_id)
+        if chunk_id.len() < 4 {
+            // Fallback for malformed chunk IDs
+            return format!("chunks/misc/{}.enc", chunk_id);
+        }
+        
+        let prefix = &chunk_id[..2];    // First 2 chars: "ab"
+        let subprefix = &chunk_id[2..4]; // Next 2 chars: "cd"
+        format!("chunks/{}/{}/{}.enc", prefix, subprefix, chunk_id)
     }
 }
 

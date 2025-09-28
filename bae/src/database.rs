@@ -20,6 +20,7 @@ pub struct DbAlbum {
     pub discogs_master_id: Option<String>,
     pub discogs_release_id: Option<String>,
     pub cover_art_url: Option<String>,
+    pub source_folder_path: Option<String>, // Path to original folder for checkout
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -88,6 +89,7 @@ impl Database {
                 discogs_master_id TEXT,
                 discogs_release_id TEXT,
                 cover_art_url TEXT,
+                source_folder_path TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
@@ -179,8 +181,8 @@ impl Database {
             r#"
             INSERT INTO albums (
                 id, title, artist_name, year, discogs_master_id, 
-                discogs_release_id, cover_art_url, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                discogs_release_id, cover_art_url, source_folder_path, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&album.id)
@@ -190,6 +192,7 @@ impl Database {
         .bind(&album.discogs_master_id)
         .bind(&album.discogs_release_id)
         .bind(&album.cover_art_url)
+        .bind(&album.source_folder_path)
         .bind(album.created_at.to_rfc3339())
         .bind(album.updated_at.to_rfc3339())
         .execute(&self.pool)
@@ -238,6 +241,7 @@ impl Database {
                 discogs_master_id: row.get("discogs_master_id"),
                 discogs_release_id: row.get("discogs_release_id"),
                 cover_art_url: row.get("cover_art_url"),
+                source_folder_path: row.get("source_folder_path"),
                 created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
                     .unwrap()
                     .with_timezone(&Utc),
@@ -382,6 +386,7 @@ impl DbAlbum {
     pub fn from_discogs_master(
         master: &crate::models::DiscogsMaster,
         artist_name: &str,
+        source_folder_path: Option<String>,
     ) -> Self {
         let now = Utc::now();
         DbAlbum {
@@ -392,6 +397,7 @@ impl DbAlbum {
             discogs_master_id: Some(master.id.clone()),
             discogs_release_id: None,
             cover_art_url: master.thumb.clone(),
+            source_folder_path,
             created_at: now,
             updated_at: now,
         }
@@ -400,6 +406,7 @@ impl DbAlbum {
     pub fn from_discogs_release(
         release: &crate::models::DiscogsRelease,
         artist_name: &str,
+        source_folder_path: Option<String>,
     ) -> Self {
         let now = Utc::now();
         DbAlbum {
@@ -410,6 +417,7 @@ impl DbAlbum {
             discogs_master_id: release.master_id.clone(),
             discogs_release_id: Some(release.id.clone()),
             cover_art_url: release.thumb.clone(),
+            source_folder_path,
             created_at: now,
             updated_at: now,
         }

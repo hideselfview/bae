@@ -100,7 +100,8 @@ impl LibraryManager {
         let artist_name = self.extract_artist_name(import_item)?;
         
         // Step 2: Create album record
-        let album = self.create_album_record(import_item, &artist_name)?;
+        let source_folder_path = Some(source_folder.to_string_lossy().to_string());
+        let album = self.create_album_record(import_item, &artist_name, source_folder_path)?;
         let album_id = album.id.clone();
         
         // Step 3: Create track records from Discogs tracklist
@@ -141,10 +142,10 @@ impl LibraryManager {
     }
 
     /// Create album database record from Discogs data
-    fn create_album_record(&self, import_item: &ImportItem, artist_name: &str) -> Result<DbAlbum, LibraryError> {
+    fn create_album_record(&self, import_item: &ImportItem, artist_name: &str, source_folder_path: Option<String>) -> Result<DbAlbum, LibraryError> {
         let album = match import_item {
-            ImportItem::Master(master) => DbAlbum::from_discogs_master(master, artist_name),
-            ImportItem::Release(release) => DbAlbum::from_discogs_release(release, artist_name),
+            ImportItem::Master(master) => DbAlbum::from_discogs_master(master, artist_name, source_folder_path),
+            ImportItem::Release(release) => DbAlbum::from_discogs_release(release, artist_name, source_folder_path),
         };
         
         Ok(album)
