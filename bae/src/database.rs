@@ -45,6 +45,9 @@ pub struct DbFile {
     pub original_filename: String,
     pub file_size: i64,
     pub format: String, // "flac", "mp3", etc.
+    pub flac_headers: Option<Vec<u8>>, // FLAC header blocks for instant streaming
+    pub audio_start_byte: Option<i64>, // Where audio frames begin (after headers)
+    pub has_cue_sheet: bool, // Is this a CUE/FLAC file?
     pub created_at: DateTime<Utc>,
 }
 
@@ -59,6 +62,28 @@ pub struct DbChunk {
     pub storage_location: String, // S3 key or local path
     pub is_local: bool,
     pub last_accessed: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbCueSheet {
+    pub id: String,
+    pub file_id: String,
+    pub cue_content: String, // Raw CUE file content
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbTrackPosition {
+    pub id: String,
+    pub track_id: String,
+    pub file_id: String,
+    pub start_time_ms: i64, // Track start in milliseconds
+    pub end_time_ms: i64, // Track end in milliseconds
+    pub start_byte_estimate: Option<i64>, // Estimated byte position
+    pub end_byte_estimate: Option<i64>, // Estimated byte position
+    pub start_chunk_index: i32, // First chunk containing this track
+    pub end_chunk_index: i32, // Last chunk containing this track
     pub created_at: DateTime<Utc>,
 }
 
@@ -127,6 +152,9 @@ impl Database {
                 original_filename TEXT NOT NULL,
                 file_size INTEGER NOT NULL,
                 format TEXT NOT NULL,
+                flac_headers BLOB,
+                audio_start_byte INTEGER,
+                has_cue_sheet BOOLEAN NOT NULL DEFAULT FALSE,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (track_id) REFERENCES tracks (id) ON DELETE CASCADE
             )
@@ -156,6 +184,43 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
+        // CUE sheets table (for CUE/FLAC albums)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS cue_sheets (
+                id TEXT PRIMARY KEY,
+                file_id TEXT NOT NULL,
+                cue_content TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (file_id) REFERENCES files (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Track positions table (for CUE track boundaries)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS track_positions (
+                id TEXT PRIMARY KEY,
+                track_id TEXT NOT NULL,
+                file_id TEXT NOT NULL,
+                start_time_ms INTEGER NOT NULL,
+                end_time_ms INTEGER NOT NULL,
+                start_byte_estimate INTEGER,
+                end_byte_estimate INTEGER,
+                start_chunk_index INTEGER NOT NULL,
+                end_chunk_index INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (track_id) REFERENCES tracks (id) ON DELETE CASCADE,
+                FOREIGN KEY (file_id) REFERENCES files (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
         // Create indexes for performance
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_tracks_album_id ON tracks (album_id)")
             .execute(&self.pool)
@@ -166,6 +231,18 @@ impl Database {
             .await?;
             
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_chunks_file_id ON chunks (file_id)")
+            .execute(&self.pool)
+            .await?;
+            
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_cue_sheets_file_id ON cue_sheets (file_id)")
+            .execute(&self.pool)
+            .await?;
+            
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_track_positions_track_id ON track_positions (track_id)")
+            .execute(&self.pool)
+            .await?;
+            
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_track_positions_file_id ON track_positions (file_id)")
             .execute(&self.pool)
             .await?;
 
@@ -286,8 +363,9 @@ impl Database {
         sqlx::query(
             r#"
             INSERT INTO files (
-                id, track_id, original_filename, file_size, format, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                id, track_id, original_filename, file_size, format, 
+                flac_headers, audio_start_byte, has_cue_sheet, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&file.id)
@@ -295,6 +373,9 @@ impl Database {
         .bind(&file.original_filename)
         .bind(file.file_size)
         .bind(&file.format)
+        .bind(&file.flac_headers)
+        .bind(file.audio_start_byte)
+        .bind(file.has_cue_sheet)
         .bind(file.created_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
@@ -372,6 +453,9 @@ impl Database {
                 original_filename: row.get("original_filename"),
                 file_size: row.get("file_size"),
                 format: row.get("format"),
+                flac_headers: row.get("flac_headers"),
+                audio_start_byte: row.get("audio_start_byte"),
+                has_cue_sheet: row.get("has_cue_sheet"),
                 created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
                     .unwrap()
                     .with_timezone(&Utc),
@@ -379,6 +463,132 @@ impl Database {
         }
         
         Ok(files)
+    }
+
+    /// Insert a new CUE sheet record
+    pub async fn insert_cue_sheet(&self, cue_sheet: &DbCueSheet) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO cue_sheets (
+                id, file_id, cue_content, created_at
+            ) VALUES (?, ?, ?, ?)
+            "#,
+        )
+        .bind(&cue_sheet.id)
+        .bind(&cue_sheet.file_id)
+        .bind(&cue_sheet.cue_content)
+        .bind(cue_sheet.created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        
+        Ok(())
+    }
+
+    /// Get CUE sheet for a file
+    pub async fn get_cue_sheet_for_file(&self, file_id: &str) -> Result<Option<DbCueSheet>, sqlx::Error> {
+        let row = sqlx::query("SELECT * FROM cue_sheets WHERE file_id = ?")
+            .bind(file_id)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        if let Some(row) = row {
+            Ok(Some(DbCueSheet {
+                id: row.get("id"),
+                file_id: row.get("file_id"),
+                cue_content: row.get("cue_content"),
+                created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
+                    .unwrap()
+                    .with_timezone(&Utc),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Insert a new track position record
+    pub async fn insert_track_position(&self, position: &DbTrackPosition) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO track_positions (
+                id, track_id, file_id, start_time_ms, end_time_ms,
+                start_byte_estimate, end_byte_estimate, start_chunk_index, end_chunk_index, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&position.id)
+        .bind(&position.track_id)
+        .bind(&position.file_id)
+        .bind(position.start_time_ms)
+        .bind(position.end_time_ms)
+        .bind(position.start_byte_estimate)
+        .bind(position.end_byte_estimate)
+        .bind(position.start_chunk_index)
+        .bind(position.end_chunk_index)
+        .bind(position.created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        
+        Ok(())
+    }
+
+    /// Get track position for a track
+    pub async fn get_track_position(&self, track_id: &str) -> Result<Option<DbTrackPosition>, sqlx::Error> {
+        let row = sqlx::query("SELECT * FROM track_positions WHERE track_id = ?")
+            .bind(track_id)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        if let Some(row) = row {
+            Ok(Some(DbTrackPosition {
+                id: row.get("id"),
+                track_id: row.get("track_id"),
+                file_id: row.get("file_id"),
+                start_time_ms: row.get("start_time_ms"),
+                end_time_ms: row.get("end_time_ms"),
+                start_byte_estimate: row.get("start_byte_estimate"),
+                end_byte_estimate: row.get("end_byte_estimate"),
+                start_chunk_index: row.get("start_chunk_index"),
+                end_chunk_index: row.get("end_chunk_index"),
+                created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
+                    .unwrap()
+                    .with_timezone(&Utc),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Get chunks in a specific range for a file (for CUE track streaming)
+    pub async fn get_chunks_in_range(&self, file_id: &str, chunk_range: std::ops::RangeInclusive<i32>) -> Result<Vec<DbChunk>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT * FROM chunks WHERE file_id = ? AND chunk_index >= ? AND chunk_index <= ? ORDER BY chunk_index"
+        )
+        .bind(file_id)
+        .bind(*chunk_range.start())
+        .bind(*chunk_range.end())
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut chunks = Vec::new();
+        for row in rows {
+            chunks.push(DbChunk {
+                id: row.get("id"),
+                file_id: row.get("file_id"),
+                chunk_index: row.get("chunk_index"),
+                chunk_size: row.get("chunk_size"),
+                encrypted_size: row.get("encrypted_size"),
+                checksum: row.get("checksum"),
+                storage_location: row.get("storage_location"),
+                is_local: row.get("is_local"),
+                last_accessed: row.get::<Option<String>, _>("last_accessed")
+                    .map(|s| DateTime::parse_from_rfc3339(&s).unwrap().with_timezone(&Utc)),
+                created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
+                    .unwrap()
+                    .with_timezone(&Utc),
+            });
+        }
+        
+        Ok(chunks)
     }
 }
 
@@ -457,6 +667,29 @@ impl DbFile {
             original_filename: original_filename.to_string(),
             file_size,
             format: format.to_string(),
+            flac_headers: None,
+            audio_start_byte: None,
+            has_cue_sheet: false,
+            created_at: Utc::now(),
+        }
+    }
+
+    pub fn new_cue_flac(
+        track_id: &str,
+        original_filename: &str,
+        file_size: i64,
+        flac_headers: Vec<u8>,
+        audio_start_byte: i64,
+    ) -> Self {
+        DbFile {
+            id: Uuid::new_v4().to_string(),
+            track_id: track_id.to_string(),
+            original_filename: original_filename.to_string(),
+            file_size,
+            format: "flac".to_string(),
+            flac_headers: Some(flac_headers),
+            audio_start_byte: Some(audio_start_byte),
+            has_cue_sheet: true,
             created_at: Utc::now(),
         }
     }
@@ -478,6 +711,41 @@ impl DbChunk {
             storage_location: storage_location.to_string(),
             is_local,
             last_accessed: if is_local { Some(Utc::now()) } else { None },
+            created_at: Utc::now(),
+        }
+    }
+}
+
+impl DbCueSheet {
+    pub fn new(file_id: &str, cue_content: &str) -> Self {
+        DbCueSheet {
+            id: Uuid::new_v4().to_string(),
+            file_id: file_id.to_string(),
+            cue_content: cue_content.to_string(),
+            created_at: Utc::now(),
+        }
+    }
+}
+
+impl DbTrackPosition {
+    pub fn new(
+        track_id: &str,
+        file_id: &str,
+        start_time_ms: i64,
+        end_time_ms: i64,
+        start_chunk_index: i32,
+        end_chunk_index: i32,
+    ) -> Self {
+        DbTrackPosition {
+            id: Uuid::new_v4().to_string(),
+            track_id: track_id.to_string(),
+            file_id: file_id.to_string(),
+            start_time_ms,
+            end_time_ms,
+            start_byte_estimate: None,
+            end_byte_estimate: None,
+            start_chunk_index,
+            end_chunk_index,
             created_at: Utc::now(),
         }
     }
