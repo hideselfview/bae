@@ -91,12 +91,6 @@ impl ImportItem {
         }
     }
 
-    pub fn country(&self) -> Option<&String> {
-        match self {
-            ImportItem::Master(master) => master.country.as_ref(),
-            ImportItem::Release(release) => release.country.as_ref(),
-        }
-    }
 
     pub fn format(&self) -> &[String] {
         match self {
@@ -165,55 +159,12 @@ pub struct DiscogsTrack {
 }
 
 impl DiscogsTrack {
-    /// Parse duration string from Discogs format (e.g., "3:45") to Duration
-    pub fn parse_duration(&self) -> Option<Duration> {
-        self.duration.as_ref().and_then(|d| {
-            let parts: Vec<&str> = d.split(':').collect();
-            match parts.len() {
-                2 => {
-                    let minutes = parts[0].parse::<u64>().ok()?;
-                    let seconds = parts[1].parse::<u64>().ok()?;
-                    Some(Duration::from_secs(minutes * 60 + seconds))
-                }
-                3 => {
-                    let hours = parts[0].parse::<u64>().ok()?;
-                    let minutes = parts[1].parse::<u64>().ok()?;
-                    let seconds = parts[2].parse::<u64>().ok()?;
-                    Some(Duration::from_secs(hours * 3600 + minutes * 60 + seconds))
-                }
-                _ => None,
-            }
-        })
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_discogs_track_duration_parsing() {
-        let track = DiscogsTrack {
-            position: "1".to_string(),
-            title: "Test Track".to_string(),
-            duration: Some("3:45".to_string()),
-        };
-        
-        let duration = track.parse_duration().unwrap();
-        assert_eq!(duration.as_secs(), 3 * 60 + 45);
-    }
-
-    #[test]
-    fn test_discogs_track_duration_with_hours() {
-        let track = DiscogsTrack {
-            position: "1".to_string(),
-            title: "Long Track".to_string(),
-            duration: Some("1:02:30".to_string()),
-        };
-        
-        let duration = track.parse_duration().unwrap();
-        assert_eq!(duration.as_secs(), 1 * 3600 + 2 * 60 + 30);
-    }
 
     #[test]
     fn test_album_serialization() {

@@ -22,7 +22,6 @@ pub enum DiscogsError {
 #[derive(Debug, Deserialize)]
 struct SearchResponse {
     results: Vec<DiscogsSearchResult>,
-    pagination: Pagination,
 }
 
 /// Individual search result
@@ -43,20 +42,11 @@ pub struct DiscogsSearchResult {
     pub result_type: String,
 }
 
-/// Discogs API pagination info
-#[derive(Debug, Deserialize)]
-struct Pagination {
-    pages: u32,
-    page: u32,
-    per_page: u32,
-    items: u32,
-}
 
 /// Master versions response wrapper
 #[derive(Debug, Deserialize)]
 struct MasterVersionsResponse {
     versions: Vec<VersionResponse>,
-    pagination: Pagination,
 }
 
 /// Individual version from master versions API
@@ -79,11 +69,7 @@ struct MasterResponse {
     title: String,
     year: Option<u32>,
     thumb: Option<String>,
-    images: Option<Vec<Image>>,
     tracklist: Option<Vec<TrackResponse>>,
-    artists: Option<Vec<ArtistResponse>>,
-    genres: Option<Vec<String>>,
-    styles: Option<Vec<String>>,
 }
 
 /// Detailed release response from Discogs
@@ -98,15 +84,12 @@ struct ReleaseResponse {
     country: Option<String>,
     images: Option<Vec<Image>>,
     tracklist: Option<Vec<TrackResponse>>,
-    artists: Option<Vec<ArtistResponse>>,
     master_id: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
 struct Format {
     name: String,
-    qty: String,
-    descriptions: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,7 +97,6 @@ struct Image {
     #[serde(rename = "type")]
     image_type: String,
     uri: String,
-    uri150: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -124,11 +106,6 @@ struct TrackResponse {
     duration: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct ArtistResponse {
-    name: String,
-    id: u64,
-}
 
 #[derive(Clone)]
 pub struct DiscogsClient {
@@ -215,12 +192,9 @@ impl DiscogsClient {
                 })
                 .collect();
 
-            // Extract label from artists (masters don't have direct label field)
-            let label = master
-                .artists
-                .as_ref()
-                .map(|artists| artists.iter().map(|a| a.name.clone()).collect())
-                .unwrap_or_default();
+            // Masters don't have direct label field, use empty default
+            // TODO fix this
+            let label = Vec::new();
 
             Ok(DiscogsMaster {
                 id: master.id.to_string(),

@@ -143,14 +143,6 @@ impl ApiKeyManager {
         self.get_api_key().is_ok()
     }
 
-    /// Check if an API key is stored and valid
-    pub async fn has_valid_api_key(&self) -> bool {
-        if let Ok(api_key) = self.get_api_key() {
-            self.validate_api_key(&api_key).await.unwrap_or(false)
-        } else {
-            false
-        }
-    }
 }
 
 pub fn retrieve_api_key() -> Result<String, ApiKeyError> {
@@ -169,13 +161,6 @@ pub fn check_api_key_exists() -> bool {
     get_manager().map(|m| m.has_api_key()).unwrap_or(false)
 }
 
-pub async fn check_api_key_valid() -> bool {
-    if let Ok(manager) = get_manager() {
-        manager.has_valid_api_key().await
-    } else {
-        false
-    }
-}
 
 #[cfg(test)]
 mod tests {
