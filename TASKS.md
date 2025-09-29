@@ -21,6 +21,14 @@
 - [x] Set up local Rust development environment with Dioxus tooling
 - [x] Set up Dioxus desktop project structure
 
+## Immediate Fixes
+
+- [ ] **Refactor to use shared LibraryManager instance**
+  - [ ] Create global/context-based LibraryManager instead of multiple instances
+  - [ ] Share single instance between Subsonic server and Dioxus UI components
+  - [ ] Eliminate redundant database connections and keyring access
+  - [ ] Fix UI blocking issue caused by multiple LibraryManager initializations
+
 ## Core Features
 
 ### Album Management & Desktop Interface

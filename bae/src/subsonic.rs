@@ -9,13 +9,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
-use crate::library::{LibraryManager, LibraryError};
+use crate::library::LibraryError;
+use crate::library_context::SharedLibraryManager;
 use crate::database::{DbAlbum, DbTrack};
 
 /// Subsonic API server state
 #[derive(Clone)]
 pub struct SubsonicState {
-    pub library_manager: Arc<LibraryManager>,
+    pub library_manager: SharedLibraryManager,
 }
 
 /// Common query parameters for Subsonic API
@@ -150,9 +151,9 @@ pub struct AlbumList {
 }
 
 impl SubsonicState {
-    pub fn new(library_manager: LibraryManager) -> Self {
+    pub fn new_shared(library_manager: SharedLibraryManager) -> Self {
         Self {
-            library_manager: Arc::new(library_manager),
+            library_manager,
         }
     }
 }
@@ -352,8 +353,8 @@ async fn stream_song(
 }
 
 /// Load artists from database and group by first letter
-async fn load_artists(library_manager: &LibraryManager) -> Result<ArtistsResponse, LibraryError> {
-    let albums = library_manager.get_albums().await?;
+async fn load_artists(library_manager: &SharedLibraryManager) -> Result<ArtistsResponse, LibraryError> {
+    let albums = library_manager.read().await.get_albums().await?;
     
     // Group artists by first letter
     let mut artist_map: HashMap<String, HashMap<String, u32>> = HashMap::new();
@@ -396,12 +397,12 @@ async fn load_artists(library_manager: &LibraryManager) -> Result<ArtistsRespons
 }
 
 /// Load albums from database
-async fn load_albums(library_manager: &LibraryManager) -> Result<AlbumListResponse, LibraryError> {
-    let db_albums = library_manager.get_albums().await?;
+async fn load_albums(library_manager: &SharedLibraryManager) -> Result<AlbumListResponse, LibraryError> {
+    let db_albums = library_manager.read().await.get_albums().await?;
     
     let mut albums = Vec::new();
     for db_album in db_albums {
-        let tracks = library_manager.get_tracks(&db_album.id).await?;
+        let tracks = library_manager.read().await.get_tracks(&db_album.id).await?;
         
         albums.push(Album {
             id: db_album.id.clone(),
@@ -423,16 +424,16 @@ async fn load_albums(library_manager: &LibraryManager) -> Result<AlbumListRespon
 
 /// Load album with its songs
 async fn load_album_with_songs(
-    library_manager: &LibraryManager,
+    library_manager: &SharedLibraryManager,
     album_id: &str,
 ) -> Result<serde_json::Value, LibraryError> {
-    let albums = library_manager.get_albums().await?;
+    let albums = library_manager.read().await.get_albums().await?;
     let db_album = albums
         .into_iter()
         .find(|a| a.id == album_id)
         .ok_or_else(|| LibraryError::Import("Album not found".to_string()))?;
     
-    let tracks = library_manager.get_tracks(album_id).await?;
+    let tracks = library_manager.read().await.get_tracks(album_id).await?;
     
     let songs: Vec<Song> = tracks
         .into_iter()
@@ -486,7 +487,7 @@ async fn load_album_with_songs(
 /// Stream track chunks - reassemble encrypted chunks into audio data
 /// Optimized for CUE/FLAC tracks with chunk range queries and header prepending
 async fn stream_track_chunks(
-    library_manager: &LibraryManager,
+    library_manager: &SharedLibraryManager,
     track_id: &str,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     println!("Starting chunk reassembly for track: {}", track_id);
@@ -496,7 +497,7 @@ async fn stream_track_chunks(
         .map_err(|e| format!("Failed to initialize cache: {}", e))?;
     
     // Check if this is a CUE/FLAC track with track positions
-    if let Some(track_position) = library_manager.get_track_position(track_id).await
+    if let Some(track_position) = library_manager.read().await.get_track_position(track_id).await
         .map_err(|e| format!("Database error: {}", e))? {
         
         println!("Detected CUE/FLAC track - using efficient chunk range streaming");
@@ -507,7 +508,7 @@ async fn stream_track_chunks(
     println!("Using regular file streaming");
     
     // Get files for this track
-    let files = library_manager.get_files_for_track(track_id).await?;
+    let files = library_manager.read().await.get_files_for_track(track_id).await?;
     if files.is_empty() {
         return Err("No files found for track".into());
     }
@@ -517,7 +518,7 @@ async fn stream_track_chunks(
     println!("Processing file: {} ({} bytes)", file.original_filename, file.file_size);
     
     // Get chunks for this file
-    let chunks = library_manager.get_chunks_for_file(&file.id).await?;
+    let chunks = library_manager.read().await.get_chunks_for_file(&file.id).await?;
     if chunks.is_empty() {
         return Err("No chunks found for file".into());
     }
@@ -545,7 +546,7 @@ async fn stream_track_chunks(
 
 /// Download and decrypt a single chunk with caching
 async fn download_and_decrypt_chunk(
-    library_manager: &LibraryManager,
+    library_manager: &SharedLibraryManager,
     chunk: &crate::database::DbChunk,
     cache_manager: &crate::cache::CacheManager,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
@@ -604,7 +605,7 @@ async fn download_and_decrypt_chunk(
 /// Stream CUE/FLAC track chunks efficiently using chunk ranges and header prepending
 /// This provides 85% download reduction compared to downloading entire files
 async fn stream_cue_track_chunks(
-    library_manager: &LibraryManager,
+    library_manager: &SharedLibraryManager,
     track_id: &str,
     track_position: &crate::database::DbTrackPosition,
     cache_manager: &crate::cache::CacheManager,
@@ -613,7 +614,7 @@ async fn stream_cue_track_chunks(
             track_position.start_chunk_index, track_position.end_chunk_index);
     
     // Get the file for this track
-    let files = library_manager.get_files_for_track(track_id).await?;
+    let files = library_manager.read().await.get_files_for_track(track_id).await?;
     if files.is_empty() {
         return Err("No files found for CUE track".into());
     }
@@ -631,12 +632,12 @@ async fn stream_cue_track_chunks(
     println!("Using stored FLAC headers: {} bytes", flac_headers.len());
     
     // Get the album_id for this track
-    let album_id = library_manager.get_album_id_for_track(track_id).await
+    let album_id = library_manager.read().await.get_album_id_for_track(track_id).await
         .map_err(|e| format!("Failed to get album ID: {}", e))?;
     
     // Get only the chunks we need for this track (efficient!)
     let chunk_range = track_position.start_chunk_index..=track_position.end_chunk_index;
-    let chunks = library_manager.get_chunks_in_range(&album_id, chunk_range).await
+    let chunks = library_manager.read().await.get_chunks_in_range(&album_id, chunk_range).await
         .map_err(|e| format!("Failed to get chunk range: {}", e))?;
     
     if chunks.is_empty() {

@@ -1,18 +1,14 @@
 use dioxus::prelude::*;
-use crate::library::{LibraryManager, LibraryError};
+use crate::library::LibraryError;
+use crate::library_context::use_library_manager;
 use crate::database::DbAlbum;
 use crate::Route;
-use std::path::PathBuf;
-
-/// Get the library path (same as import workflow)
-fn get_library_path() -> PathBuf {
-    let home_dir = dirs::home_dir().expect("Failed to get home directory");
-    home_dir.join("Music").join("bae")
-}
 
 /// Library browser page
 #[component]
 pub fn Library() -> Element {
+    println!("Library: Component rendering");
+    let library_manager = use_library_manager();
     let mut albums = use_signal(|| Vec::<DbAlbum>::new());
     let mut filtered_albums = use_signal(|| Vec::<DbAlbum>::new());
     let mut loading = use_signal(|| true);
@@ -21,11 +17,14 @@ pub fn Library() -> Element {
 
     // Load albums on component mount
     use_effect(move || {
+        println!("Library: Starting load_albums effect");
+        let library_manager = library_manager.clone();
         spawn(async move {
+            println!("Library: Inside async spawn, fetching albums");
             loading.set(true);
             error.set(None);
             
-            match load_albums().await {
+            match library_manager.read().await.get_albums().await {
                 Ok(album_list) => {
                     albums.set(album_list.clone());
                     filtered_albums.set(album_list);
@@ -236,9 +235,3 @@ fn AlbumCard(album: DbAlbum) -> Element {
     }
 }
 
-/// Load albums from the library database
-async fn load_albums() -> Result<Vec<DbAlbum>, LibraryError> {
-    let library_path = get_library_path();
-    let library_manager = LibraryManager::new(library_path).await?;
-    library_manager.get_albums().await
-}

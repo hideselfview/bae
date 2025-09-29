@@ -8,6 +8,7 @@ mod components;
 mod album_import_context;
 mod database;
 mod library;
+mod library_context;
 mod chunking;
 mod encryption;
 mod cloud_storage;
@@ -20,7 +21,7 @@ mod subsonic;
 use components::*;
 use components::album_import::ImportWorkflowManager;
 use album_import_context::AlbumImportContextProvider;
-use library::LibraryManager;
+use library_context::{initialize_library, get_library, LibraryContextProvider};
 use subsonic::{SubsonicState, create_router};
 use std::path::PathBuf;
 
@@ -49,8 +50,16 @@ fn get_library_path() -> PathBuf {
 }
 
 fn main() {
-    // Create tokio runtime for Subsonic server
+    // Create tokio runtime for async operations
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+    
+    // Initialize shared library manager singleton
+    println!("Main: Initializing shared library manager...");
+    let library_path = get_library_path();
+    rt.block_on(async {
+        initialize_library(library_path).await
+            .expect("Failed to initialize library manager");
+    });
     
     // Start Subsonic API server in background thread
     std::thread::spawn(move || {
@@ -58,43 +67,33 @@ fn main() {
     });
     
     // Start the desktop app (this will run in the main thread)
+    println!("Main: Starting Dioxus desktop app...");
     LaunchBuilder::desktop()
         .with_cfg(make_config())
         .launch(App);
+    println!("Main: Dioxus app launched");
 }
 
 /// Start the Subsonic API server
 async fn start_subsonic_server() {
     println!("Starting Subsonic API server...");
     
-    match LibraryManager::new(get_library_path()).await {
-        Ok(mut library_manager) => {
-            // Try to configure cloud storage
-            if let Err(e) = library_manager.try_configure_cloud_storage().await {
-                println!("Warning: Cloud storage not configured for Subsonic server: {}", e);
-            }
-            
-            let state = SubsonicState::new(library_manager);
-            let app = create_router(state);
-            
-            let listener = match tokio::net::TcpListener::bind("127.0.0.1:4533").await {
-                Ok(listener) => {
-                    println!("Subsonic API server listening on http://127.0.0.1:4533");
-                    listener
-                }
-                Err(e) => {
-                    println!("Failed to bind Subsonic server: {}", e);
-                    return;
-                }
-            };
-            
-            if let Err(e) = axum::serve(listener, app).await {
-                println!("Subsonic server error: {}", e);
-            }
+    let state = SubsonicState::new_shared(get_library());
+    let app = create_router(state);
+    
+    let listener = match tokio::net::TcpListener::bind("127.0.0.1:4533").await {
+        Ok(listener) => {
+            println!("Subsonic API server listening on http://127.0.0.1:4533");
+            listener
         }
         Err(e) => {
-            println!("Failed to initialize library for Subsonic server: {}", e);
+            println!("Failed to bind Subsonic server: {}", e);
+            return;
         }
+    };
+    
+    if let Err(e) = axum::serve(listener, app).await {
+        println!("Subsonic server error: {}", e);
     }
 }
 
@@ -111,12 +110,18 @@ fn make_window() -> WindowBuilder {
 
 #[component]
 fn App() -> Element {
+    println!("App: Rendering app component");
+    let library_manager = get_library();
+    
     rsx! {
         document::Link { rel: "icon", href: FAVICON }
         document::Link { rel: "stylesheet", href: MAIN_CSS } 
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
-        AlbumImportContextProvider {
-            Router::<Route> {}
+        LibraryContextProvider {
+            library_manager: library_manager,
+            AlbumImportContextProvider {
+                Router::<Route> {}
+            }
         }
     }
 }
