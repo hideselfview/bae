@@ -48,12 +48,16 @@ fn get_library_path() -> PathBuf {
     home_dir.join("Music").join("bae")
 }
 
-#[tokio::main]
-async fn main() {
-    // Start Subsonic API server in background
-    tokio::spawn(start_subsonic_server());
+fn main() {
+    // Create tokio runtime for Subsonic server
+    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
     
-    // Start the desktop app
+    // Start Subsonic API server in background thread
+    std::thread::spawn(move || {
+        rt.block_on(start_subsonic_server());
+    });
+    
+    // Start the desktop app (this will run in the main thread)
     LaunchBuilder::desktop()
         .with_cfg(make_config())
         .launch(App);
