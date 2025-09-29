@@ -666,7 +666,16 @@ async fn stream_cue_track_chunks(
     println!("Successfully assembled CUE track: {} bytes (headers + {} chunks)", 
             audio_data.len(), chunk_count);
     
-    // TODO: In Phase 4, add audio seeking to extract exact track boundaries
-    // For now, return the chunk range which includes the track plus some padding
-    Ok(audio_data)
+    // Phase 4: Extract precise track boundaries using audio processing
+    println!("Extracting precise track boundaries: {}ms to {}ms", 
+            track_position.start_time_ms, track_position.end_time_ms);
+    
+    let precise_audio = crate::audio_processing::AudioProcessor::extract_track_from_flac(
+        &audio_data,
+        track_position.start_time_ms as u64,
+        track_position.end_time_ms as u64,
+    ).map_err(|e| format!("Precise track extraction failed: {}", e))?;
+    
+    println!("Successfully extracted precise track: {} bytes", precise_audio.len());
+    Ok(precise_audio)
 }
