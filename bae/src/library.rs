@@ -41,10 +41,12 @@ impl LibraryManager {
     /// Create a new library manager
     pub async fn new(library_path: PathBuf) -> Result<Self, LibraryError> {
         // Ensure library directory exists
-        fs::create_dir_all(&library_path)?;
+        println!("LibraryManager: Creating library directory: {}", library_path.display());
+        tokio::fs::create_dir_all(&library_path).await?;
         
         // Initialize database
         let db_path = library_path.join("library.db");
+        println!("LibraryManager: Initializing database at: {}", db_path.display());
         let database = Database::new(db_path.to_str().unwrap()).await?;
         
         // Initialize chunking service

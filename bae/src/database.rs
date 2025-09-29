@@ -103,7 +103,9 @@ pub struct Database {
 impl Database {
     /// Initialize database connection and create tables
     pub async fn new(database_path: &str) -> Result<Self, sqlx::Error> {
-        let database_url = format!("sqlite:{}", database_path);
+        // Use sqlite:// with ?mode=rwc to create if it doesn't exist
+        let database_url = format!("sqlite://{}?mode=rwc", database_path);
+        println!("Database: Connecting to {}", database_url);
         let pool = SqlitePool::connect(&database_url).await?;
         
         let db = Database { pool };
