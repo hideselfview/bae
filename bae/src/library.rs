@@ -374,6 +374,16 @@ impl LibraryManager {
         Ok(self.database.get_chunks_for_file(file_id).await?)
     }
 
+    /// Get track position for CUE/FLAC tracks
+    pub async fn get_track_position(&self, track_id: &str) -> Result<Option<crate::database::DbTrackPosition>, LibraryError> {
+        Ok(self.database.get_track_position(track_id).await?)
+    }
+
+    /// Get chunks in a specific range for CUE/FLAC streaming
+    pub async fn get_chunks_in_range(&self, file_id: &str, chunk_range: std::ops::RangeInclusive<i32>) -> Result<Vec<DbChunk>, LibraryError> {
+        Ok(self.database.get_chunks_in_range(file_id, chunk_range).await?)
+    }
+
     /// Process a CUE/FLAC file with multiple tracks
     async fn process_cue_flac_file(
         &self,
