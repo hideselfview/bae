@@ -492,16 +492,15 @@ async fn stream_track_chunks(
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     println!("Starting chunk reassembly for track: {}", track_id);
     
-    // Initialize cache manager for this streaming session
-    let cache_manager = crate::cache::CacheManager::new().await
-        .map_err(|e| format!("Failed to initialize cache: {}", e))?;
+    // Get the global cache manager
+    let cache_manager = crate::cache::get_cache();
     
     // Check if this is a CUE/FLAC track with track positions
     if let Some(track_position) = library_manager.read().await.get_track_position(track_id).await
         .map_err(|e| format!("Database error: {}", e))? {
         
         println!("Detected CUE/FLAC track - using efficient chunk range streaming");
-        return stream_cue_track_chunks(library_manager, track_id, &track_position, &cache_manager).await;
+        return stream_cue_track_chunks(library_manager, track_id, &track_position, cache_manager).await;
     }
     
     // Fallback to regular file streaming for individual tracks
@@ -536,7 +535,7 @@ async fn stream_track_chunks(
         println!("Processing chunk {} (index {})", chunk.id, chunk.chunk_index);
         
         // Download and decrypt chunk (with caching)
-        let chunk_data = download_and_decrypt_chunk(library_manager, &chunk, &cache_manager).await?;
+        let chunk_data = download_and_decrypt_chunk(library_manager, &chunk, cache_manager).await?;
         audio_data.extend_from_slice(&chunk_data);
     }
     
@@ -548,7 +547,7 @@ async fn stream_track_chunks(
 async fn download_and_decrypt_chunk(
     library_manager: &SharedLibraryManager,
     chunk: &crate::database::DbChunk,
-    cache_manager: &crate::cache::CacheManager,
+    cache_manager: &'static crate::cache::CacheManager,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     use crate::encryption::EncryptionService;
     
@@ -608,7 +607,7 @@ async fn stream_cue_track_chunks(
     library_manager: &SharedLibraryManager,
     track_id: &str,
     track_position: &crate::database::DbTrackPosition,
-    cache_manager: &crate::cache::CacheManager,
+    cache_manager: &'static crate::cache::CacheManager,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     println!("Streaming CUE/FLAC track: chunks {}-{}", 
             track_position.start_chunk_index, track_position.end_chunk_index);

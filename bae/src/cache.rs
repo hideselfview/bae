@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{Arc, OnceLock};
 use tokio::sync::RwLock;
 use tokio::fs;
 use thiserror::Error;
@@ -58,15 +58,18 @@ pub struct CacheManager {
     current_size: Arc<RwLock<u64>>,
 }
 
+// Global instance - created once and reused
+static CACHE_MANAGER: OnceLock<CacheManager> = OnceLock::new();
+
 impl CacheManager {
-    /// Create a new cache manager with default configuration
-    pub async fn new() -> Result<Self, CacheError> {
+    /// Create a new cache manager with default configuration (private - use get_cache() instead)
+    async fn new() -> Result<Self, CacheError> {
         let config = CacheConfig::default();
         Self::new_with_config(config).await
     }
 
-    /// Create a new cache manager with custom configuration
-    pub async fn new_with_config(config: CacheConfig) -> Result<Self, CacheError> {
+    /// Create a new cache manager with custom configuration (private - use get_cache() instead)
+    async fn new_with_config(config: CacheConfig) -> Result<Self, CacheError> {
         // Ensure cache directory exists
         fs::create_dir_all(&config.cache_dir).await?;
 
@@ -273,4 +276,28 @@ pub struct CacheStats {
     pub max_size_bytes: u64,
     pub max_chunks: usize,
     pub hit_rate: f64,
+}
+
+/// Initialize the global cache manager (must be called at app startup)
+pub async fn initialize_cache() -> Result<(), CacheError> {
+    let manager = CacheManager::new().await?;
+    CACHE_MANAGER.set(manager).map_err(|_| {
+        CacheError::Config("Cache manager already initialized".to_string())
+    })?;
+    Ok(())
+}
+
+/// Initialize the global cache manager with custom config
+pub async fn initialize_cache_with_config(config: CacheConfig) -> Result<(), CacheError> {
+    let manager = CacheManager::new_with_config(config).await?;
+    CACHE_MANAGER.set(manager).map_err(|_| {
+        CacheError::Config("Cache manager already initialized".to_string())
+    })?;
+    Ok(())
+}
+
+/// Get the global cache manager instance
+pub fn get_cache() -> &'static CacheManager {
+    CACHE_MANAGER.get()
+        .expect("Cache manager not initialized - call initialize_cache first")
 }

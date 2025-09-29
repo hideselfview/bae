@@ -53,12 +53,19 @@ fn main() {
     // Create tokio runtime for async operations
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
     
-    // Initialize shared library manager singleton
-    println!("Main: Initializing shared library manager...");
-    let library_path = get_library_path();
+    // Initialize global singletons
+    println!("Main: Initializing global singletons...");
     rt.block_on(async {
+        // Initialize cache manager
+        crate::cache::initialize_cache().await
+            .expect("Failed to initialize cache manager");
+        println!("Main: Cache manager initialized");
+        
+        // Initialize library manager
+        let library_path = get_library_path();
         initialize_library(library_path).await
             .expect("Failed to initialize library manager");
+        println!("Main: Library manager initialized");
     });
     
     // Start Subsonic API server in background thread
