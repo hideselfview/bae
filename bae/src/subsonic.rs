@@ -630,9 +630,13 @@ async fn stream_cue_track_chunks(
     
     println!("Using stored FLAC headers: {} bytes", flac_headers.len());
     
+    // Get the album_id for this track
+    let album_id = library_manager.get_album_id_for_track(track_id).await
+        .map_err(|e| format!("Failed to get album ID: {}", e))?;
+    
     // Get only the chunks we need for this track (efficient!)
     let chunk_range = track_position.start_chunk_index..=track_position.end_chunk_index;
-    let chunks = library_manager.get_chunks_in_range(&file.id, chunk_range).await
+    let chunks = library_manager.get_chunks_in_range(&album_id, chunk_range).await
         .map_err(|e| format!("Failed to get chunk range: {}", e))?;
     
     if chunks.is_empty() {

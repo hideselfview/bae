@@ -104,29 +104,28 @@
   - [ ] Integrate AI for track matching (using simple filename-based mapping for now)
   - [x] Build track mapping persistence system
 
-- [ ] Implement CUE sheet support (see `BAE_CUE_FLAC_SPEC.md`)
-  - [ ] Phase 1: Database schema changes
-    - [ ] Add FLAC headers and CUE support columns to files table
-    - [ ] Create cue_sheets table for parsed CUE data
-    - [ ] Create track_positions table for track boundaries
-    - [ ] Update database models and queries
-  - [ ] Phase 2: Import changes
-    - [ ] Implement CUE sheet parser using nom crate
-    - [ ] Implement FLAC header extractor
-    - [ ] Add CUE/FLAC detection to import workflow
-    - [ ] Update chunking to skip headers and store them in DB
-  - [ ] Phase 3: Streaming changes  
-    - [ ] Update streaming to use track positions for chunk ranges
-    - [ ] Implement chunk range queries for efficient downloads
-    - [ ] Add header prepending logic from database
-    - [ ] Integrate audio seeking library for precise track boundaries
-  - [ ] Phase 4: Audio processing
-    - [ ] Research audio libraries (symphonia, rodio, ffmpeg)
-    - [ ] Implement precise track seeking within FLAC streams
-    - [ ] Add format conversion if needed for client compatibility
-    - [ ] Optimize streaming performance for CUE tracks
-  - [ ] Add CUE-to-Discogs track mapping
-  - [ ] Extend persistence for CUE-based tracks
+- [x] Implement CUE sheet support (see `BAE_CUE_FLAC_SPEC.md`)
+  - [x] Phase 1: Database schema changes
+    - [x] Add FLAC headers and CUE support columns to files table
+    - [x] Create cue_sheets table for parsed CUE data
+    - [x] Create track_positions table for track boundaries
+    - [x] Update database models and queries
+  - [x] Phase 2: Import changes
+    - [x] Implement CUE sheet parser using nom crate
+    - [x] Implement FLAC header extractor
+    - [x] Add CUE/FLAC detection to import workflow
+    - [x] Update chunking to store headers in DB and chunk entire files
+  - [x] Phase 3: Streaming changes  
+    - [x] Update streaming to use track positions for chunk ranges
+    - [x] Implement chunk range queries for efficient downloads
+    - [x] Add header prepending logic from database
+    - [x] Integrate audio seeking library for precise track boundaries
+  - [x] Phase 4: Audio processing
+    - [x] Research audio libraries (symphonia, rodio, ffmpeg)
+    - [x] Implement precise track seeking within FLAC streams
+    - [x] Add format conversion if needed for client compatibility
+    - [x] Optimize streaming performance for CUE tracks
+  - [ ] Add AI-powered CUE-to-Discogs track mapping (currently uses simple filename matching)
 
 - [ ] Design AI-powered track matching
   - [ ] Create AI prompts for file-to-track matching

@@ -4,10 +4,10 @@ This document specifies how bae serves music through encrypted chunk reassembly 
 
 ## Overview
 
-bae implements a unique streaming architecture that combines:
+bae streaming architecture combines:
 - **Encrypted chunk storage** for security and cloud distribution
-- **Subsonic API compatibility** for universal client support
-- **Real-time decryption and reassembly** for seamless playback
+- **Subsonic API compatibility** for client support
+- **Real-time decryption and reassembly** for playback
 
 ## Storage Architecture
 
@@ -18,20 +18,25 @@ bae uses a cloud-first storage model with local caching for streaming:
 ```
 Source Folder: /Users/user/Downloads/Album/
     ↓
-Import Process: Scan files → Match to Discogs → Chunk & Encrypt
+Import Process: Scan files → Match to Discogs → Album-level Chunking
     ↓
-Primary Storage: S3 (encrypted chunks)
+Album Stream: cover.jpg + notes.txt + audio files → uniform 1MB chunks
+    ↓
+Primary Storage: S3 (encrypted chunks with hash-based partitioning)
     ↓
 Local Cache: ~/.bae/cache/ (encrypted chunks, LRU eviction)
     ↓
 Streaming: Cache → Decrypt → Reassemble → Stream
 ```
 
+**Album-Level Chunking:** bae concatenates all album files (audio, artwork, notes) into a single stream and splits into uniform encrypted chunks. This provides BitTorrent compatibility while preserving privacy through uniform chunk sizes. See `BAE_IMPORT_WORKFLOW.md` for import details and `BAE_CUE_FLAC_SPEC.md` for CUE/FLAC handling.
+
 **Database Schema:**
 - `albums` → album metadata from Discogs + source folder path
 - `tracks` → individual track metadata  
 - `files` → original file info (filename, size, format)
-- `chunks` → encrypted chunk info (index, S3 location, checksum)
+- `chunks` → encrypted album chunks (index, S3 location, checksum)
+- `file_chunks` → file-to-chunk mapping (which chunks contain which files)
 
 **Chunk Format:**
 ```
@@ -103,18 +108,19 @@ All responses use standard Subsonic JSON envelope:
 
 ### Track-to-Chunks Mapping
 
-For streaming, bae maps tracks to their constituent chunks:
+For streaming, bae maps tracks to their constituent chunks via file-to-chunk mapping:
 
 ```
-Track ID → Files → Chunks → Decrypted Data → Audio Stream
+Track ID → Files → File-Chunk Mapping → Album Chunks → Decrypted Data → Audio Stream
 ```
 
 **Example Flow:**
 1. Client requests: `GET /rest/stream?id=track_123`
 2. bae queries: `SELECT * FROM files WHERE track_id = 'track_123'`
-3. bae queries: `SELECT * FROM chunks WHERE file_id = 'file_456' ORDER BY chunk_index`
-4. bae downloads/decrypts chunks in sequence
-5. bae streams reassembled audio with HTTP headers
+3. bae queries: `SELECT * FROM file_chunks WHERE file_id = 'file_456'`
+4. bae queries: `SELECT * FROM chunks WHERE album_id = 'album_789' AND chunk_index BETWEEN start_chunk AND end_chunk`
+5. bae downloads/decrypts chunks and extracts file portion using byte offsets
+6. bae streams reassembled audio with HTTP headers
 
 ### Chunk Reassembly Process
 
@@ -195,19 +201,24 @@ TODO: Implement proper user management and token-based auth.
 
 ## Current Limitations
 
-### File Format Assumptions
+### File Format Support
 
-**Current Model:** `1 file = 1 track`
-- Works for: separate MP3/FLAC files per track
-- Fails for: CUE/FLAC albums (1 file = entire album)
+**Supported Formats:**
+- Individual audio files: `1 file = 1 track` (MP3, FLAC, etc.)
+- CUE/FLAC albums: `1 file = entire album` with track boundaries
 
-### Missing Features
+### CUE Sheet Support
 
-**CUE Sheet Support:**
-- Cannot parse `.cue` files for track boundaries
-- Cannot seek to specific positions within large files
-- Cannot map CUE tracks to Discogs tracklists
-- See `BAE_CUE_FLAC_SPEC.md` for complete implementation plan
+**Implemented:**
+- Parse `.cue` files for track boundaries using nom parser
+- Seek to specific positions within large FLAC files using symphonia
+- Store FLAC headers in database for streaming
+- Chunk-range streaming reduces bandwidth
+- Precise track extraction with audio processing
+
+**Remaining:**
+- AI-powered CUE-to-Discogs track mapping (currently uses simple filename matching)
+- See `BAE_CUE_FLAC_SPEC.md` for implementation details
 
 **Transcoding:**
 - No format conversion (FLAC → MP3 for bandwidth)
@@ -220,15 +231,15 @@ TODO: Implement proper user management and token-based auth.
 - No concurrent stream management
 
 **Cloud Storage:**
-- Chunk upload works, download not implemented
-- No local cache management (need CacheManager)
-- No checkout management (need CheckoutManager)
+- Chunk upload and download implemented
+- Local cache management (CacheManager with LRU eviction)
+- Checkout management (CheckoutManager for source folders)
 
 ## Future Architecture
 
-### CUE/FLAC Support
+### CUE/FLAC Support (Completed)
 
-For albums with single FLAC + CUE sheet:
+CUE/FLAC albums are now fully supported:
 
 ```
 album.flac + album.cue
@@ -240,10 +251,11 @@ Chunk entire FLAC: 150 × 1MB encrypted chunks
 Stream with seeking: reassemble chunks + seek to track position
 ```
 
-**Database Changes:**
-- Add `cue_sheets` table for parsed CUE data
-- Add `track_positions` for seek offsets within files
-- Modify streaming to support byte-range seeking
+**Database Implementation:**
+- `cue_sheets` table stores parsed CUE data
+- `track_positions` table stores seek offsets within files
+- `files` table extended with FLAC headers and CUE flags
+- Streaming supports precise byte-range seeking with symphonia
 
 ### Transcoding Pipeline
 
@@ -303,25 +315,23 @@ Track Request → Check Local Cache → Download Missing Chunks → Decrypt → 
 
 ## Implementation Status
 
-### ✅ Completed
-- Chunk storage and encryption
-- Subsonic API server foundation
-- Basic streaming endpoint
-- Local chunk decryption and reassembly
+### Completed
+- Chunk storage and encryption (AES-256-GCM)
+- Subsonic API server foundation (axum-based)
+- Streaming endpoint with chunk reassembly
+- Cloud chunk upload and download (S3)
+- Local chunk caching with LRU eviction (CacheManager)
+- Source folder lifecycle management (CheckoutManager)
 - Database schema for tracks/files/chunks
+- **CUE/FLAC support with precise seeking**
+- **FLAC header storage for streaming**
+- **Chunk-range streaming reduces bandwidth**
 
-### 🔄 In Progress
-- Cloud chunk download
-- HTTP range request support
+### Not Implemented
+- Transcoding pipeline (FLAC → MP3/OGG for bandwidth)
+- HTTP range request support for seeking
+- Streaming optimization (buffering, concurrent streams)
+- Authentication system (currently accepts any credentials)
+- Advanced audio format conversion
 
-### ❌ Not Implemented
-- CacheManager for local chunk caching with LRU eviction
-- CheckoutManager for source folder lifecycle
-- Cloud chunk download in streaming pipeline
-- CUE sheet parsing and support
-- Transcoding pipeline
-- Streaming optimization
-- Authentication system
-- Concurrent stream management
-
-This architecture provides a solid foundation for secure, distributed music streaming while maintaining compatibility with existing Subsonic clients.
+This architecture provides encrypted chunk storage and Subsonic API compatibility.

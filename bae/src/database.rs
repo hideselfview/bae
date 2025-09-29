@@ -54,7 +54,7 @@ pub struct DbFile {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbChunk {
     pub id: String,
-    pub file_id: String,
+    pub album_id: String,
     pub chunk_index: i32,
     pub chunk_size: i64,
     pub encrypted_size: i64,
@@ -62,6 +62,17 @@ pub struct DbChunk {
     pub storage_location: String, // S3 key or local path
     pub is_local: bool,
     pub last_accessed: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbFileChunk {
+    pub id: String,
+    pub file_id: String,
+    pub start_chunk_index: i32,
+    pub end_chunk_index: i32,
+    pub start_byte_offset: i64,
+    pub end_byte_offset: i64,
     pub created_at: DateTime<Utc>,
 }
 
@@ -80,8 +91,6 @@ pub struct DbTrackPosition {
     pub file_id: String,
     pub start_time_ms: i64, // Track start in milliseconds
     pub end_time_ms: i64, // Track end in milliseconds
-    pub start_byte_estimate: Option<i64>, // Estimated byte position
-    pub end_byte_estimate: Option<i64>, // Estimated byte position
     pub start_chunk_index: i32, // First chunk containing this track
     pub end_chunk_index: i32, // Last chunk containing this track
     pub created_at: DateTime<Utc>,
@@ -96,6 +105,16 @@ impl Database {
     pub async fn new(database_path: &str) -> Result<Self, sqlx::Error> {
         let database_url = format!("sqlite:{}", database_path);
         let pool = SqlitePool::connect(&database_url).await?;
+        
+        let db = Database { pool };
+        db.create_tables().await?;
+        Ok(db)
+    }
+
+    /// Create a new in-memory database for testing
+    #[cfg(test)]
+    pub async fn new_in_memory() -> Result<Self, sqlx::Error> {
+        let pool = SqlitePool::connect("sqlite::memory:").await?;
         
         let db = Database { pool };
         db.create_tables().await?;
@@ -163,12 +182,12 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
-        // Chunks table (encrypted file chunks for cloud storage)
+        // Chunks table (encrypted album chunks for cloud storage)
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS chunks (
                 id TEXT PRIMARY KEY,
-                file_id TEXT NOT NULL,
+                album_id TEXT NOT NULL,
                 chunk_index INTEGER NOT NULL,
                 chunk_size INTEGER NOT NULL,
                 encrypted_size INTEGER NOT NULL,
@@ -176,6 +195,24 @@ impl Database {
                 storage_location TEXT NOT NULL,
                 is_local BOOLEAN NOT NULL DEFAULT FALSE,
                 last_accessed TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (album_id) REFERENCES albums (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // File chunks mapping (which chunks contain which files)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS file_chunks (
+                id TEXT PRIMARY KEY,
+                file_id TEXT NOT NULL,
+                start_chunk_index INTEGER NOT NULL,
+                end_chunk_index INTEGER NOT NULL,
+                start_byte_offset INTEGER NOT NULL,
+                end_byte_offset INTEGER NOT NULL,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (file_id) REFERENCES files (id) ON DELETE CASCADE
             )
@@ -208,8 +245,6 @@ impl Database {
                 file_id TEXT NOT NULL,
                 start_time_ms INTEGER NOT NULL,
                 end_time_ms INTEGER NOT NULL,
-                start_byte_estimate INTEGER,
-                end_byte_estimate INTEGER,
                 start_chunk_index INTEGER NOT NULL,
                 end_chunk_index INTEGER NOT NULL,
                 created_at TEXT NOT NULL,
@@ -230,7 +265,11 @@ impl Database {
             .execute(&self.pool)
             .await?;
             
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_chunks_file_id ON chunks (file_id)")
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_chunks_album_id ON chunks (album_id)")
+            .execute(&self.pool)
+            .await?;
+            
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_file_chunks_file_id ON file_chunks (file_id)")
             .execute(&self.pool)
             .await?;
             
@@ -388,13 +427,13 @@ impl Database {
         sqlx::query(
             r#"
             INSERT INTO chunks (
-                id, file_id, chunk_index, chunk_size, encrypted_size, 
+                id, album_id, chunk_index, chunk_size, encrypted_size, 
                 checksum, storage_location, is_local, last_accessed, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&chunk.id)
-        .bind(&chunk.file_id)
+        .bind(&chunk.album_id)
         .bind(chunk.chunk_index)
         .bind(chunk.chunk_size)
         .bind(chunk.encrypted_size)
@@ -409,18 +448,51 @@ impl Database {
         Ok(())
     }
 
-    /// Get chunks for a file
+    /// Insert a new file chunk mapping record
+    pub async fn insert_file_chunk(&self, file_chunk: &DbFileChunk) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO file_chunks (
+                id, file_id, start_chunk_index, end_chunk_index,
+                start_byte_offset, end_byte_offset, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&file_chunk.id)
+        .bind(&file_chunk.file_id)
+        .bind(file_chunk.start_chunk_index)
+        .bind(file_chunk.end_chunk_index)
+        .bind(file_chunk.start_byte_offset)
+        .bind(file_chunk.end_byte_offset)
+        .bind(file_chunk.created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        
+        Ok(())
+    }
+
+    /// Get chunks for a file (via file_chunks mapping)
     pub async fn get_chunks_for_file(&self, file_id: &str) -> Result<Vec<DbChunk>, sqlx::Error> {
-        let rows = sqlx::query("SELECT * FROM chunks WHERE file_id = ? ORDER BY chunk_index")
-            .bind(file_id)
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sqlx::query(
+            r#"
+            SELECT c.* FROM chunks c
+            JOIN file_chunks fc ON c.chunk_index >= fc.start_chunk_index 
+                AND c.chunk_index <= fc.end_chunk_index
+                AND c.album_id = (SELECT album_id FROM tracks WHERE id = (SELECT track_id FROM files WHERE id = ?))
+            WHERE fc.file_id = ?
+            ORDER BY c.chunk_index
+            "#
+        )
+        .bind(file_id)
+        .bind(file_id)
+        .fetch_all(&self.pool)
+        .await?;
 
         let mut chunks = Vec::new();
         for row in rows {
             chunks.push(DbChunk {
                 id: row.get("id"),
-                file_id: row.get("file_id"),
+                album_id: row.get("album_id"),
                 chunk_index: row.get("chunk_index"),
                 chunk_size: row.get("chunk_size"),
                 encrypted_size: row.get("encrypted_size"),
@@ -436,6 +508,30 @@ impl Database {
         }
         
         Ok(chunks)
+    }
+
+    /// Get file chunk mapping for a file
+    pub async fn get_file_chunk_mapping(&self, file_id: &str) -> Result<Option<DbFileChunk>, sqlx::Error> {
+        let row = sqlx::query("SELECT * FROM file_chunks WHERE file_id = ?")
+            .bind(file_id)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        if let Some(row) = row {
+            Ok(Some(DbFileChunk {
+                id: row.get("id"),
+                file_id: row.get("file_id"),
+                start_chunk_index: row.get("start_chunk_index"),
+                end_chunk_index: row.get("end_chunk_index"),
+                start_byte_offset: row.get("start_byte_offset"),
+                end_byte_offset: row.get("end_byte_offset"),
+                created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
+                    .unwrap()
+                    .with_timezone(&Utc),
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Get files for a track
@@ -511,8 +607,8 @@ impl Database {
             r#"
             INSERT INTO track_positions (
                 id, track_id, file_id, start_time_ms, end_time_ms,
-                start_byte_estimate, end_byte_estimate, start_chunk_index, end_chunk_index, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                start_chunk_index, end_chunk_index, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&position.id)
@@ -520,8 +616,6 @@ impl Database {
         .bind(&position.file_id)
         .bind(position.start_time_ms)
         .bind(position.end_time_ms)
-        .bind(position.start_byte_estimate)
-        .bind(position.end_byte_estimate)
         .bind(position.start_chunk_index)
         .bind(position.end_chunk_index)
         .bind(position.created_at.to_rfc3339())
@@ -545,8 +639,6 @@ impl Database {
                 file_id: row.get("file_id"),
                 start_time_ms: row.get("start_time_ms"),
                 end_time_ms: row.get("end_time_ms"),
-                start_byte_estimate: row.get("start_byte_estimate"),
-                end_byte_estimate: row.get("end_byte_estimate"),
                 start_chunk_index: row.get("start_chunk_index"),
                 end_chunk_index: row.get("end_chunk_index"),
                 created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
@@ -558,12 +650,12 @@ impl Database {
         }
     }
 
-    /// Get chunks in a specific range for a file (for CUE track streaming)
-    pub async fn get_chunks_in_range(&self, file_id: &str, chunk_range: std::ops::RangeInclusive<i32>) -> Result<Vec<DbChunk>, sqlx::Error> {
+    /// Get chunks in a specific range for an album (for CUE track streaming)
+    pub async fn get_chunks_in_range(&self, album_id: &str, chunk_range: std::ops::RangeInclusive<i32>) -> Result<Vec<DbChunk>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT * FROM chunks WHERE file_id = ? AND chunk_index >= ? AND chunk_index <= ? ORDER BY chunk_index"
+            "SELECT * FROM chunks WHERE album_id = ? AND chunk_index >= ? AND chunk_index <= ? ORDER BY chunk_index"
         )
-        .bind(file_id)
+        .bind(album_id)
         .bind(*chunk_range.start())
         .bind(*chunk_range.end())
         .fetch_all(&self.pool)
@@ -573,7 +665,7 @@ impl Database {
         for row in rows {
             chunks.push(DbChunk {
                 id: row.get("id"),
-                file_id: row.get("file_id"),
+                album_id: row.get("album_id"),
                 chunk_index: row.get("chunk_index"),
                 chunk_size: row.get("chunk_size"),
                 encrypted_size: row.get("encrypted_size"),
@@ -696,21 +788,46 @@ impl DbFile {
 }
 
 impl DbChunk {
-    pub fn from_file_chunk(
-        file_chunk: &crate::chunking::FileChunk,
+    pub fn from_album_chunk(
+        chunk_id: &str,
+        album_id: &str,
+        chunk_index: i32,
+        original_size: usize,
+        encrypted_size: usize,
+        checksum: &str,
         storage_location: &str,
         is_local: bool,
     ) -> Self {
         DbChunk {
-            id: file_chunk.id.clone(),
-            file_id: file_chunk.file_id.clone(),
-            chunk_index: file_chunk.chunk_index,
-            chunk_size: file_chunk.original_size as i64,
-            encrypted_size: file_chunk.encrypted_size as i64,
-            checksum: file_chunk.checksum.clone(),
+            id: chunk_id.to_string(),
+            album_id: album_id.to_string(),
+            chunk_index,
+            chunk_size: original_size as i64,
+            encrypted_size: encrypted_size as i64,
+            checksum: checksum.to_string(),
             storage_location: storage_location.to_string(),
             is_local,
             last_accessed: if is_local { Some(Utc::now()) } else { None },
+            created_at: Utc::now(),
+        }
+    }
+}
+
+impl DbFileChunk {
+    pub fn new(
+        file_id: &str,
+        start_chunk_index: i32,
+        end_chunk_index: i32,
+        start_byte_offset: i64,
+        end_byte_offset: i64,
+    ) -> Self {
+        DbFileChunk {
+            id: Uuid::new_v4().to_string(),
+            file_id: file_id.to_string(),
+            start_chunk_index,
+            end_chunk_index,
+            start_byte_offset,
+            end_byte_offset,
             created_at: Utc::now(),
         }
     }
@@ -742,8 +859,6 @@ impl DbTrackPosition {
             file_id: file_id.to_string(),
             start_time_ms,
             end_time_ms,
-            start_byte_estimate: None,
-            end_byte_estimate: None,
             start_chunk_index,
             end_chunk_index,
             created_at: Utc::now(),
