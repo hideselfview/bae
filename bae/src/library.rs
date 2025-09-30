@@ -32,14 +32,13 @@ pub enum LibraryError {
 /// 5. Upload chunks to cloud storage
 pub struct LibraryManager {
     database: Database,
-    library_path: PathBuf,
     chunking_service: ChunkingService,
     cloud_storage: Option<CloudStorageManager>,
 }
 
 impl LibraryManager {
-    /// Create a new library manager
-    pub async fn new(library_path: PathBuf) -> Result<Self, LibraryError> {
+    /// Create a new library manager with optional cloud storage
+    pub async fn new(library_path: PathBuf, cloud_storage: Option<CloudStorageManager>) -> Result<Self, LibraryError> {
         // Ensure library directory exists
         println!("LibraryManager: Creating library directory: {}", library_path.display());
         tokio::fs::create_dir_all(&library_path).await?;
@@ -54,55 +53,9 @@ impl LibraryManager {
         
         Ok(LibraryManager {
             database,
-            library_path,
             chunking_service,
-            cloud_storage: None, // Cloud storage is optional
+            cloud_storage,
         })
-    }
-
-    /// Enable cloud storage with the given manager
-    pub fn enable_cloud_storage(&mut self, cloud_storage: CloudStorageManager) {
-        self.cloud_storage = Some(cloud_storage);
-    }
-
-    /// Check if cloud storage is enabled
-    pub fn has_cloud_storage(&self) -> bool {
-        self.cloud_storage.is_some()
-    }
-
-    /// Create a new library manager with in-memory database for testing
-    #[cfg(test)]
-    pub async fn new_for_testing() -> Result<Self, LibraryError> {
-        // Initialize in-memory database
-        let database = Database::new_in_memory().await?;
-        
-        // Initialize chunking service for testing (avoids keychain access)
-        let chunking_service = ChunkingService::new_for_testing()?;
-        
-        Ok(LibraryManager {
-            database,
-            library_path: std::env::temp_dir().join("bae_test"),
-            chunking_service,
-            cloud_storage: None,
-        })
-    }
-
-    /// Try to configure cloud storage from environment variables
-    pub async fn try_configure_cloud_storage(&mut self) -> Result<bool, LibraryError> {
-        use crate::cloud_storage::S3Config;
-        
-        match S3Config::from_env() {
-            Ok(config) => {
-                println!("LibraryManager: Configuring S3 cloud storage (bucket: {})", config.bucket_name);
-                let cloud_storage = CloudStorageManager::new_s3(config).await?;
-                self.enable_cloud_storage(cloud_storage);
-                Ok(true)
-            }
-            Err(_) => {
-                println!("LibraryManager: No cloud storage configuration found, using local storage only");
-                Ok(false)
-            }
-        }
     }
 
     /// Import an album from Discogs metadata and local folder
@@ -241,7 +194,6 @@ impl LibraryManager {
                 mappings.push(FileMapping {
                     track_id: track.id.clone(),
                     source_path: audio_file.clone(),
-                    track_title: track.title.clone(),
                 });
             } else {
                 println!("LibraryManager: Warning - no file found for track: {}", track.title);
@@ -279,7 +231,6 @@ impl LibraryManager {
                     mappings.push(FileMapping {
                         track_id: db_track.id.clone(),
                         source_path: pair.flac_path.clone(),
-                        track_title: db_track.title.clone(),
                     });
                     
                     println!("LibraryManager: Mapped CUE track '{}' to DB track '{}'", 
@@ -650,209 +601,6 @@ impl LibraryManager {
         }
         Err(LibraryError::TrackMapping("Track not found in any album".to_string()))
     }
-
-    /// Process a CUE/FLAC file with multiple tracks
-    async fn process_cue_flac_file(
-        &self,
-        source_path: &Path,
-        file_mappings: Vec<&FileMapping>,
-        file_size: i64,
-    ) -> Result<(), LibraryError> {
-        use crate::cue_flac::CueFlacProcessor;
-        use crate::database::{DbCueSheet, DbTrackPosition};
-        
-        println!("  Processing CUE/FLAC file: {} bytes", file_size);
-        
-        // Extract FLAC headers
-        let flac_headers = CueFlacProcessor::extract_flac_headers(source_path)
-            .map_err(|e| LibraryError::TrackMapping(format!("Failed to extract FLAC headers: {}", e)))?;
-        
-        println!("  Extracted FLAC headers: {} bytes, audio starts at byte {}", 
-                flac_headers.headers.len(), flac_headers.audio_start_byte);
-        
-        // Find the corresponding CUE file
-        let cue_path = source_path.with_extension("cue");
-        if !cue_path.exists() {
-            return Err(LibraryError::TrackMapping(
-                format!("CUE file not found: {}", cue_path.display())
-            ));
-        }
-        
-        // Parse CUE sheet
-        let cue_sheet = CueFlacProcessor::parse_cue_sheet(&cue_path)
-            .map_err(|e| LibraryError::TrackMapping(format!("Failed to parse CUE sheet: {}", e)))?;
-        
-        // Create file record with FLAC headers (use first track's ID as primary)
-        let primary_track_id = &file_mappings[0].track_id;
-        let filename = source_path.file_name().unwrap().to_str().unwrap();
-        
-        let db_file = crate::database::DbFile::new_cue_flac(
-            primary_track_id,
-            filename,
-            file_size,
-            flac_headers.headers.clone(),
-            flac_headers.audio_start_byte as i64,
-        );
-        let file_id = db_file.id.clone();
-        
-        // Save file record to database
-        self.database.insert_file(&db_file).await?;
-        
-        // Store CUE sheet in database
-        let cue_content = std::fs::read_to_string(&cue_path)?;
-        let db_cue_sheet = DbCueSheet::new(&file_id, &cue_content);
-        self.database.insert_cue_sheet(&db_cue_sheet).await?;
-        
-        // Chunk the entire FLAC file once
-        println!("  Chunking entire FLAC file");
-        let temp_dir = std::env::temp_dir().join("bae_import_chunks");
-        tokio::fs::create_dir_all(&temp_dir).await?;
-        let chunks = self.chunking_service
-            .chunk_file(source_path, &file_id, &temp_dir)
-            .await?;
-        
-        println!("  Created {} chunks for entire file", chunks.len());
-        
-        // Upload chunks to cloud storage
-        let cloud_storage = self.cloud_storage.as_ref()
-            .ok_or_else(|| LibraryError::CloudStorage(
-                crate::cloud_storage::CloudStorageError::Config("Cloud storage not configured - required for import".to_string())
-            ))?;
-        
-        for chunk in &chunks {
-            println!("    Uploading chunk {} to cloud storage", chunk.id);
-            let cloud_location = cloud_storage.upload_chunk_file(&chunk.id, &chunk.final_path).await?;
-            
-            // Clean up temp file after successful upload
-            if let Err(e) = tokio::fs::remove_file(&chunk.final_path).await {
-                println!("    Warning: Failed to clean up temp file {}: {}", chunk.final_path.display(), e);
-            }
-            
-            // Store only cloud location in database
-            let db_chunk = crate::database::DbChunk::from_album_chunk(
-                &chunk.id,
-                &primary_track_id, // TODO: This should be album_id, not track_id
-                chunk.chunk_index,
-                chunk.original_size,
-                chunk.encrypted_size,
-                &chunk.checksum,
-                &cloud_location,
-                false,
-            );
-            self.database.insert_chunk(&db_chunk).await?;
-        }
-        
-        // Create track position records for each track
-        const CHUNK_SIZE: i64 = 1024 * 1024; // 1MB chunks
-        
-        // Process each track in the CUE sheet (index not needed, tracks are matched by position in vec)
-        for (_index, (mapping, cue_track)) in file_mappings.iter().zip(cue_sheet.tracks.iter()).enumerate() {
-            // Calculate byte positions
-            let start_byte = CueFlacProcessor::estimate_byte_position(
-                cue_track.start_time_ms,
-                &flac_headers,
-                file_size as u64,
-            ) as i64;
-            
-            let end_byte = if let Some(end_time_ms) = cue_track.end_time_ms {
-                CueFlacProcessor::estimate_byte_position(
-                    end_time_ms,
-                    &flac_headers,
-                    file_size as u64,
-                ) as i64
-            } else {
-                file_size // Last track goes to end of file
-            };
-            
-            // Calculate chunk indices (relative to audio start)
-            let audio_start = flac_headers.audio_start_byte as i64;
-            let start_chunk_index = ((start_byte - audio_start).max(0) / CHUNK_SIZE) as i32;
-            let end_chunk_index = ((end_byte - audio_start).max(0) / CHUNK_SIZE) as i32;
-            
-            // Create track position record
-            let track_position = DbTrackPosition::new(
-                &mapping.track_id,
-                &file_id,
-                cue_track.start_time_ms as i64,
-                cue_track.end_time_ms.unwrap_or(0) as i64,
-                start_chunk_index,
-                end_chunk_index,
-            );
-            
-            self.database.insert_track_position(&track_position).await?;
-            
-            println!("  Created track position for '{}': chunks {}-{}", 
-                    mapping.track_title, start_chunk_index, end_chunk_index);
-        }
-        
-        println!("  Successfully processed CUE/FLAC file with {} tracks", file_mappings.len());
-        Ok(())
-    }
-
-    /// Process an individual audio file (non-CUE/FLAC)
-    async fn process_individual_file(
-        &self,
-        mapping: &FileMapping,
-        file_size: i64,
-        format: &str,
-    ) -> Result<(), LibraryError> {
-        println!("  Processing individual file for track {}", mapping.track_title);
-        
-        // Create file record
-        let filename = mapping.source_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("unknown");
-            
-        let db_file = crate::database::DbFile::new(&mapping.track_id, filename, file_size, format);
-        let file_id = db_file.id.clone();
-        
-        // Save file record to database
-        self.database.insert_file(&db_file).await?;
-        
-        // Chunk the file to temp directory for cloud upload
-        println!("    Chunking file: {} bytes", file_size);
-        let temp_dir = std::env::temp_dir().join("bae_import_chunks");
-        tokio::fs::create_dir_all(&temp_dir).await?;
-        let chunks = self.chunking_service
-            .chunk_file(&mapping.source_path, &file_id, &temp_dir)
-            .await?;
-        
-        println!("    Created {} chunks", chunks.len());
-        
-        // Upload chunks to cloud storage (required for cloud-first model)
-        let cloud_storage = self.cloud_storage.as_ref()
-            .ok_or_else(|| LibraryError::CloudStorage(
-                crate::cloud_storage::CloudStorageError::Config("Cloud storage not configured - required for import".to_string())
-            ))?;
-        
-        for chunk in &chunks {
-            // Upload to cloud storage - fail import if upload fails
-            println!("      Uploading chunk {} to cloud storage", chunk.id);
-            let cloud_location = cloud_storage.upload_chunk_file(&chunk.id, &chunk.final_path).await?;
-            
-            // Clean up temp file after successful upload
-            if let Err(e) = tokio::fs::remove_file(&chunk.final_path).await {
-                println!("      Warning: Failed to clean up temp file {}: {}", chunk.final_path.display(), e);
-            }
-            
-            // Store only cloud location in database
-            let db_chunk = crate::database::DbChunk::from_album_chunk(
-                &chunk.id,
-                &mapping.track_id, // TODO: This should be album_id, not track_id
-                chunk.chunk_index,
-                chunk.original_size,
-                chunk.encrypted_size,
-                &chunk.checksum,
-                &cloud_location,
-                false,
-            );
-            self.database.insert_chunk(&db_chunk).await?;
-        }
-        
-        println!("    Successfully processed individual file with {} chunks", chunks.len());
-        Ok(())
-    }
 }
 
 /// Represents a mapping between a track and its source audio file
@@ -860,48 +608,4 @@ impl LibraryManager {
 struct FileMapping {
     track_id: String,
     source_path: PathBuf,
-    track_title: String,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-    use crate::models::DiscogsMaster;
-
-    #[tokio::test]
-    async fn test_library_manager_with_mock_cloud_storage() {
-        // Create library manager with in-memory database for testing
-        let mut library_manager = LibraryManager::new_for_testing().await.unwrap();
-        
-        // Enable mock cloud storage
-        let cloud_storage = CloudStorageManager::new_mock();
-        library_manager.enable_cloud_storage(cloud_storage);
-        
-        assert!(library_manager.has_cloud_storage());
-        
-        // Test creating an album (without actual files for simplicity)
-        let master = DiscogsMaster {
-            id: "123".to_string(),
-            title: "Test Album".to_string(),
-            year: Some(2023),
-            thumb: Some("http://example.com/thumb.jpg".to_string()),
-            tracklist: vec![],
-            label: vec!["Test Label".to_string()],
-            country: Some("US".to_string()),
-        };
-        
-        let _import_item = ImportItem::Master(master);
-        
-        // This would normally process files, but we're just testing the setup
-        // The actual file processing is tested in the chunking module
-        println!("Library manager with cloud storage created successfully");
-    }
-
-    #[tokio::test]
-    async fn test_library_manager_without_cloud_storage() {
-        let library_manager = LibraryManager::new_for_testing().await.unwrap();
-        
-        assert!(!library_manager.has_cloud_storage());
-    }
 }

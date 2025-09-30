@@ -356,7 +356,7 @@ async fn stream_song(
 
 /// Load artists from database and group by first letter
 async fn load_artists(library_manager: &SharedLibraryManager) -> Result<ArtistsResponse, LibraryError> {
-    let albums = library_manager.read().await.get_albums().await?;
+    let albums = library_manager.get().get_albums().await?;
     
     // Group artists by first letter
     let mut artist_map: HashMap<String, HashMap<String, u32>> = HashMap::new();
@@ -400,11 +400,11 @@ async fn load_artists(library_manager: &SharedLibraryManager) -> Result<ArtistsR
 
 /// Load albums from database
 async fn load_albums(library_manager: &SharedLibraryManager) -> Result<AlbumListResponse, LibraryError> {
-    let db_albums = library_manager.read().await.get_albums().await?;
+    let db_albums = library_manager.get().get_albums().await?;
     
     let mut albums = Vec::new();
     for db_album in db_albums {
-        let tracks = library_manager.read().await.get_tracks(&db_album.id).await?;
+        let tracks = library_manager.get().get_tracks(&db_album.id).await?;
         
         albums.push(Album {
             id: db_album.id.clone(),
@@ -429,13 +429,13 @@ async fn load_album_with_songs(
     library_manager: &SharedLibraryManager,
     album_id: &str,
 ) -> Result<serde_json::Value, LibraryError> {
-    let albums = library_manager.read().await.get_albums().await?;
+    let albums = library_manager.get().get_albums().await?;
     let db_album = albums
         .into_iter()
         .find(|a| a.id == album_id)
         .ok_or_else(|| LibraryError::Import("Album not found".to_string()))?;
     
-    let tracks = library_manager.read().await.get_tracks(album_id).await?;
+    let tracks = library_manager.get().get_tracks(album_id).await?;
     
     let songs: Vec<Song> = tracks
         .into_iter()
@@ -498,7 +498,7 @@ async fn stream_track_chunks(
     let cache_manager = crate::cache::get_cache();
     
     // Check if this is a CUE/FLAC track with track positions
-    if let Some(track_position) = library_manager.read().await.get_track_position(track_id).await
+    if let Some(track_position) = library_manager.get().get_track_position(track_id).await
         .map_err(|e| format!("Database error: {}", e))? {
         
         println!("Detected CUE/FLAC track - using efficient chunk range streaming");
@@ -509,7 +509,7 @@ async fn stream_track_chunks(
     println!("Using regular file streaming");
     
     // Get files for this track
-    let files = library_manager.read().await.get_files_for_track(track_id).await?;
+    let files = library_manager.get().get_files_for_track(track_id).await?;
     if files.is_empty() {
         return Err("No files found for track".into());
     }
@@ -519,7 +519,7 @@ async fn stream_track_chunks(
     println!("Processing file: {} ({} bytes)", file.original_filename, file.file_size);
     
     // Get chunks for this file
-    let chunks = library_manager.read().await.get_chunks_for_file(&file.id).await?;
+    let chunks = library_manager.get().get_chunks_for_file(&file.id).await?;
     if chunks.is_empty() {
         return Err("No chunks found for file".into());
     }
@@ -616,7 +616,7 @@ async fn stream_cue_track_chunks(
             track_position.start_chunk_index, track_position.end_chunk_index);
     
     // Get the file for this track
-    let files = library_manager.read().await.get_files_for_track(track_id).await?;
+    let files = library_manager.get().get_files_for_track(track_id).await?;
     if files.is_empty() {
         return Err("No files found for CUE track".into());
     }
@@ -634,12 +634,12 @@ async fn stream_cue_track_chunks(
     println!("Using stored FLAC headers: {} bytes", flac_headers.len());
     
     // Get the album_id for this track
-    let album_id = library_manager.read().await.get_album_id_for_track(track_id).await
+    let album_id = library_manager.get().get_album_id_for_track(track_id).await
         .map_err(|e| format!("Failed to get album ID: {}", e))?;
     
     // Get only the chunks we need for this track (efficient!)
     let chunk_range = track_position.start_chunk_index..=track_position.end_chunk_index;
-    let chunks = library_manager.read().await.get_chunks_in_range(&album_id, chunk_range).await
+    let chunks = library_manager.get().get_chunks_in_range(&album_id, chunk_range).await
         .map_err(|e| format!("Failed to get chunk range: {}", e))?;
     
     if chunks.is_empty() {

@@ -1,13 +1,12 @@
 use dioxus::prelude::*;
 use crate::library::LibraryManager;
 use std::sync::{Arc, OnceLock};
-use tokio::sync::RwLock;
 use std::path::PathBuf;
 
 /// Shared library manager that can be accessed from both UI and Subsonic server
 #[derive(Clone)]
 pub struct SharedLibraryManager {
-    inner: Arc<RwLock<LibraryManager>>,
+    inner: Arc<LibraryManager>,
 }
 
 // Global instance - created once and reused
@@ -22,10 +21,8 @@ impl PartialEq for SharedLibraryManager {
 impl SharedLibraryManager {
     /// Create a new shared library manager (private - use get() instead)
     async fn new(library_path: PathBuf) -> Result<Self, crate::library::LibraryError> {
-        let mut library_manager = LibraryManager::new(library_path).await?;
-        
-        // Try to configure cloud storage from keyring (not environment variables)
-        if let Ok(s3_config_data) = crate::s3_config::retrieve_s3_config() {
+        // Try to configure cloud storage from keyring first
+        let cloud_storage = if let Ok(s3_config_data) = crate::s3_config::retrieve_s3_config() {
             let cloud_config = crate::cloud_storage::S3Config {
                 bucket_name: s3_config_data.bucket_name,
                 region: s3_config_data.region,
@@ -37,29 +34,29 @@ impl SharedLibraryManager {
             match crate::cloud_storage::CloudStorageManager::new_s3(cloud_config).await {
                 Ok(cloud_storage) => {
                     println!("LibraryManager: Cloud storage configured successfully");
-                    library_manager.enable_cloud_storage(cloud_storage);
+                    Some(cloud_storage)
                 }
                 Err(e) => {
                     println!("Warning: Failed to initialize cloud storage: {}", e);
+                    None
                 }
             }
         } else {
             println!("LibraryManager: No cloud storage configuration found in keyring");
-        }
+            None
+        };
+        
+        // Create library manager with cloud storage already configured
+        let library_manager = LibraryManager::new(library_path, cloud_storage).await?;
         
         Ok(SharedLibraryManager {
-            inner: Arc::new(RwLock::new(library_manager)),
+            inner: Arc::new(library_manager),
         })
     }
 
-    /// Get a read lock on the library manager
-    pub async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, LibraryManager> {
-        self.inner.read().await
-    }
-
-    /// Get a write lock on the library manager
-    pub async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, LibraryManager> {
-        self.inner.write().await
+    /// Get a reference to the library manager
+    pub fn get(&self) -> &LibraryManager {
+        &self.inner
     }
 }
 

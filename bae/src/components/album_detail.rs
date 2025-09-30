@@ -236,7 +236,7 @@ fn format_duration(duration_ms: i64) -> String {
 /// Load album and tracks from the database
 async fn load_album_details(album_id: &str) -> Result<(DbAlbum, Vec<DbTrack>), LibraryError> {
     let library_path = get_library_path();
-    let library_manager = LibraryManager::new(library_path).await?;
+    let library_manager = LibraryManager::new(library_path, None).await?;
     
     // Get all albums to find the one we want
     let albums = library_manager.get_albums().await?;

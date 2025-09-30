@@ -23,7 +23,7 @@ pub fn Library() -> Element {
             loading.set(true);
             error.set(None);
             
-            match library_manager.read().await.get_albums().await {
+            match library_manager.get().get_albums().await {
                 Ok(album_list) => {
                     albums.set(album_list.clone());
                     filtered_albums.set(album_list);
