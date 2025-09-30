@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use thiserror::Error;
-use crate::database::{Database, DbAlbum};
+use crate::database::DbAlbum;
 use crate::library::LibraryManager;
 use crate::cloud_storage::CloudStorageManager;
 use crate::encryption::EncryptionService;

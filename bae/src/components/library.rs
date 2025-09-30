@@ -1,5 +1,4 @@
 use dioxus::prelude::*;
-use crate::library::LibraryError;
 use crate::library_context::use_library_manager;
 use crate::database::DbAlbum;
 use crate::Route;

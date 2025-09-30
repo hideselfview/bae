@@ -1,6 +1,6 @@
 use crate::database::{Database, DbAlbum, DbTrack, DbFile, DbChunk};
 use crate::models::ImportItem;
-use crate::chunking::{ChunkingService, ChunkingError, FileChunkMapping};
+use crate::chunking::{AlbumChunkingResult, ChunkingError, ChunkingService, FileChunkMapping};
 use crate::cloud_storage::{CloudStorageManager, CloudStorageError};
 use std::path::{Path, PathBuf};
 use std::fs;
@@ -344,11 +344,6 @@ impl LibraryManager {
 
     /// Process audio files using album-level chunking - chunk entire album folder, encrypt, and store metadata
     async fn process_audio_files(&self, mappings: &[FileMapping], album_id: &str) -> Result<(), LibraryError> {
-        use crate::cue_flac::CueFlacProcessor;
-        use crate::database::{DbCueSheet, DbTrackPosition, DbFileChunk};
-        use crate::chunking::{AlbumChunkingResult, FileChunkMapping};
-        use std::collections::HashMap;
-        
         if mappings.is_empty() {
             return Ok(());
         }
@@ -433,8 +428,6 @@ impl LibraryManager {
         track_mappings: &[FileMapping],
         chunk_mappings: &[FileChunkMapping],
     ) -> Result<(), LibraryError> {
-        use crate::cue_flac::CueFlacProcessor;
-        use crate::database::{DbCueSheet, DbTrackPosition, DbFileChunk};
         use std::collections::HashMap;
         
         // Create a lookup map for chunk mappings by file path
@@ -463,10 +456,6 @@ impl LibraryManager {
                 .and_then(|ext| ext.to_str())
                 .unwrap_or("unknown")
                 .to_lowercase();
-            let filename = source_path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("unknown");
             
             // Check if this is a CUE/FLAC file
             let is_cue_flac = file_mappings.len() > 1 && format == "flac";
@@ -650,9 +639,8 @@ impl LibraryManager {
 
     /// Get album ID for a track
     pub async fn get_album_id_for_track(&self, track_id: &str) -> Result<String, LibraryError> {
-        let tracks = self.database.get_tracks_for_album("").await?; // This won't work
-        // For now, let's add a proper database method
-        // In the meantime, we'll use a workaround
+        // TODO: Add a proper database method to lookup album_id by track_id directly
+        // For now, iterate through all albums to find the track
         let albums = self.database.get_albums().await?;
         for album in albums {
             let tracks = self.database.get_tracks_for_album(&album.id).await?;
@@ -757,7 +745,8 @@ impl LibraryManager {
         // Create track position records for each track
         const CHUNK_SIZE: i64 = 1024 * 1024; // 1MB chunks
         
-        for (index, (mapping, cue_track)) in file_mappings.iter().zip(cue_sheet.tracks.iter()).enumerate() {
+        // Process each track in the CUE sheet (index not needed, tracks are matched by position in vec)
+        for (_index, (mapping, cue_track)) in file_mappings.iter().zip(cue_sheet.tracks.iter()).enumerate() {
             // Calculate byte positions
             let start_byte = CueFlacProcessor::estimate_byte_position(
                 cue_track.start_time_ms,

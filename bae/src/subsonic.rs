@@ -1,17 +1,15 @@
 use axum::{
     extract::{Query, State},
     http::StatusCode,
-    response::{IntoResponse, Response},
+    response::IntoResponse,
     routing::get,
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use crate::library::LibraryError;
 use crate::library_context::SharedLibraryManager;
-use crate::database::{DbAlbum, DbTrack};
 
 /// Subsonic API server state
 #[derive(Clone)]
@@ -172,7 +170,8 @@ pub fn create_router(state: SubsonicState) -> Router {
 }
 
 /// Ping endpoint - basic connectivity test
-async fn ping(Query(params): Query<SubsonicQuery>) -> impl IntoResponse {
+/// Ping endpoint - params required by Subsonic API spec but not used for simple health check
+async fn ping(Query(_params): Query<SubsonicQuery>) -> impl IntoResponse {
     let response = SubsonicResponse {
         subsonic_response: SubsonicResponseInner {
             status: "ok".to_string(),
@@ -185,7 +184,8 @@ async fn ping(Query(params): Query<SubsonicQuery>) -> impl IntoResponse {
 }
 
 /// Get license info - always return valid for open source
-async fn get_license(Query(params): Query<SubsonicQuery>) -> impl IntoResponse {
+/// params required by Subsonic API spec but not used in this endpoint
+async fn get_license(Query(_params): Query<SubsonicQuery>) -> impl IntoResponse {
     let license = License {
         valid: true,
         email: "opensource@bae.music".to_string(),
@@ -204,8 +204,9 @@ async fn get_license(Query(params): Query<SubsonicQuery>) -> impl IntoResponse {
 }
 
 /// Get artists index
+/// params required by Subsonic API spec but not currently validated
 async fn get_artists(
-    Query(params): Query<SubsonicQuery>,
+    Query(_params): Query<SubsonicQuery>,
     State(state): State<SubsonicState>,
 ) -> impl IntoResponse {
     match load_artists(&state.library_manager).await {
@@ -237,8 +238,9 @@ async fn get_artists(
 }
 
 /// Get album list
+/// params required by Subsonic API spec but not currently validated
 async fn get_album_list(
-    Query(params): Query<SubsonicQuery>,
+    Query(_params): Query<SubsonicQuery>,
     State(state): State<SubsonicState>,
 ) -> impl IntoResponse {
     match load_albums(&state.library_manager).await {
@@ -271,7 +273,7 @@ async fn get_album_list(
 
 /// Get album with tracks
 async fn get_album(
-    Query(mut params): Query<HashMap<String, String>>,
+    Query(params): Query<HashMap<String, String>>,
     State(state): State<SubsonicState>,
 ) -> impl IntoResponse {
     let album_id = match params.get("id") {
@@ -544,8 +546,9 @@ async fn stream_track_chunks(
 }
 
 /// Download and decrypt a single chunk with caching
+/// TODO: Use library_manager's cloud storage instead of creating new client from env
 async fn download_and_decrypt_chunk(
-    library_manager: &SharedLibraryManager,
+    _library_manager: &SharedLibraryManager,
     chunk: &crate::database::DbChunk,
     cache_manager: &'static crate::cache::CacheManager,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
