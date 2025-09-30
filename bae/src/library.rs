@@ -129,15 +129,19 @@ impl LibraryManager {
         // Step 4: Find and map audio files to tracks
         let file_mappings = self.map_files_to_tracks(source_folder, &tracks).await?;
         
-        // Step 5: Save to database
+        // Step 5: Process files (chunking, encryption, upload to cloud)
+        // Do this BEFORE database inserts so we can rollback if it fails
+        println!("LibraryManager: Processing and uploading files (this may take several minutes for large albums)...");
+        self.process_audio_files(&file_mappings, &album_id).await?;
+        
+        // Step 6: Save to database AFTER successful upload
+        // This ensures we don't have database records for albums that failed to upload
+        println!("LibraryManager: Upload complete, saving to database...");
         self.database.insert_album(&album).await?;
         
         for track in &tracks {
             self.database.insert_track(track).await?;
         }
-        
-        // Step 6: Process files (chunking, encryption, storage will be added later)
-        self.process_audio_files(&file_mappings, &album_id).await?;
         
         println!("LibraryManager: Successfully imported album {} with {} tracks", 
                 album.title, tracks.len());
@@ -378,9 +382,16 @@ impl LibraryManager {
             .ok_or_else(|| LibraryError::CloudStorage(
                 crate::cloud_storage::CloudStorageError::Config("Cloud storage not configured - required for import".to_string())
             ))?;
+        
+        println!("LibraryManager: Uploading {} chunks to cloud storage...", album_result.chunks.len());
+        let total_chunks = album_result.chunks.len();
+        
+        for (index, chunk) in album_result.chunks.iter().enumerate() {
+            if index % 100 == 0 || index == total_chunks - 1 {
+                let progress = ((index + 1) as f64 / total_chunks as f64) * 100.0;
+                println!("  Upload progress: {}/{} chunks ({:.1}%)", index + 1, total_chunks, progress);
+            }
             
-        for chunk in &album_result.chunks {
-            println!("  Uploading album chunk {} to cloud storage", chunk.id);
             let cloud_location = cloud_storage.upload_chunk_file(&chunk.id, &chunk.final_path).await?;
             
             // Clean up temp file after successful upload
