@@ -206,7 +206,12 @@ impl ChunkingService {
         // Close the concatenated file
         drop(concat_file);
         
-        println!("ChunkingService: Concatenated {} files, total size: {} bytes", file_paths.len(), total_bytes_processed);
+        println!("ChunkingService: Concatenated {} files, total size: {} bytes ({:.2} MB)", 
+                 file_paths.len(), total_bytes_processed, total_bytes_processed as f64 / 1024.0 / 1024.0);
+        
+        // Calculate expected chunks for progress reporting
+        let expected_chunks = ((total_bytes_processed + self.config.chunk_size as u64 - 1) / self.config.chunk_size as u64) as usize;
+        println!("ChunkingService: Creating {} encrypted chunks (1MB each)...", expected_chunks);
         
         // Now chunk the concatenated file
         let concat_file = std::fs::File::open(&temp_concat_path)?;
@@ -225,6 +230,13 @@ impl ChunkingService {
             
             chunks.push(chunk);
             current_chunk_index += 1;
+            
+            // Progress reporting every 100 chunks
+            if current_chunk_index % 100 == 0 {
+                let progress = (current_chunk_index as f64 / expected_chunks as f64) * 100.0;
+                println!("ChunkingService: Progress: {}/{} chunks ({:.1}%)", 
+                         current_chunk_index, expected_chunks, progress);
+            }
         }
         
         // Clean up temporary concatenated file
