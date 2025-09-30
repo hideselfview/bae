@@ -239,10 +239,26 @@ impl CueFlacProcessor {
     
     /// Parse CUE sheet content using nom
     fn parse_cue_content(input: &str) -> IResult<&str, CueSheet> {
-        let (input, _) = many0(alt((line_ending, space1)))(input)?;
+        // Skip any initial whitespace or comments
+        let (input, _) = many0(alt((line_ending, space1, Self::parse_comment_line, Self::parse_file_line)))(input)?;
         
-        let (input, title) = Self::parse_title(input)?;
-        let (input, performer) = Self::parse_performer(input)?;
+        // Parse TITLE and PERFORMER in any order
+        let (input, (title, performer)) = alt((
+            |i| {
+                let (i, performer) = Self::parse_performer(i)?;
+                let (i, title) = Self::parse_title(i)?;
+                Ok((i, (title, performer)))
+            },
+            |i| {
+                let (i, title) = Self::parse_title(i)?;
+                let (i, performer) = Self::parse_performer(i)?;
+                Ok((i, (title, performer)))
+            },
+        ))(input)?;
+        
+        // Skip FILE line if present
+        let (input, _) = many0(alt((line_ending, space1, Self::parse_file_line)))(input)?;
+        
         let (input, tracks) = Self::parse_tracks(input)?;
         
         // Calculate end times for tracks
@@ -260,9 +276,25 @@ impl CueFlacProcessor {
         }))
     }
     
+    /// Parse and skip a REM (comment) line
+    fn parse_comment_line(input: &str) -> IResult<&str, &str> {
+        let (input, _) = tag("REM")(input)?;
+        let (input, _) = take_until("\n")(input)?;
+        let (input, _) = line_ending(input)?;
+        Ok((input, ""))
+    }
+    
+    /// Parse and skip a FILE line
+    fn parse_file_line(input: &str) -> IResult<&str, &str> {
+        let (input, _) = tag("FILE")(input)?;
+        let (input, _) = take_until("\n")(input)?;
+        let (input, _) = line_ending(input)?;
+        Ok((input, ""))
+    }
+    
     /// Parse TITLE line
     fn parse_title(input: &str) -> IResult<&str, String> {
-        let (input, _) = many0(alt((line_ending, space1)))(input)?;
+        let (input, _) = many0(alt((line_ending, space1, Self::parse_comment_line)))(input)?;
         let (input, _) = tag("TITLE")(input)?;
         let (input, _) = space1(input)?;
         let (input, title) = Self::parse_quoted_string(input)?;
@@ -272,7 +304,7 @@ impl CueFlacProcessor {
     
     /// Parse PERFORMER line
     fn parse_performer(input: &str) -> IResult<&str, String> {
-        let (input, _) = many0(alt((line_ending, space1)))(input)?;
+        let (input, _) = many0(alt((line_ending, space1, Self::parse_comment_line)))(input)?;
         let (input, _) = tag("PERFORMER")(input)?;
         let (input, _) = space1(input)?;
         let (input, performer) = Self::parse_quoted_string(input)?;
@@ -287,7 +319,7 @@ impl CueFlacProcessor {
     
     /// Parse a single TRACK entry
     fn parse_track(input: &str) -> IResult<&str, CueTrack> {
-        let (input, _) = many0(alt((line_ending, space1)))(input)?;
+        let (input, _) = many0(alt((line_ending, space1, Self::parse_comment_line)))(input)?;
         let (input, _) = tag("TRACK")(input)?;
         let (input, _) = space1(input)?;
         let (input, number) = map_res(digit1, |s: &str| s.parse::<u32>())(input)?;
@@ -388,10 +420,217 @@ mod tests {
     }
     
     #[test]
+    fn test_parse_time_zero() {
+        let result = CueFlacProcessor::parse_time("00:00:00");
+        assert!(result.is_ok());
+        let (_, time_ms) = result.unwrap();
+        assert_eq!(time_ms, 0);
+    }
+    
+    #[test]
+    fn test_parse_time_large_values() {
+        // Test with large minute value (60+ minutes)
+        let result = CueFlacProcessor::parse_time("60:35:00");
+        assert!(result.is_ok());
+        let (_, time_ms) = result.unwrap();
+        assert_eq!(time_ms, 60 * 60 * 1000 + 35 * 1000);
+    }
+    
+    #[test]
     fn test_parse_quoted_string() {
         let result = CueFlacProcessor::parse_quoted_string("\"Test Album\"");
         assert!(result.is_ok());
         let (_, string) = result.unwrap();
         assert_eq!(string, "Test Album");
+    }
+    
+    #[test]
+    fn test_parse_quoted_string_with_special_chars() {
+        let result = CueFlacProcessor::parse_quoted_string("\"Weird Tales: i. Electric Frost / ii. Golgotha / iii. Altar of Melektaus\"");
+        assert!(result.is_ok());
+        let (_, string) = result.unwrap();
+        assert_eq!(string, "Weird Tales: i. Electric Frost / ii. Golgotha / iii. Altar of Melektaus");
+    }
+    
+    #[test]
+    fn test_parse_comment_line() {
+        let input = "REM GENRE \"Doom Metal\"\n";
+        let result = CueFlacProcessor::parse_comment_line(input);
+        assert!(result.is_ok());
+        let (remaining, _) = result.unwrap();
+        assert_eq!(remaining, "");
+    }
+    
+    #[test]
+    fn test_parse_file_line() {
+        let input = "FILE \"Electric Wizard - Dopethrone.flac\" WAVE\n";
+        let result = CueFlacProcessor::parse_file_line(input);
+        assert!(result.is_ok());
+        let (remaining, _) = result.unwrap();
+        assert_eq!(remaining, "");
+    }
+    
+    #[test]
+    fn test_parse_simple_cue_sheet() {
+        let cue_content = r#"PERFORMER "Test Artist"
+TITLE "Test Album"
+FILE "test.flac" WAVE
+  TRACK 01 AUDIO
+    TITLE "Track 1"
+    PERFORMER "Test Artist"
+    INDEX 01 00:00:00
+  TRACK 02 AUDIO
+    TITLE "Track 2"
+    PERFORMER "Test Artist"
+    INDEX 01 03:45:00
+"#;
+        
+        let result = CueFlacProcessor::parse_cue_content(cue_content);
+        assert!(result.is_ok());
+        let (_, cue_sheet) = result.unwrap();
+        
+        assert_eq!(cue_sheet.title, "Test Album");
+        assert_eq!(cue_sheet.performer, "Test Artist");
+        assert_eq!(cue_sheet.tracks.len(), 2);
+        assert_eq!(cue_sheet.tracks[0].title, "Track 1");
+        assert_eq!(cue_sheet.tracks[0].start_time_ms, 0);
+        assert_eq!(cue_sheet.tracks[1].title, "Track 2");
+        assert_eq!(cue_sheet.tracks[1].start_time_ms, 3 * 60 * 1000 + 45 * 1000);
+    }
+    
+    #[test]
+    fn test_parse_cue_sheet_with_comments() {
+        let cue_content = r#"REM GENRE "Doom Metal"
+REM DATE 2000 / 2004
+REM COMMENT "Vinyl Rip by Necromandus"
+PERFORMER "Electric Wizard"
+TITLE "Dopethrone"
+FILE "Electric Wizard - Dopethrone.flac" WAVE
+  TRACK 01 AUDIO
+    TITLE "Vinum Sabbathi"
+    PERFORMER "Electric Wizard"
+    INDEX 01 00:00:00
+  TRACK 02 AUDIO
+    TITLE "Funeralopolis"
+    PERFORMER "Electric Wizard"
+    INDEX 01 03:04:00
+"#;
+        
+        let result = CueFlacProcessor::parse_cue_content(cue_content);
+        assert!(result.is_ok());
+        let (_, cue_sheet) = result.unwrap();
+        
+        assert_eq!(cue_sheet.title, "Dopethrone");
+        assert_eq!(cue_sheet.performer, "Electric Wizard");
+        assert_eq!(cue_sheet.tracks.len(), 2);
+        assert_eq!(cue_sheet.tracks[0].title, "Vinum Sabbathi");
+        assert_eq!(cue_sheet.tracks[1].title, "Funeralopolis");
+    }
+    
+    #[test]
+    fn test_parse_cue_sheet_with_windows_line_endings() {
+        // Windows line endings (\r\n)
+        let cue_content = "REM GENRE \"Doom Metal\"\r\nPERFORMER \"Test Artist\"\r\nTITLE \"Test Album\"\r\nFILE \"test.flac\" WAVE\r\n  TRACK 01 AUDIO\r\n    TITLE \"Track 1\"\r\n    PERFORMER \"Test Artist\"\r\n    INDEX 01 00:00:00\r\n";
+        
+        let result = CueFlacProcessor::parse_cue_content(cue_content);
+        assert!(result.is_ok());
+        let (_, cue_sheet) = result.unwrap();
+        
+        assert_eq!(cue_sheet.title, "Test Album");
+        assert_eq!(cue_sheet.performer, "Test Artist");
+        assert_eq!(cue_sheet.tracks.len(), 1);
+    }
+    
+    #[test]
+    fn test_parse_cue_sheet_calculates_end_times() {
+        let cue_content = r#"PERFORMER "Test Artist"
+TITLE "Test Album"
+FILE "test.flac" WAVE
+  TRACK 01 AUDIO
+    TITLE "Track 1"
+    PERFORMER "Test Artist"
+    INDEX 01 00:00:00
+  TRACK 02 AUDIO
+    TITLE "Track 2"
+    PERFORMER "Test Artist"
+    INDEX 01 03:00:00
+  TRACK 03 AUDIO
+    TITLE "Track 3"
+    PERFORMER "Test Artist"
+    INDEX 01 06:00:00
+"#;
+        
+        let result = CueFlacProcessor::parse_cue_content(cue_content);
+        assert!(result.is_ok());
+        let (_, cue_sheet) = result.unwrap();
+        
+        // Track 1 should end where Track 2 starts
+        assert_eq!(cue_sheet.tracks[0].end_time_ms, Some(3 * 60 * 1000));
+        // Track 2 should end where Track 3 starts
+        assert_eq!(cue_sheet.tracks[1].end_time_ms, Some(6 * 60 * 1000));
+        // Track 3 should have no end time (last track)
+        assert_eq!(cue_sheet.tracks[2].end_time_ms, None);
+    }
+    
+    #[test]
+    fn test_parse_cue_sheet_without_per_track_performer() {
+        // Some CUE sheets only have album-level performer
+        let cue_content = r#"PERFORMER "Test Artist"
+TITLE "Test Album"
+FILE "test.flac" WAVE
+  TRACK 01 AUDIO
+    TITLE "Track 1"
+    INDEX 01 00:00:00
+  TRACK 02 AUDIO
+    TITLE "Track 2"
+    INDEX 01 03:00:00
+"#;
+        
+        let result = CueFlacProcessor::parse_cue_content(cue_content);
+        assert!(result.is_ok());
+        let (_, cue_sheet) = result.unwrap();
+        
+        assert_eq!(cue_sheet.tracks.len(), 2);
+        // Tracks without explicit performer should have None
+        assert_eq!(cue_sheet.tracks[0].performer, None);
+        assert_eq!(cue_sheet.tracks[1].performer, None);
+    }
+    
+    #[test]
+    fn test_estimate_byte_position() {
+        let flac_headers = FlacHeaders {
+            headers: vec![],
+            audio_start_byte: 1000,
+            sample_rate: 44100,
+            total_samples: 44100 * 60, // 60 seconds of audio
+            channels: 2,
+            bits_per_sample: 16,
+        };
+        
+        let file_size = 1000 + 1000000; // 1000 byte header + 1MB audio
+        
+        // At 30 seconds (halfway), should be roughly halfway through audio
+        let position = CueFlacProcessor::estimate_byte_position(30000, &flac_headers, file_size);
+        
+        // Should be approximately: 1000 (header) + 500000 (half of audio)
+        assert!(position > 400000 && position < 600000);
+    }
+    
+    #[test]
+    fn test_estimate_byte_position_at_start() {
+        let flac_headers = FlacHeaders {
+            headers: vec![],
+            audio_start_byte: 1000,
+            sample_rate: 44100,
+            total_samples: 44100 * 60,
+            channels: 2,
+            bits_per_sample: 16,
+        };
+        
+        let file_size = 1000 + 1000000;
+        
+        // At 0 seconds, should be at audio start
+        let position = CueFlacProcessor::estimate_byte_position(0, &flac_headers, file_size);
+        assert_eq!(position, 1000);
     }
 }
