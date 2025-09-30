@@ -512,30 +512,6 @@ impl Database {
         Ok(chunks)
     }
 
-    /// Get file chunk mapping for a file
-    pub async fn get_file_chunk_mapping(&self, file_id: &str) -> Result<Option<DbFileChunk>, sqlx::Error> {
-        let row = sqlx::query("SELECT * FROM file_chunks WHERE file_id = ?")
-            .bind(file_id)
-            .fetch_optional(&self.pool)
-            .await?;
-
-        if let Some(row) = row {
-            Ok(Some(DbFileChunk {
-                id: row.get("id"),
-                file_id: row.get("file_id"),
-                start_chunk_index: row.get("start_chunk_index"),
-                end_chunk_index: row.get("end_chunk_index"),
-                start_byte_offset: row.get("start_byte_offset"),
-                end_byte_offset: row.get("end_byte_offset"),
-                created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
-                    .unwrap()
-                    .with_timezone(&Utc),
-            }))
-        } else {
-            Ok(None)
-        }
-    }
-
     /// Get files for a track
     pub async fn get_files_for_track(&self, track_id: &str) -> Result<Vec<DbFile>, sqlx::Error> {
         let rows = sqlx::query("SELECT * FROM files WHERE track_id = ?")
@@ -580,27 +556,6 @@ impl Database {
         .await?;
         
         Ok(())
-    }
-
-    /// Get CUE sheet for a file
-    pub async fn get_cue_sheet_for_file(&self, file_id: &str) -> Result<Option<DbCueSheet>, sqlx::Error> {
-        let row = sqlx::query("SELECT * FROM cue_sheets WHERE file_id = ?")
-            .bind(file_id)
-            .fetch_optional(&self.pool)
-            .await?;
-
-        if let Some(row) = row {
-            Ok(Some(DbCueSheet {
-                id: row.get("id"),
-                file_id: row.get("file_id"),
-                cue_content: row.get("cue_content"),
-                created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
-                    .unwrap()
-                    .with_timezone(&Utc),
-            }))
-        } else {
-            Ok(None)
-        }
     }
 
     /// Insert a new track position record

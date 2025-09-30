@@ -103,14 +103,6 @@ impl ImportItem {
         matches!(self, ImportItem::Master(_))
     }
 
-    /// Get the master ID for database storage
-    pub fn master_id(&self) -> Option<&str> {
-        match self {
-            ImportItem::Master(master) => Some(&master.id),
-            ImportItem::Release(release) => release.master_id.as_deref(),
-        }
-    }
-
     /// Get the tracklist for AI matching
     pub fn tracklist(&self) -> &[DiscogsTrack] {
         match self {

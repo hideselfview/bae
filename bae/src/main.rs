@@ -14,7 +14,6 @@ mod chunking;
 mod encryption;
 mod cloud_storage;
 mod cache;
-mod checkout;
 mod cue_flac;
 mod audio_processing;
 mod subsonic;
