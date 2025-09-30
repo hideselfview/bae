@@ -4,6 +4,7 @@ use dioxus::desktop::{Config, WindowBuilder};
 mod models;
 mod discogs;
 mod api_keys;
+mod s3_config;
 mod components;
 mod album_import_context;
 mod database;

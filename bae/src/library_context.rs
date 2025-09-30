@@ -24,9 +24,27 @@ impl SharedLibraryManager {
     async fn new(library_path: PathBuf) -> Result<Self, crate::library::LibraryError> {
         let mut library_manager = LibraryManager::new(library_path).await?;
         
-        // Try to configure cloud storage
-        if let Err(e) = library_manager.try_configure_cloud_storage().await {
-            println!("Warning: Cloud storage not configured: {}", e);
+        // Try to configure cloud storage from keyring (not environment variables)
+        if let Ok(s3_config_data) = crate::s3_config::retrieve_s3_config() {
+            let cloud_config = crate::cloud_storage::S3Config {
+                bucket_name: s3_config_data.bucket_name,
+                region: s3_config_data.region,
+                access_key_id: s3_config_data.access_key_id,
+                secret_access_key: s3_config_data.secret_access_key,
+                endpoint_url: s3_config_data.endpoint_url,
+            };
+            
+            match crate::cloud_storage::CloudStorageManager::new_s3(cloud_config).await {
+                Ok(cloud_storage) => {
+                    println!("LibraryManager: Cloud storage configured successfully");
+                    library_manager.enable_cloud_storage(cloud_storage);
+                }
+                Err(e) => {
+                    println!("Warning: Failed to initialize cloud storage: {}", e);
+                }
+            }
+        } else {
+            println!("LibraryManager: No cloud storage configuration found in keyring");
         }
         
         Ok(SharedLibraryManager {
