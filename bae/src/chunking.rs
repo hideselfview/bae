@@ -45,13 +45,11 @@ pub struct AlbumChunk {
 /// Represents the mapping of a file to chunks within an album
 #[derive(Debug, Clone)]
 pub struct FileChunkMapping {
-    pub file_id: String,
     pub file_path: std::path::PathBuf,
     pub start_chunk_index: i32,
     pub end_chunk_index: i32,
     pub start_byte_offset: i64,
     pub end_byte_offset: i64,
-    pub file_size: u64,
 }
 
 /// Result of album-level chunking
@@ -59,7 +57,6 @@ pub struct FileChunkMapping {
 pub struct AlbumChunkingResult {
     pub chunks: Vec<AlbumChunk>,
     pub file_mappings: Vec<FileChunkMapping>,
-    pub total_size: u64,
 }
 
 /// Main chunking service that handles file splitting and encryption
@@ -118,17 +115,12 @@ impl ChunkingService {
             let start_chunk_index = (start_byte / self.config.chunk_size as u64) as i32;
             let end_chunk_index = ((end_byte - 1) / self.config.chunk_size as u64) as i32;
             
-            // Generate file ID from path
-            let file_id = uuid::Uuid::new_v4().to_string();
-            
             file_mappings.push(FileChunkMapping {
-                file_id,
                 file_path: file_path.clone(),
                 start_chunk_index,
                 end_chunk_index,
                 start_byte_offset: (start_byte % self.config.chunk_size as u64) as i64,
                 end_byte_offset: ((end_byte - 1) % self.config.chunk_size as u64) as i64,
-                file_size,
             });
             
             total_bytes_processed = end_byte;
@@ -180,7 +172,6 @@ impl ChunkingService {
         Ok(AlbumChunkingResult {
             chunks,
             file_mappings,
-            total_size: total_bytes_processed,
         })
     }
 

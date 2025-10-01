@@ -376,7 +376,7 @@ impl LibraryManager {
     /// Process file mappings - create file records and chunk mappings
     async fn process_file_mappings(
         &self,
-        track_mappings: &[FileMapping],
+        file_mappings: &[FileMapping],
         chunk_mappings: &[FileChunkMapping],
     ) -> Result<(), LibraryError> {
         use std::collections::HashMap;
@@ -389,7 +389,7 @@ impl LibraryManager {
         
         // Group track mappings by source file to handle CUE/FLAC
         let mut file_groups: HashMap<&Path, Vec<&FileMapping>> = HashMap::new();
-        for mapping in track_mappings {
+        for mapping in file_mappings {
             file_groups.entry(mapping.source_path.as_path()).or_default().push(mapping);
         }
         

@@ -39,8 +39,6 @@ impl Default for CacheConfig {
 /// Metadata about a cached chunk
 #[derive(Debug, Clone)]
 struct CacheEntry {
-    /// Chunk ID
-    chunk_id: String,
     /// File path in cache
     file_path: PathBuf,
     /// Size in bytes
@@ -127,7 +125,6 @@ impl CacheManager {
 
         // Update cache metadata
         let entry = CacheEntry {
-            chunk_id: chunk_id.to_string(),
             file_path: cache_file_path,
             size_bytes: chunk_size,
             last_accessed: std::time::SystemTime::now(),
@@ -150,39 +147,6 @@ impl CacheManager {
         Ok(())
     }
 
-    /// Get current cache statistics
-    pub async fn get_stats(&self) -> CacheStats {
-        let entries = self.entries.read().await;
-        let current_size = self.current_size.read().await;
-        
-        CacheStats {
-            total_chunks: entries.len(),
-            total_size_bytes: *current_size,
-            max_size_bytes: self.config.max_size_bytes,
-            max_chunks: self.config.max_chunks,
-            hit_rate: 0.0, // TODO: Track hit/miss ratio
-        }
-    }
-
-    /// Clear all cached chunks
-    pub async fn clear(&self) -> Result<(), CacheError> {
-        let mut entries = self.entries.write().await;
-        let mut current_size = self.current_size.write().await;
-
-        // Remove all cache files
-        for entry in entries.values() {
-            if let Err(e) = fs::remove_file(&entry.file_path).await {
-                println!("Warning: Failed to remove cache file {}: {}", entry.file_path.display(), e);
-            }
-        }
-
-        entries.clear();
-        *current_size = 0;
-
-        println!("CacheManager: Cleared all cached chunks");
-        Ok(())
-    }
-
     /// Load existing cache entries from disk on startup
     async fn load_existing_cache(&self) -> Result<(), CacheError> {
         let mut entries = self.entries.write().await;
@@ -200,7 +164,6 @@ impl CacheManager {
                     match entry.metadata().await {
                         Ok(metadata) => {
                             let cache_entry = CacheEntry {
-                                chunk_id: chunk_id.clone(),
                                 file_path: path,
                                 size_bytes: metadata.len(),
                                 last_accessed: metadata.accessed().unwrap_or(std::time::SystemTime::now()),
@@ -268,28 +231,10 @@ impl CacheManager {
     }
 }
 
-/// Cache statistics
-#[derive(Debug, Clone)]
-pub struct CacheStats {
-    pub total_chunks: usize,
-    pub total_size_bytes: u64,
-    pub max_size_bytes: u64,
-    pub max_chunks: usize,
-    pub hit_rate: f64,
-}
 
 /// Initialize the global cache manager (must be called at app startup)
 pub async fn initialize_cache() -> Result<(), CacheError> {
     let manager = CacheManager::new().await?;
-    CACHE_MANAGER.set(manager).map_err(|_| {
-        CacheError::Config("Cache manager already initialized".to_string())
-    })?;
-    Ok(())
-}
-
-/// Initialize the global cache manager with custom config
-pub async fn initialize_cache_with_config(config: CacheConfig) -> Result<(), CacheError> {
-    let manager = CacheManager::new_with_config(config).await?;
     CACHE_MANAGER.set(manager).map_err(|_| {
         CacheError::Config("Cache manager already initialized".to_string())
     })?;

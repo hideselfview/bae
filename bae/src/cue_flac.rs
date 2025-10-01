@@ -19,12 +19,11 @@ pub enum CueFlacError {
     Flac(String),
     #[error("CUE parsing error: {0}")]
     CueParsing(String),
-    #[error("Invalid time format: {0}")]
-    InvalidTime(String),
 }
 
 /// Represents a single track in a CUE sheet
 #[derive(Debug, Clone)]
+#[allow(dead_code)] 
 pub struct CueTrack {
     pub number: u32,
     pub title: String,
@@ -35,6 +34,7 @@ pub struct CueTrack {
 
 /// Represents a parsed CUE sheet
 #[derive(Debug, Clone)]
+#[allow(dead_code)] 
 pub struct CueSheet {
     pub title: String,
     pub performer: String,
@@ -43,6 +43,7 @@ pub struct CueSheet {
 
 /// FLAC header information extracted from file
 #[derive(Debug, Clone)]
+#[allow(dead_code)] 
 pub struct FlacHeaders {
     pub headers: Vec<u8>,           // Raw header blocks
     pub audio_start_byte: u64,      // Where audio frames begin

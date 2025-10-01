@@ -3,8 +3,6 @@ use aes_gcm::{
     Aes256Gcm, Nonce, Key
 };
 use thiserror::Error;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 
 #[derive(Error, Debug)]
 pub enum EncryptionError {
@@ -78,12 +76,19 @@ impl KeyStorage for KeyringStorage {
     }
 }
 
+#[cfg(test)]
+use std::collections::HashMap;
+#[cfg(test)]
+use std::sync::{Arc, Mutex};
+
 /// In-memory key storage for testing
+#[cfg(test)]
 #[derive(Clone)]
 struct InMemoryStorage {
     keys: Arc<Mutex<HashMap<String, String>>>,
 }
 
+#[cfg(test)]
 impl InMemoryStorage {
     fn new() -> Self {
         InMemoryStorage {
@@ -92,6 +97,7 @@ impl InMemoryStorage {
     }
 }
 
+#[cfg(test)]
 impl KeyStorage for InMemoryStorage {
     fn store_key(&self, key_id: &str, key: &Key<Aes256Gcm>) -> Result<(), EncryptionError> {
         let key_hex = hex::encode(key.as_slice());
@@ -128,7 +134,6 @@ impl KeyStorage for InMemoryStorage {
 pub struct EncryptionService {
     cipher: Aes256Gcm,
     key_id: String,
-    storage: Box<dyn KeyStorage>,
 }
 
 impl EncryptionService {
@@ -138,7 +143,8 @@ impl EncryptionService {
     }
 
     /// Create a new encryption service with in-memory storage (for testing)
-    pub fn new_for_testing(key_id: String) -> Result<Self, EncryptionError> {
+    #[cfg(test)]
+    fn new_for_testing(key_id: String) -> Result<Self, EncryptionError> {
         Self::new_with_storage(key_id, Box::new(InMemoryStorage::new()))
     }
 
@@ -157,7 +163,7 @@ impl EncryptionService {
         
         let cipher = Aes256Gcm::new(&key);
         
-        Ok(EncryptionService { cipher, key_id, storage })
+        Ok(EncryptionService { cipher, key_id })
     }
 
     /// Encrypt data with AES-256-GCM

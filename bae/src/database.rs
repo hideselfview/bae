@@ -113,16 +113,6 @@ impl Database {
         Ok(db)
     }
 
-    /// Create a new in-memory database for testing
-    #[cfg(test)]
-    pub async fn new_in_memory() -> Result<Self, sqlx::Error> {
-        let pool = SqlitePool::connect("sqlite::memory:").await?;
-        
-        let db = Database { pool };
-        db.create_tables().await?;
-        Ok(db)
-    }
-
     /// Create all necessary tables
     async fn create_tables(&self) -> Result<(), sqlx::Error> {
         // Albums table

@@ -20,13 +20,6 @@ pub struct SubsonicState {
 /// Common query parameters for Subsonic API
 #[derive(Debug, Deserialize)]
 pub struct SubsonicQuery {
-    pub u: Option<String>,        // username
-    pub p: Option<String>,        // password (deprecated)
-    pub t: Option<String>,        // token
-    pub s: Option<String>,        // salt
-    pub v: Option<String>,        // client version
-    pub c: Option<String>,        // client name
-    pub f: Option<String>,        // format (json/xml)
 }
 
 /// Standard Subsonic API response envelope
@@ -49,14 +42,6 @@ pub struct SubsonicResponseInner<T> {
 pub struct SubsonicError {
     pub code: u32,
     pub message: String,
-}
-
-/// System info response
-#[derive(Debug, Serialize)]
-pub struct SystemInfo {
-    #[serde(rename = "type")]
-    pub server_type: String,
-    pub version: String,
 }
 
 /// License info (always valid for open source)
