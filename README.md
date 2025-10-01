@@ -1,185 +1,55 @@
 # bae
 
-_**bae**_ is an album-oriented music library application that uses a metadata-first approach to music library management. Traditional music library applications typically begin with music files and provide tools to manage associated metadata. In contrast, bae starts with album metadata from Discogs as the source of truth, and then matches it with music data. This approach results in a library with verified track listings, artist information, and release details, while storing the underlying music data in the cloud without disk constraints.
+**bae** is an album-oriented music library application that starts with metadata as the source of truth. Instead of beginning with music files and trying to organize them, bae uses the [Discogs database](https://www.discogs.com/developers) to establish verified album information first, then matches your music data to create a library with accurate track listings, artist information, and release details.
 
-See [TASKS.md](TASKS.md) for implementation progress and detailed task breakdown.
+## What bae can do
 
-## Add albums
+bae works at two levels depending on your storage needs:
 
-- **Choose an album**: Use the [Discogs API](https://www.discogs.com/developers)
-  to search for and select an album.
-- **Provide a data source**: Locate existing data on the filesystem, and/or
-  specify a "remote" where the data can be fetched.
+**Local-only music library**: Import albums through Discogs search, automatically map your audio files to verified track metadata, and stream everything through a Subsonic-compatible API. bae handles individual audio files as well as CUE/FLAC albums (single file containing entire album with track boundaries) seamlessly. Any Subsonic client can connect for browsing and playback.
 
-  - **Remote sources**:
+**Cloud-backed music library**: Add S3-compatible cloud storage to automatically backup your music collection. Your albums are encrypted, chunked, and stored in the cloud while maintaining a local cache for streaming. This eliminates local storage constraints and enables access from multiple devices while keeping your music data private through encryption.
 
-    - **Torrent**: A magnet link or .torrent file is used to verify/retrieve data.
-      - Files to retreive from the torrent are identified with AI using the
-        contents of the torrent and the release information.
-      - The torrent is seeded when complete.
-    - **Custom**: Provided by plugins.
+## How it works
 
-- **Storage**:
+bae uses a metadata-first approach that reverses the typical music library workflow. You search for albums in the Discogs database, select the specific release that matches your files, then provide the source folder containing your music data. bae automatically maps your files to the verified Discogs tracklist and imports everything into a unified library.
 
-  - Library metadata (albums, artists, tracks) is persisted in SQLite
-  - When albums are imported:
-    - Music data is split into chunks
-    - Each chunk is encrypted
-    - Chunks are uploaded to user-configurable cloud storage
-    - SQLite tracks which chunks make up which files
-  - Local chunk management:
-    - Configure how many GB of chunks to keep locally
-    - Recently used chunks stay local for faster access
-    - When over the limit, least recently used chunks are removed (files remain in cloud)
-  - During playback/seeding:
-    - Required chunks are fetched from cloud if not available locally
-    - Chunks are decrypted when retrieved, stored decrypted locally
+The application handles both traditional file-per-track albums and audiophile CUE/FLAC releases where a single FLAC file contains the entire album with a CUE sheet defining track boundaries. For CUE/FLAC albums, bae parses the timing information and can stream individual tracks without extracting separate files.
 
-## Browse and stream
+When cloud storage is configured, bae splits your music data into encrypted chunks and uploads them to S3-compatible storage. The original files remain untouched in their source folders, making bae torrent-friendly since you can continue seeding without any file modifications or moves. You can optionally remove source folders after import to save space, as bae can recreate them from cloud chunks when needed for seeding. A local cache keeps recently accessed chunks available for fast streaming while the complete library remains safely stored in the cloud.
 
-- Served via a Subsonic-compatible API. Use a Subsonic client to browse and stream.
-- Source data is transcoded out of storage chunks on-the-fly. Album tracks are
-  mapped to data using AI. bae can handle:
-  - **File-per-track**: A file for every track.
-  - **CUE/FLAC**: A cue file that maps into a single FLAC file CD image.
+## Streaming and compatibility
 
-## Stack
+bae runs a Subsonic 1.16.1 compatible API server that works with existing Subsonic clients. This means you can use mobile apps like DSub or play:Sub, desktop players like Clementine, or web interfaces like Jamstash to browse and stream your library. The streaming system reassembles encrypted chunks in real-time and handles format conversion as needed.
 
-- **Backend/Core**:
+For detailed technical information, see [BAE_STREAMING_ARCHITECTURE.md](BAE_STREAMING_ARCHITECTURE.md) which covers the chunk storage system, encryption model, and streaming pipeline.
 
-  - Rust for core functionality (audio processing, file operations, database management)
-  - ffmpeg via Rust bindings for audio transcoding and manipulation
-  - SQLite for metadata persistence
-  - libtorrent-rs for BitTorrent functionality with custom storage backend integration
+## Album import process
 
-- **Frontend**:
+The import workflow adapts to what you know about your music. If you know the specific pressing (original UK release, 180g remaster, etc.), you can import that exact release. If you only know the album title, you can import the master release with its canonical tracklist.
 
-  - Dioxus for native desktop application with built-in UI components
+bae scans your source folder to identify audio files and matches them to the Discogs tracklist. For CUE/FLAC albums, it parses the CUE sheet to understand track boundaries within the single audio file. The complete import process including file detection and metadata mapping is documented in [BAE_IMPORT_WORKFLOW.md](BAE_IMPORT_WORKFLOW.md).
 
-## Development Approach
+CUE/FLAC support includes parsing various CUE sheet formats, extracting FLAC headers for streaming, and calculating precise track positions for efficient chunk-based streaming. Technical details about CUE/FLAC handling are covered in [BAE_CUE_FLAC_SPEC.md](BAE_CUE_FLAC_SPEC.md).
 
-This project explores _README-driven development_ as a potential approach for agentic LLM development. The hypothesis is that curating context for LLMs in the form of README and TASKS directly in the codebase, along with the process involved in doing this, will be a good fit for LLM-driven development.
+## Technology stack
 
-The process we're exploring:
+bae is built with Rust using Dioxus for the desktop interface and Axum for the Subsonic API server. Music processing uses the Symphonia audio framework with nom for CUE sheet parsing. Encryption uses AES-256-GCM with keys stored in the system keyring. Cloud storage integrates with any S3-compatible service through the AWS SDK.
 
-1. Features are documented in this README
-2. Implementation tasks are broken down in [TASKS.md](TASKS.md) with specific, actionable steps
-3. Code is written by LLMs based on these descriptions and tasks
-4. Results are reviewed and tested by humans
-5. Documentation is updated based on implementation learnings
-6. If implementation fails, the documentation and task breakdown are improved until they're clear enough for LLM implementation
+The application uses SQLite for local metadata storage, tracking albums, tracks, files, and chunk locations. The database schema supports both individual audio files and CUE/FLAC albums with their associated timing and chunk mapping information.
 
-### Motivation
+## Development setup
 
-We're exploring this approach to:
-
-- Preserve valuable prompts and LLM interactions as part of the codebase
-- Retain design context that would otherwise be lost after coding sessions
-- Maintain technical documentation that evolves alongside the implementation
-- Create self-documenting code and capture thought process
-- Facilitate collaboration between contributors across time
-
-## Development Setup
-
-### Prerequisites
-
-This project uses **rustup** for Rust toolchain management (similar to how `nvm` manages Node.js versions). The [`rust-toolchain.toml`](rust-toolchain.toml) file automatically ensures everyone uses the same Rust version and components.
-
-### Installation
-
-1. **Install Rust via rustup** (the official installer):
-   ```bash
-   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-   source ~/.cargo/env  # Only needed for current session; rustup adds itself to your PATH automatically
-   ```
-
-2. **Install Dioxus CLI** globally:
-   ```bash
-   cargo install dioxus-cli --locked
-   ```
-
-3. **Clone and verify** the project setup:
-   ```bash
-   git clone <repository-url>
-   cd bae
-   rustup show  # Should show: "overridden by '.../rust-toolchain.toml'"
-   ```
-
-### Running the Application
+This project uses rustup for Rust toolchain management with the exact version specified in `rust-toolchain.toml`. Install Rust via the official installer, then install the Dioxus CLI globally and run the development server:
 
 ```bash
-cd bae  # Navigate to the Dioxus app directory
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+cargo install dioxus-cli --locked
+git clone <repository-url>
+cd bae/bae
 dx serve
 ```
 
-The development server provides hot reloading and will automatically rebuild when you make changes.
+The application also uses Tailwind CSS for styling with automatic compilation during builds. Install Node.js and run `npm install` in the `bae/` directory to set up the CSS build system.
 
-### How It Works
-
-- **rustup** manages Rust versions globally (like `nvm` for Node.js)  
-- **rust-toolchain.toml** specifies the exact Rust version for this project  
-- When you `cd` into the project, rustup automatically switches to the specified toolchain  
-- **dx CLI** is installed globally
-
-## Development Commands
-
-### Dioxus Commands (dx)
-Use `dx` for Dioxus-specific development with hot reloading and platform targeting:
-
-```bash
-dx serve          # Start development server with hot reloading
-dx build          # Build for production (creates desktop app)
-dx build --release # Production build with optimizations
-dx check          # Quick syntax/type check via dx
-```
-
-### Standard Rust Commands (cargo)
-Use `cargo` for standard Rust development and testing:
-
-```bash
-cargo check       # Fast compile check (no executable)
-cargo build       # Build the binary
-cargo run         # Build and run the binary
-cargo test        # Run tests
-cargo clippy      # Run linter
-cargo fmt         # Format code
-```
-
-### When to Use Which?
-
-- **Use `dx`** for Dioxus app development - it handles UI assets, hot reloading, and cross-platform builds
-- **Use `cargo`** for standard Rust tasks like testing, linting, and when you need direct control over compilation
-
-Both tools respect your `rust-toolchain.toml` and will use the same Rust version automatically.
-
-## Tailwind CSS Setup
-
-The project uses Tailwind CSS for styling with automatic compilation during builds.
-
-### Prerequisites
-
-1. **Install Node.js and npm**: https://docs.npmjs.com/downloading-and-installing-node-js-and-npm
-2. **Install project dependencies**: Run `npm install` in the `bae/` directory to install Tailwind CSS v4
-
-### How It Works
-
-- **Automatic compilation**: The `build.rs` script automatically runs `tailwindcss` during every `cargo build`
-- **Source scanning**: Tailwind scans your Rust files (`src/**/*.rs`) for class names
-- **Optimized output**: Only the CSS classes you actually use are included in the final `assets/tailwind.css` file
-- **No manual steps**: Just run `cargo build` or `dx serve` and Tailwind CSS is automatically generated
-
-### Manual Compilation (Optional)
-
-If you need to manually regenerate the CSS:
-
-```bash
-cd bae
-npx tailwindcss -i tailwind.css -o assets/tailwind.css
-```
-
-### Tailwind CSS v4 Features
-
-This project uses Tailwind CSS v4 with the new CSS-based configuration:
-- **CSS Configuration**: Uses `@import "tailwindcss"` and `@source` directives in `tailwind.css`
-- **Local Installation**: Tailwind CSS is installed as a local dependency (version pinned in `package.json`)
-- **Automatic CLI**: Uses `npx tailwindcss` to run the locally installed version
+Implementation progress and detailed task breakdown are tracked in [TASKS.md](TASKS.md).
