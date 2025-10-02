@@ -20,8 +20,7 @@ mod subsonic;
 
 use components::*;
 use components::album_import::ImportWorkflowManager;
-use album_import_context::AlbumImportContextProvider;
-use library_context::{initialize_library, get_library, LibraryContextProvider};
+use library_context::{initialize_library, get_library};
 use subsonic::{SubsonicState, create_router};
 use std::path::PathBuf;
 
@@ -113,22 +112,4 @@ fn make_window() -> WindowBuilder {
         .with_title("bae")
         .with_always_on_top(false)
         .with_inner_size(dioxus::desktop::LogicalSize::new(1200, 800))
-}
-
-#[component]
-fn App() -> Element {
-    println!("App: Rendering app component");
-    let library_manager = get_library();
-    
-    rsx! {
-        document::Link { rel: "icon", href: FAVICON }
-        document::Link { rel: "stylesheet", href: MAIN_CSS } 
-        document::Link { rel: "stylesheet", href: TAILWIND_CSS }
-        LibraryContextProvider {
-            library_manager: library_manager,
-            AlbumImportContextProvider {
-                Router::<Route> {}
-            }
-        }
-    }
 }
