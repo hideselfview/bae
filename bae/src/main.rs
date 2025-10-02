@@ -77,7 +77,7 @@ fn main() {
     LaunchBuilder::desktop()
         .with_cfg(make_config())
         .launch(App);
-    println!("Main: Dioxus app launched");
+    println!("Main: Dioxus desktop app quit");
 }
 
 /// Start the Subsonic API server
