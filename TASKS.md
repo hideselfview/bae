@@ -50,6 +50,12 @@
   - [x] Implement click-through navigation from library to album details
   - [ ] Implement sorting and organization features (pending)
 - [ ] Create settings management interface
+- [ ] Implement multi-library support
+  - [ ] Design library profile concept (S3 location + credentials = one library)
+  - [ ] Add library connection/switching UI (like sign in/out)
+  - [ ] Implement library persistence (save known libraries locally)
+  - [ ] Add library switching with state reload (disconnect from current, connect to new)
+  - [ ] Support multiple library profiles with quick switching
 
 ### Storage Strategy
 

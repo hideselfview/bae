@@ -54,87 +54,123 @@ fn get_library_path() -> PathBuf {
     home_dir.join("Music").join("bae")
 }
 
+/// Initialize cache manager
+async fn create_cache_manager() -> cache::CacheManager {
+    let cache_manager = cache::CacheManager::new().await
+        .expect("Failed to create cache manager");
+
+    println!("Main: Cache manager created");
+    cache_manager
+}
+
+/// Initialize cloud storage from secure config if configured (optional)
+async fn create_cloud_storage(
+    secure_config: &secure_config::SecureConfig,
+) -> Option<cloud_storage::CloudStorageManager> {
+    let config_data = match secure_config.get() {
+        Ok(data) => data,
+        Err(e) => {
+            println!("Main: Warning - Failed to load secure config: {}", e);
+            return None;
+        }
+    };
+
+    let s3_config = match &config_data.s3_config {
+        Some(config) => config,
+        None => {
+            println!("Main: Cloud storage not configured (optional)");
+            return None;
+        }
+    };
+
+    println!("Main: Initializing cloud storage...");
+
+    match cloud_storage::CloudStorageManager::new(s3_config.clone()).await {
+        Ok(cs) => {
+            println!("Main: Cloud storage initialized");
+            Some(cs)
+        }
+        Err(e) => {
+            println!("Main: Warning - Failed to initialize cloud storage: {}", e);
+            None
+        }
+    }
+}
+
+/// Initialize database
+async fn create_database() -> database::Database {
+    let library_path = get_library_path();
+
+    println!("Main: Creating library directory: {}", library_path.display());
+
+    std::fs::create_dir_all(&library_path)
+        .expect("Failed to create library directory");
+
+    let db_path = library_path.join("library.db");
+
+    println!("Main: Initializing database at: {}", db_path.display());
+
+    let database = database::Database::new(db_path.to_str().unwrap()).await
+        .expect("Failed to create database");
+
+    println!("Main: Database created");
+    database
+}
+
+/// Initialize library manager with all dependencies
+fn create_library_manager(
+    database: database::Database,
+    encryption_service: encryption::EncryptionService,
+    cloud_storage: Option<cloud_storage::CloudStorageManager>,
+) -> SharedLibraryManager {
+    let chunking_service = chunking::ChunkingService::new(encryption_service.clone())
+        .expect("Failed to create chunking service");
+
+    println!("Main: Chunking service created");
+
+    let library_manager = library::LibraryManager::new(
+        database,
+        chunking_service,
+        cloud_storage.clone(),
+    );
+
+    println!("Main: Library manager created");
+
+    let shared_library = SharedLibraryManager::new(library_manager);
+
+    println!("Main: SharedLibraryManager created");
+
+    shared_library
+}
+
 fn main() {
     // Create tokio runtime for async operations
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-    
-    // Build dependencies
+
     println!("Main: Building dependencies...");
     
-    // Create lazy secure config (no keyring access yet!)
+    // Create lazy secure config (no keyring access yet to avoid password prompting!)
     let secure_config = secure_config::SecureConfig::new();
-    
-    // Create encryption service (key will be lazy-loaded when first used)
+
+    // Create encryption service
     let encryption_service = encryption::EncryptionService::new(secure_config.clone());
-    println!("Main: Encryption service created (lazy)");
-    
-    let (cache_manager, library_manager, cloud_storage) = rt.block_on(async {
-        // Build cache manager
-        let cache_manager = cache::CacheManager::new().await
-            .expect("Failed to create cache manager");
-        println!("Main: Cache manager created");
-        
-        // Try to initialize cloud storage from secure config (optional, lazy loading)
-        // This will only prompt for keyring if cloud storage is actually configured
-        let cloud_storage = match secure_config.get() {
-            Ok(config_data) => {
-                if let Some(s3_config) = &config_data.s3_config {
-                    println!("Main: Initializing cloud storage...");
-                    match cloud_storage::CloudStorageManager::new(s3_config.clone()).await {
-                        Ok(cs) => {
-                            println!("Main: Cloud storage initialized");
-                            Some(cs)
-                        }
-                        Err(e) => {
-                            println!("Main: Warning - Failed to initialize cloud storage: {}", e);
-                            None
-                        }
-                    }
-                } else {
-                    println!("Main: Cloud storage not configured (optional)");
-                    None
-                }
-            }
-            Err(e) => {
-                println!("Main: Warning - Failed to load secure config: {}", e);
-                None
-            }
-        };
-        
-        // Build library path and database
-        let library_path = get_library_path();
-        
-        // Ensure library directory exists
-        println!("Main: Creating library directory: {}", library_path.display());
-        tokio::fs::create_dir_all(&library_path).await
-            .expect("Failed to create library directory");
-        
-        // Initialize database
-        let db_path = library_path.join("library.db");
-        println!("Main: Initializing database at: {}", db_path.display());
-        let database = database::Database::new(db_path.to_str().unwrap()).await
-            .expect("Failed to create database");
-        println!("Main: Database created");
-        
-        // Initialize chunking service
-        let chunking_service = chunking::ChunkingService::new(encryption_service.clone())
-            .expect("Failed to create chunking service");
-        println!("Main: Chunking service created");
-        
-        // Build library manager with all injected dependencies
-        let library_manager = library::LibraryManager::new(
-            database,
-            chunking_service,
-            cloud_storage.clone(),
-        );
-        println!("Main: Library manager created");
-        
-        // Wrap in SharedLibraryManager for thread-safe sharing
-        let shared_library = SharedLibraryManager::new(library_manager);
-        println!("Main: SharedLibraryManager created");
-        
-        (cache_manager, shared_library, cloud_storage)
-    });
+
+    // Initialize cache manager
+    let cache_manager = rt.block_on(create_cache_manager());
+
+    // Try to initialize cloud storage from secure config (optional, lazy loading)
+    // This will only prompt for keyring if cloud storage is actually configured
+    let cloud_storage = rt.block_on(create_cloud_storage(&secure_config));
+
+    // Initialize database
+    let database = rt.block_on(create_database());
+
+    // Build library manager with all injected dependencies
+    let library_manager = create_library_manager(
+        database,
+        encryption_service.clone(),
+        cloud_storage.clone(),
+    );
     
     // Create root application context
     let app_context = AppContext {
@@ -143,24 +179,23 @@ fn main() {
     };
     
     // Start Subsonic API server in background thread
-    let cache_manager_for_subsonic = cache_manager;
-    let encryption_service_for_subsonic = encryption_service;
-    let cloud_storage_for_subsonic = cloud_storage;
     std::thread::spawn(move || {
         rt.block_on(start_subsonic_server(
-            cache_manager_for_subsonic,
+            cache_manager,
             library_manager,
-            encryption_service_for_subsonic,
-            cloud_storage_for_subsonic,
+            encryption_service,
+            cloud_storage,
         ));
     });
     
     // Start the desktop app (this will run in the main thread)
     println!("Main: Starting Dioxus desktop app...");
+    
     LaunchBuilder::desktop()
         .with_cfg(make_config())
         .with_context_provider(move || Box::new(app_context.clone()))
         .launch(App);
+    
     println!("Main: Dioxus desktop app quit");
 }
 
