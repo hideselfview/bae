@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 use crate::{models, album_import_context::AlbumImportContext};
 use crate::models::DiscogsMasterReleaseVersion;
+use crate::secure_config::use_secure_config;
 use super::{release_item::ReleaseItem, import_workflow::ImportWorkflow};
 
 #[component]
@@ -12,6 +13,7 @@ pub fn ReleaseList(
     let album_import_ctx = use_context::<AlbumImportContext>();
     let release_results = use_signal(|| Vec::<DiscogsMasterReleaseVersion>::new());
     let selected_import_item = use_signal(|| None::<models::ImportItem>);
+    let secure_config = use_secure_config();
 
     let master_id_clone1 = master_id.clone();
     
@@ -19,14 +21,16 @@ pub fn ReleaseList(
     use_effect({
         let album_import_ctx = album_import_ctx.clone();
         let release_results = release_results.clone();
+        let secure_config = secure_config.clone();
         
         move || {
             let master_id = master_id_clone1.clone();
             let mut release_results = release_results.clone();
             let mut album_import_ctx = album_import_ctx.clone();
+            let secure_config = secure_config.clone();
 
             spawn(async move {
-                match album_import_ctx.get_master_versions(master_id).await {
+                match album_import_ctx.get_master_versions(master_id, &secure_config).await {
                     Ok(versions) => {
                         release_results.set(versions);
                     }
@@ -43,14 +47,16 @@ pub fn ReleaseList(
         let selected_import_item = selected_import_item;
         let master_id_for_import = master_id.clone();
         let album_import_ctx = album_import_ctx.clone();
+        let secure_config = secure_config.clone();
         move |version: DiscogsMasterReleaseVersion| {
             let release_id = version.id.to_string();
             let master_id = master_id_for_import.clone();
             let mut selected_import_item = selected_import_item.clone();
             let mut album_import_ctx = album_import_ctx.clone();
+            let secure_config = secure_config.clone();
             
             spawn(async move {
-                match album_import_ctx.import_release(release_id, master_id).await {
+                match album_import_ctx.import_release(release_id, master_id, &secure_config).await {
                     Ok(import_item) => {
                         selected_import_item.set(Some(import_item));
                     }

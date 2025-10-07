@@ -1,0 +1,4 @@
+---
+alwaysApply: true
+---
+Don't leave old or dead code laying around. When we stop using something, remove it!

@@ -1,6 +1,7 @@
 use aws_config::{BehaviorVersion, Region};
 use aws_sdk_s3::{Client, Error as S3Error, primitives::ByteStreamError};
 use aws_credential_types::Credentials;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use thiserror::Error;
 use tokio::fs;
@@ -21,42 +22,34 @@ pub enum CloudStorageError {
     Download(String),
 }
 
-/// Configuration for S3 cloud storage
-#[derive(Debug, Clone)]
+/// S3 configuration for cloud storage
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct S3Config {
     pub bucket_name: String,
     pub region: String,
     pub access_key_id: String,
     pub secret_access_key: String,
-    pub endpoint_url: Option<String>, // For S3-compatible services like MinIO
+    pub endpoint_url: Option<String>, // For MinIO/S3-compatible services
 }
 
 impl S3Config {
-    /// Create config from environment variables
-    pub fn from_env() -> Result<Self, CloudStorageError> {
-        let bucket_name = std::env::var("BAE_S3_BUCKET")
-            .map_err(|_| CloudStorageError::Config("BAE_S3_BUCKET not set".to_string()))?;
-        
-        let region = std::env::var("BAE_S3_REGION")
-            .map_err(|_| CloudStorageError::Config("BAE_S3_REGION not set".to_string()))?;
-        
-        let access_key_id = std::env::var("BAE_S3_ACCESS_KEY_ID")
-            .map_err(|_| CloudStorageError::Config("BAE_S3_ACCESS_KEY_ID not set".to_string()))?;
-        
-        let secret_access_key = std::env::var("BAE_S3_SECRET_ACCESS_KEY")
-            .map_err(|_| CloudStorageError::Config("BAE_S3_SECRET_ACCESS_KEY not set".to_string()))?;
-        
-        let endpoint_url = std::env::var("BAE_S3_ENDPOINT_URL").ok();
-        
-        Ok(S3Config {
-            bucket_name,
-            region,
-            access_key_id,
-            secret_access_key,
-            endpoint_url,
-        })
+    pub fn validate(&self) -> Result<(), CloudStorageError> {
+        if self.bucket_name.trim().is_empty() {
+            return Err(CloudStorageError::Config("Bucket name cannot be empty".to_string()));
+        }
+        if self.region.trim().is_empty() {
+            return Err(CloudStorageError::Config("Region cannot be empty".to_string()));
+        }
+        if self.access_key_id.trim().is_empty() {
+            return Err(CloudStorageError::Config("Access key ID cannot be empty".to_string()));
+        }
+        if self.secret_access_key.trim().is_empty() {
+            return Err(CloudStorageError::Config("Secret access key cannot be empty".to_string()));
+        }
+        Ok(())
     }
 }
+
 
 /// Trait for cloud storage operations (allows mocking for tests)
 #[async_trait::async_trait]
@@ -166,16 +159,25 @@ impl CloudStorage for S3CloudStorage {
 
 
 /// Cloud storage manager that handles chunk lifecycle
+#[derive(Clone)]
 pub struct CloudStorageManager {
-    storage: Box<dyn CloudStorage>,
+    storage: std::sync::Arc<dyn CloudStorage>,
+}
+
+impl std::fmt::Debug for CloudStorageManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CloudStorageManager")
+            .field("storage", &"<dyn CloudStorage>")
+            .finish()
+    }
 }
 
 impl CloudStorageManager {
-    /// Create a new cloud storage manager with S3
-    pub async fn new_s3(config: S3Config) -> Result<Self, CloudStorageError> {
+    /// Create a new cloud storage manager with S3 configuration
+    pub async fn new(config: S3Config) -> Result<Self, CloudStorageError> {
         let storage = S3CloudStorage::new(config).await?;
         Ok(CloudStorageManager {
-            storage: Box::new(storage),
+            storage: std::sync::Arc::new(storage),
         })
     }
 

@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use crate::{discogs, api_keys};
+use crate::discogs;
 use crate::discogs::DiscogsSearchResult;
 use crate::models::{ImportItem, DiscogsMasterReleaseVersion};
 
@@ -24,21 +24,21 @@ pub struct AlbumImportContext {
 
 impl AlbumImportContext {
     
-    fn get_client(&mut self) -> Result<&discogs::DiscogsClient, String> {
+    fn get_client(&mut self, secure_config: &crate::secure_config::SecureConfig) -> Result<&discogs::DiscogsClient, String> {
         if self.client.is_none() {
-            match api_keys::retrieve_api_key() {
-                Ok(api_key) => {
-                    self.client = Some(discogs::DiscogsClient::new(api_key));
-                }
-                Err(_) => {
-                    return Err("No API key configured. Please go to Settings to add your Discogs API key.".to_string());
-                }
-            }
+            // Lazy load API key from secure config (may prompt for keychain password)
+            let config_data = secure_config.get()
+                .map_err(|e| format!("Failed to access secure config: {}", e))?;
+            
+            let api_key = config_data.discogs_api_key.as_ref()
+                .ok_or_else(|| "No API key configured. Please go to Settings to add your Discogs API key.".to_string())?;
+            
+            self.client = Some(discogs::DiscogsClient::new(api_key.clone()));
         }
         Ok(self.client.as_ref().unwrap())
     }
 
-    pub fn search_albums(&mut self, query: String) {
+    pub fn search_albums(&mut self, query: String, secure_config: &crate::secure_config::SecureConfig) {
         if query.trim().is_empty() {
             self.search_results.set(Vec::new());
             return;
@@ -52,7 +52,7 @@ impl AlbumImportContext {
         is_searching.set(true);
         error_message.set(None);
 
-        let client = match self.get_client() {
+        let client = match self.get_client(secure_config) {
             Ok(client) => client.clone(),
             Err(error) => {
                 error_message.set(Some(error));
@@ -83,8 +83,8 @@ impl AlbumImportContext {
         self.current_view.set(SearchView::SearchResults);
     }
 
-    pub async fn import_master(&mut self, master_id: String) -> Result<ImportItem, String> {
-        let client = match self.get_client() {
+    pub async fn import_master(&mut self, master_id: String, secure_config: &crate::secure_config::SecureConfig) -> Result<ImportItem, String> {
+        let client = match self.get_client(secure_config) {
             Ok(client) => client.clone(),
             Err(error) => {
                 self.error_message.set(Some(error.clone()));
@@ -122,8 +122,8 @@ impl AlbumImportContext {
         result
     }
 
-    pub async fn get_master_versions(&mut self, master_id: String) -> Result<Vec<DiscogsMasterReleaseVersion>, String> {
-        let client = match self.get_client() {
+    pub async fn get_master_versions(&mut self, master_id: String, secure_config: &crate::secure_config::SecureConfig) -> Result<Vec<DiscogsMasterReleaseVersion>, String> {
+        let client = match self.get_client(secure_config) {
             Ok(client) => client.clone(),
             Err(error) => {
                 self.error_message.set(Some(error.clone()));
@@ -147,8 +147,8 @@ impl AlbumImportContext {
         result
     }
 
-    pub async fn import_release(&mut self, release_id: String, master_id: String) -> Result<ImportItem, String> {
-        let client = match self.get_client() {
+    pub async fn import_release(&mut self, release_id: String, master_id: String, secure_config: &crate::secure_config::SecureConfig) -> Result<ImportItem, String> {
+        let client = match self.get_client(secure_config) {
             Ok(client) => client.clone(),
             Err(error) => {
                 self.error_message.set(Some(error.clone()));
@@ -179,7 +179,9 @@ impl AlbumImportContext {
 
 /// Provider component to make search context available throughout the app
 #[component]
-pub fn AlbumImportContextProvider(children: Element) -> Element {
+pub fn AlbumImportContextProvider(
+    children: Element,
+) -> Element {
     let album_import_ctx = AlbumImportContext {
         search_query: use_signal(|| String::new()),
         search_results: use_signal(|| Vec::new()),

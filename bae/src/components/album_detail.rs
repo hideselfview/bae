@@ -1,18 +1,13 @@
 use dioxus::prelude::*;
-use crate::library::{LibraryManager, LibraryError};
+use crate::library::LibraryError;
+use crate::library_context::use_library_manager;
 use crate::database::{DbAlbum, DbTrack};
 use crate::Route;
-use std::path::PathBuf;
-
-/// Get the library path (same as other components)
-fn get_library_path() -> PathBuf {
-    let home_dir = dirs::home_dir().expect("Failed to get home directory");
-    home_dir.join("Music").join("bae")
-}
 
 /// Album detail page showing album info and tracklist
 #[component]
 pub fn AlbumDetail(album_id: String) -> Element {
+    let library_manager = use_library_manager();
     let mut album = use_signal(|| None::<DbAlbum>);
     let mut tracks = use_signal(|| Vec::<DbTrack>::new());
     let mut loading = use_signal(|| true);
@@ -21,14 +16,16 @@ pub fn AlbumDetail(album_id: String) -> Element {
     // Load album and tracks on component mount
     use_effect({
         let album_id = album_id.clone();
+        let library_manager = library_manager.clone();
         move || {
             spawn({
                 let album_id = album_id.clone();
+                let library_manager = library_manager.clone();
                 async move {
                     loading.set(true);
                     error.set(None);
                     
-                    match load_album_details(&album_id).await {
+                    match load_album_details(&album_id, &library_manager).await {
                         Ok((album_data, tracks_data)) => {
                             album.set(Some(album_data));
                             tracks.set(tracks_data);
@@ -234,18 +231,18 @@ fn format_duration(duration_ms: i64) -> String {
 }
 
 /// Load album and tracks from the database
-async fn load_album_details(album_id: &str) -> Result<(DbAlbum, Vec<DbTrack>), LibraryError> {
-    let library_path = get_library_path();
-    let library_manager = LibraryManager::new(library_path, None).await?;
-    
+async fn load_album_details(
+    album_id: &str,
+    library_manager: &crate::library_context::SharedLibraryManager,
+) -> Result<(DbAlbum, Vec<DbTrack>), LibraryError> {
     // Get all albums to find the one we want
-    let albums = library_manager.get_albums().await?;
+    let albums = library_manager.get().get_albums().await?;
     let album = albums.into_iter()
         .find(|a| a.id == album_id)
         .ok_or_else(|| LibraryError::Import("Album not found".to_string()))?;
     
     // Get tracks for this album
-    let tracks = library_manager.get_tracks(album_id).await?;
+    let tracks = library_manager.get().get_tracks(album_id).await?;
     
     Ok((album, tracks))
 }

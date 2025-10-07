@@ -1,0 +1,4 @@
+---
+alwaysApply: true
+---
+Adhere to proper DI principles. Initialize dependencies at the top (starting in main.rs), and pass them down through the graph. Do not use singletons.

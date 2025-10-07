@@ -16,154 +16,69 @@ pub enum EncryptionError {
     Io(#[from] std::io::Error),
 }
 
-/// Trait for key storage backends
-trait KeyStorage: Send + Sync {
-    fn store_key(&self, key_id: &str, key: &Key<Aes256Gcm>) -> Result<(), EncryptionError>;
-    fn load_key(&self, key_id: &str) -> Result<Key<Aes256Gcm>, EncryptionError>;
-}
-
-/// Production key storage using system keyring
-struct KeyringStorage;
-
-impl KeyStorage for KeyringStorage {
-    fn store_key(&self, key_id: &str, key: &Key<Aes256Gcm>) -> Result<(), EncryptionError> {
-        use keyring::Entry;
-        
-        let entry = Entry::new("bae", key_id)
-            .map_err(|e| EncryptionError::KeyManagement(format!("Failed to access keyring: {}", e)))?;
-        
-        // Store key as hex string
-        let key_hex = hex::encode(key.as_slice());
-        
-        // Try to store the key, but ignore "already exists" errors
-        match entry.set_password(&key_hex) {
-            Ok(_) => {
-                println!("EncryptionService: Master key stored securely in system keyring");
-                Ok(())
-            }
-            Err(e) => {
-                let error_msg = format!("{}", e);
-                if error_msg.contains("already exists") {
-                    // Key already exists, which is fine
-                    Ok(())
-                } else {
-                    Err(EncryptionError::KeyManagement(format!("Failed to store key: {}", e)))
-                }
-            }
-        }
-    }
-
-    fn load_key(&self, key_id: &str) -> Result<Key<Aes256Gcm>, EncryptionError> {
-        use keyring::Entry;
-        
-        let entry = Entry::new("bae", key_id)
-            .map_err(|e| EncryptionError::KeyManagement(format!("Failed to access keyring: {}", e)))?;
-        
-        let key_bytes = entry.get_password()
-            .map_err(|e| EncryptionError::KeyManagement(format!("Failed to load key: {}", e)))?;
-        
-        // Decode hex string back to bytes
-        let key_bytes = hex::decode(key_bytes)
-            .map_err(|e| EncryptionError::KeyManagement(format!("Invalid key format: {}", e)))?;
-        
-        if key_bytes.len() != 32 {
-            return Err(EncryptionError::KeyManagement(
-                "Invalid key length, expected 32 bytes".to_string()
-            ));
-        }
-        
-        Ok(*Key::<Aes256Gcm>::from_slice(&key_bytes))
-    }
-}
-
-#[cfg(test)]
-use std::collections::HashMap;
-#[cfg(test)]
-use std::sync::{Arc, Mutex};
-
-/// In-memory key storage for testing
-#[cfg(test)]
-#[derive(Clone)]
-struct InMemoryStorage {
-    keys: Arc<Mutex<HashMap<String, String>>>,
-}
-
-#[cfg(test)]
-impl InMemoryStorage {
-    fn new() -> Self {
-        InMemoryStorage {
-            keys: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
-}
-
-#[cfg(test)]
-impl KeyStorage for InMemoryStorage {
-    fn store_key(&self, key_id: &str, key: &Key<Aes256Gcm>) -> Result<(), EncryptionError> {
-        let key_hex = hex::encode(key.as_slice());
-        let mut keys = self.keys.lock().unwrap();
-        keys.insert(key_id.to_string(), key_hex);
-        Ok(())
-    }
-
-    fn load_key(&self, key_id: &str) -> Result<Key<Aes256Gcm>, EncryptionError> {
-        let keys = self.keys.lock().unwrap();
-        let key_hex = keys.get(key_id)
-            .ok_or_else(|| EncryptionError::KeyManagement("Key not found".to_string()))?;
-        
-        let key_bytes = hex::decode(key_hex)
-            .map_err(|e| EncryptionError::KeyManagement(format!("Invalid key format: {}", e)))?;
-        
-        if key_bytes.len() != 32 {
-            return Err(EncryptionError::KeyManagement(
-                "Invalid key length, expected 32 bytes".to_string()
-            ));
-        }
-        
-        Ok(*Key::<Aes256Gcm>::from_slice(&key_bytes))
-    }
-}
-
 /// Manages encryption keys and provides AES-256-GCM encryption/decryption
 /// 
 /// This implements the security model described in the README:
 /// - Files are split into chunks and each chunk is encrypted separately
 /// - Uses AES-256-GCM for authenticated encryption
-/// - Master key is stored securely in system keyring
+/// - Master key is loaded from SecureConfig (lazy, only when first needed)
 /// - Each chunk gets a unique nonce for security
+#[derive(Clone)]
 pub struct EncryptionService {
-    cipher: Aes256Gcm,
-    key_id: String,
+    secure_config: crate::secure_config::SecureConfig,
+    cipher: std::sync::Arc<std::sync::OnceLock<Aes256Gcm>>,
+}
+
+impl std::fmt::Debug for EncryptionService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EncryptionService")
+            .field("secure_config", &"<present>")
+            .field("cipher", &"<lazy>")
+            .finish()
+    }
 }
 
 impl EncryptionService {
-    /// Create a new encryption service with a master key
-    pub fn new() -> Result<Self, EncryptionError> {
-        Self::new_with_storage("bae_master_encryption_key".to_string(), Box::new(KeyringStorage))
+    /// Create a new encryption service with SecureConfig
+    /// Key loading is deferred until first encrypt/decrypt operation
+    pub fn new(secure_config: crate::secure_config::SecureConfig) -> Self {
+        EncryptionService {
+            secure_config,
+            cipher: std::sync::Arc::new(std::sync::OnceLock::new()),
+        }
     }
 
-    /// Create a new encryption service with in-memory storage (for testing)
-    #[cfg(test)]
-    fn new_for_testing(key_id: String) -> Result<Self, EncryptionError> {
-        Self::new_with_storage(key_id, Box::new(InMemoryStorage::new()))
-    }
-
-    /// Create a new encryption service with custom storage
-    fn new_with_storage(key_id: String, storage: Box<dyn KeyStorage>) -> Result<Self, EncryptionError> {
-        // Try to load existing key, or generate a new one
-        let key = match storage.load_key(&key_id) {
-            Ok(key) => key,
-            Err(_) => {
-                // Generate new master key
-                let key = Self::generate_master_key()?;
-                storage.store_key(&key_id, &key)?;
-                key
-            }
-        };
+    /// Get or create the cipher, loading the key from SecureConfig on first use
+    /// This may prompt for keyring password on first call
+    fn get_cipher(&self) -> Result<&Aes256Gcm, EncryptionError> {
+        // Check if cipher already created
+        if let Some(cipher) = self.cipher.get() {
+            return Ok(cipher);
+        }
         
-        let cipher = Aes256Gcm::new(&key);
+        // First use: load key from SecureConfig
+        println!("EncryptionService: Loading master key from SecureConfig...");
+        let config_data = self.secure_config.get()
+            .map_err(|e| EncryptionError::KeyManagement(format!("Failed to load secure config: {}", e)))?;
         
-        Ok(EncryptionService { cipher, key_id })
+        // Decode hex key
+        let key_bytes = hex::decode(&config_data.encryption_master_key)
+            .map_err(|e| EncryptionError::KeyManagement(format!("Invalid key format: {}", e)))?;
+        
+        if key_bytes.len() != 32 {
+            return Err(EncryptionError::KeyManagement(
+                "Invalid key length, expected 32 bytes".to_string()
+            ));
+        }
+        
+        let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
+        let cipher = Aes256Gcm::new(key);
+        
+        // Cache it (thread-safe, first one wins if racing)
+        match self.cipher.set(cipher) {
+            Ok(()) => Ok(self.cipher.get().unwrap()),
+            Err(_) => Ok(self.cipher.get().unwrap()), // Someone else won the race
+        }
     }
 
     /// Encrypt data with AES-256-GCM
@@ -172,8 +87,11 @@ impl EncryptionService {
         // Generate a unique nonce for this encryption
         let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
         
+        // Get cipher (lazy loads key on first use)
+        let cipher = self.get_cipher()?;
+        
         // Encrypt the data
-        let ciphertext = self.cipher
+        let ciphertext = cipher
             .encrypt(&nonce, plaintext)
             .map_err(|e| EncryptionError::Encryption(format!("AES-GCM encryption failed: {}", e)))?;
         
@@ -192,8 +110,11 @@ impl EncryptionService {
         
         let nonce = Nonce::from_slice(nonce);
         
+        // Get cipher (lazy loads key on first use)
+        let cipher = self.get_cipher()?;
+        
         // Decrypt the data
-        let plaintext = self.cipher
+        let plaintext = cipher
             .decrypt(nonce, ciphertext)
             .map_err(|e| EncryptionError::Decryption(format!("AES-GCM decryption failed: {}", e)))?;
         
@@ -206,25 +127,11 @@ impl EncryptionService {
         // Parse the encrypted chunk from bytes
         let encrypted_chunk = EncryptedChunk::from_bytes(chunk_bytes)?;
         
-        // Verify the key ID matches (for security)
-        if encrypted_chunk.key_id != self.key_id {
-            return Err(EncryptionError::Decryption(
-                format!("Key ID mismatch: expected {}, got {}", self.key_id, encrypted_chunk.key_id)
-            ));
-        }
+        // Note: We don't verify key_id anymore since we only have one master key per app
+        // The encrypted_chunk still stores it for backward compatibility
         
         // Decrypt using the nonce and encrypted data
         self.decrypt(&encrypted_chunk.encrypted_data, &encrypted_chunk.nonce)
-    }
-
-    /// Generate a new 256-bit master key
-    fn generate_master_key() -> Result<Key<Aes256Gcm>, EncryptionError> {
-        Ok(Aes256Gcm::generate_key(OsRng))
-    }
-
-    /// Get the key ID for this encryption service
-    pub fn key_id(&self) -> &str {
-        &self.key_id
     }
 }
 
@@ -317,13 +224,28 @@ impl EncryptedChunk {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
+    
+    /// Create a test encryption service with a pre-populated test key (avoids keyring)
+    fn create_test_encryption_service() -> EncryptionService {
+        // Generate a test encryption key
+        let test_key = Aes256Gcm::generate_key(OsRng);
+        let test_key_hex = hex::encode(test_key.as_slice());
+        
+        // Create a SecureConfig with pre-populated data (avoids keyring)
+        let test_config_data = crate::secure_config::SecureConfigData {
+            discogs_api_key: None,
+            s3_config: None,
+            encryption_master_key: test_key_hex,
+        };
+        
+        let secure_config = crate::secure_config::SecureConfig::new_with_data(test_config_data);
+        
+        EncryptionService::new(secure_config)
+    }
 
     #[test]
     fn test_encryption_roundtrip() {
-        // Use in-memory storage for testing
-        let test_key_id = format!("test_key_{}", Uuid::new_v4());
-        let encryption_service = EncryptionService::new_for_testing(test_key_id).unwrap();
+        let encryption_service = create_test_encryption_service();
         let plaintext = b"Hello, world! This is a test message for encryption.";
         
         // Encrypt
@@ -362,9 +284,7 @@ mod tests {
 
     #[test]
     fn test_different_nonces() {
-        // Use in-memory storage for testing
-        let test_key_id = format!("test_key_nonce_{}", Uuid::new_v4());
-        let encryption_service = EncryptionService::new_for_testing(test_key_id).unwrap();
+        let encryption_service = create_test_encryption_service();
         let plaintext = b"Same message";
         
         // Encrypt twice

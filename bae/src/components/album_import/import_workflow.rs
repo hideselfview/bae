@@ -1,8 +1,8 @@
 use dioxus::prelude::*;
 use crate::models::ImportItem;
-use crate::library::LibraryManager;
+use crate::library_context::use_library_manager;
 use rfd::AsyncFileDialog;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Import workflow functions using the LibraryManager
 
@@ -44,26 +44,16 @@ pub fn on_folder_selected(folder_path: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Get the default library path (in user's home directory)
-fn get_library_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(home).join(".bae").join("library")
-}
-
 /// Callback for when import process starts - now uses real LibraryManager
-pub async fn on_import_started_async(item: &ImportItem, folder_path: &str) -> Result<String, String> {
+pub async fn on_import_started_async(
+    item: &ImportItem,
+    folder_path: &str,
+    library_manager: &crate::library_context::SharedLibraryManager,
+) -> Result<String, String> {
     println!("Starting real import for {} from folder: {}", item.title(), folder_path);
     
-    // Initialize library manager
-    let library_path = get_library_path();
-    let library_manager = LibraryManager::new(library_path, None)
-        .await
-        .map_err(|e| format!("Failed to initialize library: {}", e))?;
-    
-    // Cloud storage is now configured during LibraryManager construction
-    
     // Import the album
-    let album_id = library_manager
+    let album_id = library_manager.get()
         .import_album(item, Path::new(folder_path))
         .await
         .map_err(|e| format!("Import failed: {}", e))?;
@@ -105,6 +95,7 @@ pub enum ImportStep {
 
 #[component]
 pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
+    let library_manager = use_library_manager();
     let current_step = use_signal(|| ImportStep::DataSourceSelection);
     let selected_folder = use_signal(|| None::<String>);
     let import_progress = use_signal(|| 0u8);
@@ -132,6 +123,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
         let mut current_step = current_step;
         let mut import_progress = import_progress;
         let item = props.item.clone();
+        let library_manager = library_manager.clone();
         move |_| {
             if let Some(folder) = selected_folder.read().as_ref() {
                 // Start the actual import process
@@ -146,12 +138,13 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                 // Start real import process
                 let item_clone = item.clone();
                 let folder_clone = folder.clone();
+                let library_manager = library_manager.clone();
                 spawn(async move {
                     // Update progress to show we're starting
                     import_progress.set(10);
                     
                     // Perform the actual import
-                    match on_import_started_async(&item_clone, &folder_clone).await {
+                    match on_import_started_async(&item_clone, &folder_clone, &library_manager).await {
                         Ok(album_id) => {
                             import_progress.set(100);
                             println!("Import successful! Album ID: {}", album_id);

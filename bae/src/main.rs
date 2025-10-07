@@ -3,8 +3,7 @@ use dioxus::desktop::{Config, WindowBuilder};
 
 mod models;
 mod discogs;
-mod api_keys;
-mod s3_config;
+mod secure_config;
 mod components;
 mod album_import_context;
 mod database;
@@ -20,9 +19,16 @@ mod subsonic;
 
 use components::*;
 use components::album_import::ImportWorkflowManager;
-use library_context::{initialize_library, get_library};
-use subsonic::{SubsonicState, create_router};
+use library_context::SharedLibraryManager;
+use subsonic::create_router;
 use std::path::PathBuf;
+
+/// Root application context containing all top-level dependencies
+#[derive(Clone)]
+pub struct AppContext {
+    pub library_manager: SharedLibraryManager,
+    pub secure_config: secure_config::SecureConfig,
+}
 
 #[derive(Debug, Clone, Routable, PartialEq)]
 #[rustfmt::skip]
@@ -52,40 +58,122 @@ fn main() {
     // Create tokio runtime for async operations
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
     
-    // Initialize global singletons
-    println!("Main: Initializing global singletons...");
-    rt.block_on(async {
-        // Initialize cache manager
-        crate::cache::initialize_cache().await
-            .expect("Failed to initialize cache manager");
-        println!("Main: Cache manager initialized");
+    // Build dependencies
+    println!("Main: Building dependencies...");
+    
+    // Create lazy secure config (no keyring access yet!)
+    let secure_config = secure_config::SecureConfig::new();
+    
+    // Create encryption service (key will be lazy-loaded when first used)
+    let encryption_service = encryption::EncryptionService::new(secure_config.clone());
+    println!("Main: Encryption service created (lazy)");
+    
+    let (cache_manager, library_manager, cloud_storage) = rt.block_on(async {
+        // Build cache manager
+        let cache_manager = cache::CacheManager::new().await
+            .expect("Failed to create cache manager");
+        println!("Main: Cache manager created");
         
-        // Initialize library manager
+        // Try to initialize cloud storage from secure config (optional, lazy loading)
+        // This will only prompt for keyring if cloud storage is actually configured
+        let cloud_storage = match secure_config.get() {
+            Ok(config_data) => {
+                if let Some(s3_config) = &config_data.s3_config {
+                    println!("Main: Initializing cloud storage...");
+                    match cloud_storage::CloudStorageManager::new(s3_config.clone()).await {
+                        Ok(cs) => {
+                            println!("Main: Cloud storage initialized");
+                            Some(cs)
+                        }
+                        Err(e) => {
+                            println!("Main: Warning - Failed to initialize cloud storage: {}", e);
+                            None
+                        }
+                    }
+                } else {
+                    println!("Main: Cloud storage not configured (optional)");
+                    None
+                }
+            }
+            Err(e) => {
+                println!("Main: Warning - Failed to load secure config: {}", e);
+                None
+            }
+        };
+        
+        // Build library path and database
         let library_path = get_library_path();
-        initialize_library(library_path).await
-            .expect("Failed to initialize library manager");
-        println!("Main: Library manager initialized");
+        
+        // Ensure library directory exists
+        println!("Main: Creating library directory: {}", library_path.display());
+        tokio::fs::create_dir_all(&library_path).await
+            .expect("Failed to create library directory");
+        
+        // Initialize database
+        let db_path = library_path.join("library.db");
+        println!("Main: Initializing database at: {}", db_path.display());
+        let database = database::Database::new(db_path.to_str().unwrap()).await
+            .expect("Failed to create database");
+        println!("Main: Database created");
+        
+        // Initialize chunking service
+        let chunking_service = chunking::ChunkingService::new(encryption_service.clone())
+            .expect("Failed to create chunking service");
+        println!("Main: Chunking service created");
+        
+        // Build library manager with all injected dependencies
+        let library_manager = library::LibraryManager::new(
+            database,
+            chunking_service,
+            cloud_storage.clone(),
+        );
+        println!("Main: Library manager created");
+        
+        // Wrap in SharedLibraryManager for thread-safe sharing
+        let shared_library = SharedLibraryManager::new(library_manager);
+        println!("Main: SharedLibraryManager created");
+        
+        (cache_manager, shared_library, cloud_storage)
     });
     
+    // Create root application context
+    let app_context = AppContext {
+        library_manager: library_manager.clone(),
+        secure_config: secure_config.clone(),
+    };
+    
     // Start Subsonic API server in background thread
+    let cache_manager_for_subsonic = cache_manager;
+    let encryption_service_for_subsonic = encryption_service;
+    let cloud_storage_for_subsonic = cloud_storage;
     std::thread::spawn(move || {
-        rt.block_on(start_subsonic_server());
+        rt.block_on(start_subsonic_server(
+            cache_manager_for_subsonic,
+            library_manager,
+            encryption_service_for_subsonic,
+            cloud_storage_for_subsonic,
+        ));
     });
     
     // Start the desktop app (this will run in the main thread)
     println!("Main: Starting Dioxus desktop app...");
     LaunchBuilder::desktop()
         .with_cfg(make_config())
+        .with_context_provider(move || Box::new(app_context.clone()))
         .launch(App);
     println!("Main: Dioxus desktop app quit");
 }
 
 /// Start the Subsonic API server
-async fn start_subsonic_server() {
+async fn start_subsonic_server(
+    cache_manager: cache::CacheManager,
+    library_manager: SharedLibraryManager,
+    encryption_service: encryption::EncryptionService,
+    cloud_storage: Option<cloud_storage::CloudStorageManager>,
+) {
     println!("Starting Subsonic API server...");
     
-    let state = SubsonicState::new_shared(get_library());
-    let app = create_router(state);
+    let app = create_router(library_manager, cache_manager, encryption_service, cloud_storage);
     
     let listener = match tokio::net::TcpListener::bind("127.0.0.1:4533").await {
         Ok(listener) => {

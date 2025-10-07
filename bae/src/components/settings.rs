@@ -1,10 +1,12 @@
 use dioxus::prelude::*;
-use crate::api_keys;
-use crate::s3_config::{self, S3ConfigData};
+use crate::secure_config::{SecureConfig, use_secure_config};
+use crate::cloud_storage::S3Config;
 
 /// Settings page
 #[component]
 pub fn Settings() -> Element {
+    let secure_config = use_secure_config();
+    
     let mut api_key_input = use_signal(|| String::new());
     let mut is_saving = use_signal(|| false);
     let mut save_message = use_signal(|| None::<String>);
@@ -23,14 +25,29 @@ pub fn Settings() -> Element {
     let mut s3_save_message = use_signal(|| None::<String>);
     let mut is_editing_s3 = use_signal(|| false);
 
+    // Clone secure_config for all closures that need it
+    let secure_config_for_effect = secure_config.clone();
+    let secure_config_for_edit_api = secure_config.clone();
+    let secure_config_for_edit_s3 = secure_config.clone();
+
     // Check if API key and S3 config exist on component load
     use_effect(move || {
+        let secure_config_clone = secure_config_for_effect.clone();
         spawn(async move {
-            let exists = api_keys::check_api_key_exists();
+            let secure_config = secure_config_clone;
+            
+            // Try to load config to check what exists
+            let exists = match secure_config.get() {
+                Ok(data) => data.discogs_api_key.is_some(),
+                Err(_) => false,
+            };
             has_api_key.set(exists);
             is_editing.set(!exists);
             
-            let s3_exists = s3_config::check_s3_config_exists();
+            let s3_exists = match secure_config.get() {
+                Ok(data) => data.s3_config.is_some(),
+                Err(_) => false,
+            };
             has_s3_config.set(s3_exists);
             is_editing_s3.set(!s3_exists);
             
@@ -49,8 +66,8 @@ pub fn Settings() -> Element {
             is_saving.set(true);
             save_message.set(None);
 
-            // Call API key functions directly instead of server functions
-            match api_keys::validate_and_store_api_key(&key).await {
+            // Validate and store API key using SecureConfig
+            match SecureConfig::validate_and_store_discogs_api_key(&key).await {
                 Ok(_) => {
                     save_message.set(Some("API key saved and validated successfully!".to_string()));
                     has_api_key.set(true);
@@ -68,7 +85,7 @@ pub fn Settings() -> Element {
 
     let delete_api_key_action = move || {
         spawn(async move {
-            match api_keys::remove_api_key() {
+            match SecureConfig::delete_discogs_api_key() {
                 Ok(_) => {
                     save_message.set(Some("API key deleted successfully".to_string()));
                     has_api_key.set(false);
@@ -82,19 +99,27 @@ pub fn Settings() -> Element {
         });
     };
 
-    let edit_api_key_action = move || {
-        spawn(async move {
-            match api_keys::retrieve_api_key() {
-                Ok(key) => {
-                    api_key_input.set(key);
-                    is_editing.set(true);
-                    save_message.set(None);
+    let edit_api_key_action = {
+        let secure_config = secure_config_for_edit_api.clone();
+        move || {
+            let secure_config = secure_config.clone();
+            spawn(async move {
+                match secure_config.get() {
+                    Ok(data) => {
+                        if let Some(key) = &data.discogs_api_key {
+                            api_key_input.set(key.clone());
+                            is_editing.set(true);
+                            save_message.set(None);
+                        } else {
+                            save_message.set(Some("No API key found".to_string()));
+                        }
+                    }
+                    Err(e) => {
+                        save_message.set(Some(format!("Error loading API key: {}", e)));
+                    }
                 }
-                Err(e) => {
-                    save_message.set(Some(format!("Error loading API key: {}", e)));
-                }
-            }
-        });
+            });
+        }
     };
 
     let mut cancel_edit_action = move || {
@@ -121,7 +146,7 @@ pub fn Settings() -> Element {
             is_saving_s3.set(true);
             s3_save_message.set(None);
 
-            let config = S3ConfigData {
+            let config = S3Config {
                 bucket_name: bucket,
                 region,
                 access_key_id: access_key,
@@ -129,7 +154,7 @@ pub fn Settings() -> Element {
                 endpoint_url: if endpoint.trim().is_empty() { None } else { Some(endpoint) },
             };
 
-            match s3_config::validate_and_store_s3_config(&config).await {
+            match SecureConfig::validate_and_store_s3_config(&config).await {
                 Ok(_) => {
                     s3_save_message.set(Some("S3 configuration saved and validated successfully!".to_string()));
                     has_s3_config.set(true);
@@ -152,7 +177,7 @@ pub fn Settings() -> Element {
 
     let delete_s3_config_action = move || {
         spawn(async move {
-            match s3_config::remove_s3_config() {
+            match SecureConfig::delete_s3_config() {
                 Ok(_) => {
                     s3_save_message.set(Some("S3 configuration deleted successfully".to_string()));
                     has_s3_config.set(false);
@@ -170,23 +195,31 @@ pub fn Settings() -> Element {
         });
     };
 
-    let edit_s3_config_action = move || {
-        spawn(async move {
-            match s3_config::retrieve_s3_config() {
-                Ok(config) => {
-                    s3_bucket.set(config.bucket_name);
-                    s3_region.set(config.region);
-                    s3_access_key.set(config.access_key_id);
-                    s3_secret_key.set(config.secret_access_key);
-                    s3_endpoint.set(config.endpoint_url.unwrap_or_default());
-                    is_editing_s3.set(true);
-                    s3_save_message.set(None);
+    let edit_s3_config_action = {
+        let secure_config = secure_config_for_edit_s3.clone();
+        move || {
+            let secure_config = secure_config.clone();
+            spawn(async move {
+                match secure_config.get() {
+                    Ok(data) => {
+                        if let Some(config) = &data.s3_config {
+                            s3_bucket.set(config.bucket_name.clone());
+                            s3_region.set(config.region.clone());
+                            s3_access_key.set(config.access_key_id.clone());
+                            s3_secret_key.set(config.secret_access_key.clone());
+                            s3_endpoint.set(config.endpoint_url.clone().unwrap_or_default());
+                            is_editing_s3.set(true);
+                            s3_save_message.set(None);
+                        } else {
+                            s3_save_message.set(Some("No S3 configuration found".to_string()));
+                        }
+                    }
+                    Err(e) => {
+                        s3_save_message.set(Some(format!("Error loading S3 config: {}", e)));
+                    }
                 }
-                Err(e) => {
-                    s3_save_message.set(Some(format!("Error loading S3 config: {}", e)));
-                }
-            }
-        });
+            });
+        }
     };
 
     let mut cancel_s3_edit_action = move || {

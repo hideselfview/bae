@@ -30,6 +30,7 @@ pub enum LibraryError {
 /// 3. Process files into encrypted chunks
 /// 4. Store metadata and file mappings in database
 /// 5. Upload chunks to cloud storage
+#[derive(Debug)]
 pub struct LibraryManager {
     database: Database,
     chunking_service: ChunkingService,
@@ -37,25 +38,17 @@ pub struct LibraryManager {
 }
 
 impl LibraryManager {
-    /// Create a new library manager with optional cloud storage
-    pub async fn new(library_path: PathBuf, cloud_storage: Option<CloudStorageManager>) -> Result<Self, LibraryError> {
-        // Ensure library directory exists
-        println!("LibraryManager: Creating library directory: {}", library_path.display());
-        tokio::fs::create_dir_all(&library_path).await?;
-        
-        // Initialize database
-        let db_path = library_path.join("library.db");
-        println!("LibraryManager: Initializing database at: {}", db_path.display());
-        let database = Database::new(db_path.to_str().unwrap()).await?;
-        
-        // Initialize chunking service
-        let chunking_service = ChunkingService::new()?;
-        
-        Ok(LibraryManager {
+    /// Create a new library manager with all dependencies injected
+    pub fn new(
+        database: Database,
+        chunking_service: ChunkingService,
+        cloud_storage: Option<CloudStorageManager>,
+    ) -> Self {
+        LibraryManager {
             database,
             chunking_service,
             cloud_storage,
-        })
+        }
     }
 
     /// Import an album from Discogs metadata and local folder
@@ -323,13 +316,12 @@ impl LibraryManager {
         
         // album_id is now passed as parameter
         
-        // Upload chunks to cloud storage and store in database
+        // Use injected cloud storage manager
+        println!("LibraryManager: Uploading {} chunks to cloud storage...", album_result.chunks.len());
         let cloud_storage = self.cloud_storage.as_ref()
             .ok_or_else(|| LibraryError::CloudStorage(
-                crate::cloud_storage::CloudStorageError::Config("Cloud storage not configured - required for import".to_string())
+                crate::cloud_storage::CloudStorageError::Config("Cloud storage not configured. Please configure S3 settings in the app.".to_string())
             ))?;
-        
-        println!("LibraryManager: Uploading {} chunks to cloud storage...", album_result.chunks.len());
         let total_chunks = album_result.chunks.len();
         
         for (index, chunk) in album_result.chunks.iter().enumerate() {

@@ -15,6 +15,9 @@ use crate::library_context::SharedLibraryManager;
 #[derive(Clone)]
 pub struct SubsonicState {
     pub library_manager: SharedLibraryManager,
+    pub cache_manager: crate::cache::CacheManager,
+    pub encryption_service: crate::encryption::EncryptionService,
+    pub cloud_storage: Option<crate::cloud_storage::CloudStorageManager>,
 }
 
 /// Common query parameters for Subsonic API
@@ -133,16 +136,19 @@ pub struct AlbumList {
     pub album: Vec<Album>,
 }
 
-impl SubsonicState {
-    pub fn new_shared(library_manager: SharedLibraryManager) -> Self {
-        Self {
-            library_manager,
-        }
-    }
-}
-
 /// Create the Subsonic API router
-pub fn create_router(state: SubsonicState) -> Router {
+pub fn create_router(
+    library_manager: SharedLibraryManager,
+    cache_manager: crate::cache::CacheManager,
+    encryption_service: crate::encryption::EncryptionService,
+    cloud_storage: Option<crate::cloud_storage::CloudStorageManager>,
+) -> Router {
+    let state = SubsonicState {
+        library_manager,
+        cache_manager,
+        encryption_service,
+        cloud_storage,
+    };
     Router::new()
         .route("/rest/ping", get(ping))
         .route("/rest/getLicense", get(get_license))
@@ -321,7 +327,7 @@ async fn stream_song(
 
     println!("Streaming request for song ID: {}", song_id);
 
-    match stream_track_chunks(&state.library_manager, &song_id).await {
+    match stream_track_chunks(&state, &song_id).await {
         Ok(audio_data) => {
             // Return the reassembled audio with proper headers
             let headers = [
@@ -474,20 +480,18 @@ async fn load_album_with_songs(
 /// Stream track chunks - reassemble encrypted chunks into audio data
 /// Optimized for CUE/FLAC tracks with chunk range queries and header prepending
 async fn stream_track_chunks(
-    library_manager: &SharedLibraryManager,
+    state: &SubsonicState,
     track_id: &str,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    let library_manager = &state.library_manager;
     println!("Starting chunk reassembly for track: {}", track_id);
-    
-    // Get the global cache manager
-    let cache_manager = crate::cache::get_cache();
     
     // Check if this is a CUE/FLAC track with track positions
     if let Some(track_position) = library_manager.get().get_track_position(track_id).await
         .map_err(|e| format!("Database error: {}", e))? {
         
         println!("Detected CUE/FLAC track - using efficient chunk range streaming");
-        return stream_cue_track_chunks(library_manager, track_id, &track_position, cache_manager).await;
+        return stream_cue_track_chunks(state, track_id, &track_position).await;
     }
     
     // Fallback to regular file streaming for individual tracks
@@ -522,7 +526,7 @@ async fn stream_track_chunks(
         println!("Processing chunk {} (index {})", chunk.id, chunk.chunk_index);
         
         // Download and decrypt chunk (with caching)
-        let chunk_data = download_and_decrypt_chunk(library_manager, &chunk, cache_manager).await?;
+        let chunk_data = download_and_decrypt_chunk(state, &chunk).await?;
         audio_data.extend_from_slice(&chunk_data);
     }
     
@@ -531,22 +535,18 @@ async fn stream_track_chunks(
 }
 
 /// Download and decrypt a single chunk with caching
-/// TODO: Use library_manager's cloud storage instead of creating new client from env
 async fn download_and_decrypt_chunk(
-    _library_manager: &SharedLibraryManager,
+    state: &SubsonicState,
     chunk: &crate::database::DbChunk,
-    cache_manager: &'static crate::cache::CacheManager,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-    use crate::encryption::EncryptionService;
+    let cache_manager = &state.cache_manager;
     
     // Check cache first (for both local and cloud chunks)
     if let Some(cached_encrypted_data) = cache_manager.get_chunk(&chunk.id).await
         .map_err(|e| format!("Cache error: {}", e))? {
         
-        // Cache hit - decrypt and return
-        let encryption_service = EncryptionService::new()
-            .map_err(|e| format!("Failed to initialize encryption: {}", e))?;
-        let decrypted_data = encryption_service.decrypt_chunk(&cached_encrypted_data)
+        // Cache hit - decrypt and return (using injected encryption service)
+        let decrypted_data = state.encryption_service.decrypt_chunk(&cached_encrypted_data)
             .map_err(|e| format!("Failed to decrypt cached chunk: {}", e))?;
         
         return Ok(decrypted_data);
@@ -561,14 +561,11 @@ async fn download_and_decrypt_chunk(
         println!("Reading chunk from local path: {}", local_path);
         tokio::fs::read(local_path).await?
     } else {
-        // Download from cloud storage
+        // Download from cloud storage (using injected cloud storage manager)
         println!("Downloading chunk from cloud: {}", chunk.storage_location);
         
-        // Initialize cloud storage manager
-        let config = crate::cloud_storage::S3Config::from_env()
-            .map_err(|e| format!("Failed to load S3 config: {}", e))?;
-        let cloud_storage = crate::cloud_storage::CloudStorageManager::new_s3(config).await
-            .map_err(|e| format!("Failed to initialize cloud storage: {}", e))?;
+        let cloud_storage = state.cloud_storage.as_ref()
+            .ok_or_else(|| "Cloud storage not configured. Please configure S3 settings in the app.".to_string())?;
         
         // Download encrypted chunk data
         cloud_storage.download_chunk(&chunk.storage_location).await
@@ -580,10 +577,8 @@ async fn download_and_decrypt_chunk(
         println!("Warning: Failed to cache chunk {}: {}", chunk.id, e);
     }
     
-    // Decrypt and return
-    let encryption_service = EncryptionService::new()
-        .map_err(|e| format!("Failed to initialize encryption: {}", e))?;
-    let decrypted_data = encryption_service.decrypt_chunk(&encrypted_data)
+    // Decrypt and return (using injected encryption service)
+    let decrypted_data = state.encryption_service.decrypt_chunk(&encrypted_data)
         .map_err(|e| format!("Failed to decrypt chunk: {}", e))?;
     
     Ok(decrypted_data)
@@ -592,11 +587,11 @@ async fn download_and_decrypt_chunk(
 /// Stream CUE/FLAC track chunks efficiently using chunk ranges and header prepending
 /// This provides 85% download reduction compared to downloading entire files
 async fn stream_cue_track_chunks(
-    library_manager: &SharedLibraryManager,
+    state: &SubsonicState,
     track_id: &str,
     track_position: &crate::database::DbTrackPosition,
-    cache_manager: &'static crate::cache::CacheManager,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    let library_manager = &state.library_manager;
     println!("Streaming CUE/FLAC track: chunks {}-{}", 
             track_position.start_chunk_index, track_position.end_chunk_index);
     
@@ -651,7 +646,7 @@ async fn stream_cue_track_chunks(
         println!("Processing track chunk {} (index {})", chunk.id, chunk.chunk_index);
         
         // Download and decrypt chunk (with caching)
-        let chunk_data = download_and_decrypt_chunk(library_manager, &chunk, cache_manager).await?;
+        let chunk_data = download_and_decrypt_chunk(state, &chunk).await?;
         audio_data.extend_from_slice(&chunk_data);
     }
     

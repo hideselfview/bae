@@ -60,25 +60,23 @@ pub struct AlbumChunkingResult {
 }
 
 /// Main chunking service that handles file splitting and encryption
+#[derive(Debug)]
 pub struct ChunkingService {
     config: ChunkingConfig,
     encryption_service: EncryptionService,
 }
 
 impl ChunkingService {
-    /// Create a new chunking service with default configuration
-    pub fn new() -> Result<Self, ChunkingError> {
+    /// Create a new chunking service with default configuration and encryption service
+    pub fn new(encryption_service: EncryptionService) -> Result<Self, ChunkingError> {
         let config = ChunkingConfig::default();
-        Self::new_with_config(config)
+        Self::new_with_config(config, encryption_service)
     }
 
-    /// Create a new chunking service with custom configuration
-    pub fn new_with_config(config: ChunkingConfig) -> Result<Self, ChunkingError> {
+    /// Create a new chunking service with custom configuration and encryption service
+    pub fn new_with_config(config: ChunkingConfig, encryption_service: EncryptionService) -> Result<Self, ChunkingError> {
         // Ensure temp directory exists
         std::fs::create_dir_all(&config.temp_dir)?;
-        
-        // Initialize encryption service
-        let encryption_service = EncryptionService::new()?;
         
         Ok(ChunkingService { 
             config,
@@ -188,7 +186,7 @@ impl ChunkingService {
         let encrypted_chunk = EncryptedChunk::new(
             encrypted_data,
             nonce,
-            self.encryption_service.key_id().to_string(),
+            "encryption_master_key".to_string(), // Fixed key ID for app-wide master key
         );
         
         // Calculate checksum of original data

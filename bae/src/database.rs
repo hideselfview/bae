@@ -96,6 +96,7 @@ pub struct DbTrackPosition {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug)]
 pub struct Database {
     pool: SqlitePool,
 }
