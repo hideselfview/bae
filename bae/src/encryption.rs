@@ -25,45 +25,41 @@ pub enum EncryptionError {
 /// - Each chunk gets a unique nonce for security
 #[derive(Clone)]
 pub struct EncryptionService {
-    secure_config: crate::secure_config::SecureConfig,
+    config: crate::config::Config,
     cipher: std::sync::Arc<std::sync::OnceLock<Aes256Gcm>>,
 }
 
 impl std::fmt::Debug for EncryptionService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EncryptionService")
-            .field("secure_config", &"<present>")
+            .field("config", &"<present>")
             .field("cipher", &"<lazy>")
             .finish()
     }
 }
 
 impl EncryptionService {
-    /// Create a new encryption service with SecureConfig
+    /// Create a new encryption service with Config
     /// Key loading is deferred until first encrypt/decrypt operation
-    pub fn new(secure_config: crate::secure_config::SecureConfig) -> Self {
+    pub fn new(config: crate::config::Config) -> Self {
         EncryptionService {
-            secure_config,
+            config,
             cipher: std::sync::Arc::new(std::sync::OnceLock::new()),
         }
     }
 
-    /// Get or create the cipher, loading the key from SecureConfig on first use
-    /// This may prompt for keyring password on first call
+    /// Get or create the cipher, loading the key from Config on first use
     fn get_cipher(&self) -> Result<&Aes256Gcm, EncryptionError> {
         // Check if cipher already created
         if let Some(cipher) = self.cipher.get() {
             return Ok(cipher);
         }
 
-        // First use: load key from SecureConfig
-        println!("EncryptionService: Loading master key from SecureConfig...");
-        let config_data = self.secure_config.get().map_err(|e| {
-            EncryptionError::KeyManagement(format!("Failed to load secure config: {}", e))
-        })?;
+        // First use: load key from Config
+        println!("EncryptionService: Loading master key from Config...");
 
         // Decode hex key
-        let key_bytes = hex::decode(&config_data.encryption_master_key)
+        let key_bytes = hex::decode(&self.config.encryption_key)
             .map_err(|e| EncryptionError::KeyManagement(format!("Invalid key format: {}", e)))?;
 
         if key_bytes.len() != 32 {
@@ -243,16 +239,21 @@ mod tests {
         let test_key = Aes256Gcm::generate_key(OsRng);
         let test_key_hex = hex::encode(test_key.as_slice());
 
-        // Create a SecureConfig with pre-populated data (avoids keyring)
-        let test_config_data = crate::secure_config::SecureConfigData {
-            discogs_api_key: None,
-            s3_config: None,
-            encryption_master_key: test_key_hex,
+        // Create a test config with the generated key
+        let test_config = crate::config::Config {
+            library_id: "test-library".to_string(),
+            discogs_api_key: "test-key".to_string(),
+            s3_config: crate::cloud_storage::S3Config {
+                bucket_name: "test-bucket".to_string(),
+                region: "us-east-1".to_string(),
+                access_key_id: "test-access".to_string(),
+                secret_access_key: "test-secret".to_string(),
+                endpoint_url: None,
+            },
+            encryption_key: test_key_hex,
         };
 
-        let secure_config = crate::secure_config::SecureConfig::new_with_data(test_config_data);
-
-        EncryptionService::new(secure_config)
+        EncryptionService::new(test_config)
     }
 
     #[test]

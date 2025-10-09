@@ -28,20 +28,11 @@ pub struct AlbumImportContext {
 impl AlbumImportContext {
     fn get_client(
         &mut self,
-        secure_config: &crate::secure_config::SecureConfig,
+        config: &crate::config::Config,
     ) -> Result<&discogs::DiscogsClient, String> {
         if self.client.is_none() {
-            // Lazy load API key from secure config (may prompt for keychain password)
-            let config_data = secure_config
-                .get()
-                .map_err(|e| format!("Failed to access secure config: {}", e))?;
-
-            let api_key = config_data.discogs_api_key.as_ref().ok_or_else(|| {
-                "No API key configured. Please go to Settings to add your Discogs API key."
-                    .to_string()
-            })?;
-
-            self.client = Some(discogs::DiscogsClient::new(api_key.clone()));
+            // Get API key from config (always present)
+            self.client = Some(discogs::DiscogsClient::new(config.discogs_api_key.clone()));
         }
         Ok(self.client.as_ref().unwrap())
     }
@@ -49,7 +40,7 @@ impl AlbumImportContext {
     pub fn search_albums(
         &mut self,
         query: String,
-        secure_config: &crate::secure_config::SecureConfig,
+        config: &crate::config::Config,
     ) {
         if query.trim().is_empty() {
             self.search_results.set(Vec::new());
@@ -64,7 +55,7 @@ impl AlbumImportContext {
         is_searching.set(true);
         error_message.set(None);
 
-        let client = match self.get_client(secure_config) {
+        let client = match self.get_client(config) {
             Ok(client) => client.clone(),
             Err(error) => {
                 error_message.set(Some(error));
@@ -101,9 +92,9 @@ impl AlbumImportContext {
     pub async fn import_master(
         &mut self,
         master_id: String,
-        secure_config: &crate::secure_config::SecureConfig,
+        config: &crate::config::Config,
     ) -> Result<ImportItem, String> {
-        let client = match self.get_client(secure_config) {
+        let client = match self.get_client(config) {
             Ok(client) => client.clone(),
             Err(error) => {
                 self.error_message.set(Some(error.clone()));
@@ -149,9 +140,9 @@ impl AlbumImportContext {
     pub async fn get_master_versions(
         &mut self,
         master_id: String,
-        secure_config: &crate::secure_config::SecureConfig,
+        config: &crate::config::Config,
     ) -> Result<Vec<DiscogsMasterReleaseVersion>, String> {
-        let client = match self.get_client(secure_config) {
+        let client = match self.get_client(config) {
             Ok(client) => client.clone(),
             Err(error) => {
                 self.error_message.set(Some(error.clone()));
@@ -179,9 +170,9 @@ impl AlbumImportContext {
         &mut self,
         release_id: String,
         master_id: String,
-        secure_config: &crate::secure_config::SecureConfig,
+        config: &crate::config::Config,
     ) -> Result<ImportItem, String> {
-        let client = match self.get_client(secure_config) {
+        let client = match self.get_client(config) {
             Ok(client) => client.clone(),
             Err(error) => {
                 self.error_message.set(Some(error.clone()));

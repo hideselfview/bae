@@ -15,7 +15,6 @@ mod encryption;
 mod library;
 mod library_context;
 mod models;
-mod secure_config;
 mod subsonic;
 
 use components::album_import::ImportWorkflowManager;
@@ -27,7 +26,7 @@ use subsonic::create_router;
 #[derive(Clone)]
 pub struct AppContext {
     pub library_manager: SharedLibraryManager,
-    pub secure_config: secure_config::SecureConfig,
+    pub config: config::Config,
 }
 
 #[derive(Debug, Clone, Routable, PartialEq)]
@@ -58,29 +57,13 @@ async fn create_cache_manager() -> cache::CacheManager {
     cache_manager
 }
 
-/// Initialize cloud storage from secure config if configured (optional)
+/// Initialize cloud storage from config
 async fn create_cloud_storage(
-    secure_config: &secure_config::SecureConfig,
+    config: &config::Config,
 ) -> Option<cloud_storage::CloudStorageManager> {
-    let config_data = match secure_config.get() {
-        Ok(data) => data,
-        Err(e) => {
-            println!("Main: Warning - Failed to load secure config: {}", e);
-            return None;
-        }
-    };
-
-    let s3_config = match &config_data.s3_config {
-        Some(config) => config,
-        None => {
-            println!("Main: Cloud storage not configured (optional)");
-            return None;
-        }
-    };
-
     println!("Main: Initializing cloud storage...");
 
-    match cloud_storage::CloudStorageManager::new(s3_config.clone()).await {
+    match cloud_storage::CloudStorageManager::new(config.s3_config.clone()).await {
         Ok(cs) => {
             println!("Main: Cloud storage initialized");
             Some(cs)
@@ -147,18 +130,15 @@ fn main() {
     // Load application configuration (handles .env loading in debug builds)
     let config = config::Config::load();
 
-    // Create lazy secure config (no keyring access yet to avoid password prompting!)
-    let secure_config = secure_config::SecureConfig::new();
-
-    // Create encryption service
-    let encryption_service = encryption::EncryptionService::new(secure_config.clone());
+    // Create encryption service (lazy credential loading, no keyring access yet)
+    let encryption_service = encryption::EncryptionService::new(config.clone());
 
     // Initialize cache manager
     let cache_manager = rt.block_on(create_cache_manager());
 
-    // Try to initialize cloud storage from secure config (optional, lazy loading)
+    // Try to initialize cloud storage from config (optional, lazy loading)
     // This will only prompt for keyring if cloud storage is actually configured
-    let cloud_storage = rt.block_on(create_cloud_storage(&secure_config));
+    let cloud_storage = rt.block_on(create_cloud_storage(&config));
 
     // Initialize database
     let database = rt.block_on(create_database(&config));
@@ -170,7 +150,7 @@ fn main() {
     // Create root application context
     let app_context = AppContext {
         library_manager: library_manager.clone(),
-        secure_config: secure_config.clone(),
+        config: config.clone(),
     };
 
     // Start Subsonic API server in background thread

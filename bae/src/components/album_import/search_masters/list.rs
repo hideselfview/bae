@@ -1,5 +1,5 @@
 use super::{super::import_workflow::ImportWorkflow, item::SearchMastersItem};
-use crate::secure_config::use_secure_config;
+use crate::config::use_config;
 use crate::{album_import_context::AlbumImportContext, models::ImportItem};
 use dioxus::prelude::*;
 
@@ -7,20 +7,20 @@ use dioxus::prelude::*;
 pub fn SearchMastersList() -> Element {
     let album_import_ctx = use_context::<AlbumImportContext>();
     let selected_import_item = use_signal(|| None::<ImportItem>);
-    let secure_config = use_secure_config();
+    let config = use_config();
 
     let on_import_item = {
         let selected_import_item = selected_import_item;
         let album_import_ctx = album_import_ctx.clone();
-        let secure_config = secure_config.clone();
+        let config = config.clone();
         move |master_id: String| {
             let mut selected_import_item = selected_import_item.clone();
             let mut album_import_ctx = album_import_ctx.clone();
-            let secure_config = secure_config.clone();
+            let config = config.clone();
             spawn(async move {
                 // Fetch full master details using the search context
                 match album_import_ctx
-                    .import_master(master_id, &secure_config)
+                    .import_master(master_id, &config)
                     .await
                 {
                     Ok(import_item) => {

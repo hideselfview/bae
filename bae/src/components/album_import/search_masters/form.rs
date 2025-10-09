@@ -1,5 +1,5 @@
 use crate::album_import_context::AlbumImportContext;
-use crate::secure_config::use_secure_config;
+use crate::config::use_config;
 use dioxus::prelude::*;
 
 /// Search masters input form with text field and search button
@@ -7,7 +7,7 @@ use dioxus::prelude::*;
 pub fn SearchMastersForm() -> Element {
     let album_import_ctx = use_context::<AlbumImportContext>();
     let album_import_ctx_clone = album_import_ctx.clone();
-    let secure_config = use_secure_config();
+    let config = use_config();
 
     rsx! {
         div {
@@ -29,11 +29,11 @@ pub fn SearchMastersForm() -> Element {
                 },
                 onkeydown: {
                     let mut album_import_ctx = album_import_ctx_clone.clone();
-                    let secure_config = secure_config.clone();
+                    let config = config.clone();
                     move |event: KeyboardEvent| {
                         if event.key() == Key::Enter {
                             let query = album_import_ctx.search_query.read().clone();
-                            album_import_ctx.search_albums(query, &secure_config);
+                            album_import_ctx.search_albums(query, &config);
                         }
                     }
                 }
@@ -42,10 +42,10 @@ pub fn SearchMastersForm() -> Element {
                 class: "px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium",
                 onclick: {
                     let mut album_import_ctx = album_import_ctx_clone.clone();
-                    let secure_config = secure_config.clone();
+                    let config = config.clone();
                     move |_| {
                         let query = album_import_ctx.search_query.read().clone();
-                        album_import_ctx.search_albums(query, &secure_config);
+                        album_import_ctx.search_albums(query, &config);
                     }
                 },
                 "Search"

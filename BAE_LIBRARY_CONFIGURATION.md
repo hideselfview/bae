@@ -304,44 +304,22 @@ Does .env file exist?
 ```bash
 # Dev mode activates automatically in debug builds when this file exists
 
-# S3 Configuration (optional - can use local filesystem instead)
-BAE_S3_BUCKET=my-dev-bucket
+# S3 Configuration (use MinIO locally for dev)
+BAE_S3_BUCKET=bae-dev
 BAE_S3_REGION=us-east-1
-BAE_S3_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE
-BAE_S3_SECRET_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
-# BAE_S3_ENDPOINT=http://localhost:9000  # for MinIO/LocalStack
-
-# Local filesystem mode (alternative to S3)
-BAE_USE_LOCAL_STORAGE=true
-BAE_LOCAL_STORAGE_PATH=/tmp/bae-dev-storage
+BAE_S3_ACCESS_KEY=minioadmin
+BAE_S3_SECRET_KEY=minioadmin
+BAE_S3_ENDPOINT=http://localhost:9000
 
 # Encryption key (hex-encoded 32-byte key for AES-256)
 BAE_ENCRYPTION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
-# Discogs API key
+# Discogs API key (required)
 BAE_DISCOGS_API_KEY=your-discogs-key-here
 
 # Library ID (optional, will be generated if missing)
 BAE_LIBRARY_ID=550e8400-e29b-41d4-a716-446655440000
 ```
-
-### Local Storage Mode
-
-When `BAE_USE_LOCAL_STORAGE=true`, bae uses local filesystem instead of S3:
-
-**Storage structure:**
-```
-/tmp/bae-dev-storage/
-├── bae-library.json          # Library manifest
-├── bae-library.db            # SQLite database
-└── chunks/
-    ├── ab/
-    │   └── cd/
-    │       └── chunk_abcd1234....enc
-    └── ...
-```
-
-This mirrors the S3 structure but uses local directories. The cache system still works the same way.
 
 ### Encryption Key Management
 
@@ -370,8 +348,6 @@ Add to `.gitignore`:
 !.env.example
 ```
 
-Note: `dev-storage/` is not needed in `.gitignore` since the hardwired path `/tmp/bae-dev-storage/` is outside the repository.
-
 ### Example Configuration File
 
 **`.env.example`** (committed to repo):
@@ -379,21 +355,17 @@ Note: `dev-storage/` is not needed in `.gitignore` since the hardwired path `/tm
 # Copy this to .env and fill in your values
 # Dev mode activates automatically in debug builds when this file exists
 
-# Use local filesystem (recommended for dev)
-BAE_USE_LOCAL_STORAGE=true
-BAE_LOCAL_STORAGE_PATH=/tmp/bae-dev-storage
+# S3 Configuration (use MinIO locally - see Development Workflow below)
+BAE_S3_BUCKET=bae-dev
+BAE_S3_REGION=us-east-1
+BAE_S3_ENDPOINT=http://localhost:9000
+BAE_S3_ACCESS_KEY=minioadmin
+BAE_S3_SECRET_KEY=minioadmin
 
-# OR use S3 (if you have MinIO/LocalStack running)
-# BAE_S3_BUCKET=my-dev-bucket
-# BAE_S3_REGION=us-east-1
-# BAE_S3_ENDPOINT=http://localhost:9000
-# BAE_S3_ACCESS_KEY=minioadmin
-# BAE_S3_SECRET_KEY=minioadmin
-
-# Generate with: openssl rand -hex 32
+# Encryption key - generate with: openssl rand -hex 32
 BAE_ENCRYPTION_KEY=generate-a-new-key-here
 
-# Optional: Get from https://www.discogs.com/settings/developers
+# Discogs API key - get from https://www.discogs.com/settings/developers
 BAE_DISCOGS_API_KEY=your-discogs-key-here
 
 # Optional: Will be auto-generated if missing
@@ -403,13 +375,21 @@ BAE_DISCOGS_API_KEY=your-discogs-key-here
 ### Development Workflow
 
 **First-time setup:**
-1. Copy `.env.example` to `.env`
-2. Generate encryption key: `openssl rand -hex 32`
-3. Add encryption key to `.env`
-4. Optionally add Discogs API key
-5. Run in debug mode: `cargo run` or `dx serve`
-6. App detects `.env` file and activates dev mode automatically
-7. Local library initializes automatically at `/tmp/bae-dev-storage/`
+1. Start MinIO locally:
+   ```bash
+   docker run -p 9000:9000 -p 9001:9001 \
+     -e MINIO_ROOT_USER=minioadmin \
+     -e MINIO_ROOT_PASSWORD=minioadmin \
+     quay.io/minio/minio server /data --console-address ":9001"
+   ```
+2. Copy `.env.example` to `.env`
+3. Generate encryption key: `openssl rand -hex 32`
+4. Add encryption key to `.env`
+5. Get Discogs API key from https://www.discogs.com/settings/developers
+6. Add Discogs API key to `.env`
+7. Run in debug mode: `cargo run` or `dx serve`
+8. App detects `.env` file and activates dev mode automatically
+9. Library initializes automatically in MinIO bucket
 
 **Switching to production:**
 - Production build (`cargo build --release`) ignores `.env` completely

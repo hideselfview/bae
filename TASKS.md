@@ -7,13 +7,14 @@
 - [x] Add local development mode support (see `BAE_LIBRARY_CONFIGURATION.md`)
   - [x] Create `.env.example` file with all configuration options
   - [x] Update `.gitignore` to exclude `.env` file
-  - [x] Hardwire dev storage path to `/tmp/bae-dev-storage`
-  - [ ] Implement `.env` file loading in debug builds
-  - [ ] Add local filesystem storage mode (alternative to S3)
+  - [x] Implement `.env` file loading in debug builds
+  - [x] Merge SecureConfig into unified Config module
+  - [x] Require MinIO for dev mode (removed local filesystem mode)
+  - [x] Require Discogs API key
   - [ ] Add dev mode warning banner in UI
   - [ ] Add compile-time check to prevent dev mode in release builds
 - [ ] Build first-launch setup wizard (see `BAE_LIBRARY_CONFIGURATION.md`)
-  - [ ] Create setup wizard UI (S3 configuration + optional Discogs)
+  - [ ] Create setup wizard UI (S3 configuration + Discogs API key required)
   - [ ] Implement S3 connection validation
   - [ ] Add library manifest detection (`s3://bucket/bae-library.json`)
   - [ ] Build library initialization for new libraries

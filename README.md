@@ -6,7 +6,7 @@ Your music is encrypted and stored in S3-compatible cloud storage with a local c
 
 ## How it works
 
-**Setup:** On first launch, configure S3 storage (required) and optionally add a Discogs API key. The system detects existing libraries or initializes a new one. Configuration is stored in `~/.bae/config.yaml` with credentials in the system keyring.
+**Setup:** On first launch, configure S3 storage and Discogs API key (both required). The system detects existing libraries or initializes a new one. Configuration is stored in `~/.bae/config.yaml` with credentials in the system keyring.
 
 **Import:** Search Discogs for your album, select the specific release (or master if you just know the album title), then point to your source folder. bae scans the folder, matches files to the Discogs tracklist, chunks and encrypts everything, then uploads to S3. The local SQLite database syncs to S3 after each import.
 
@@ -24,15 +24,24 @@ cargo install dioxus-cli --locked
 
 **Quick start:**
 ```bash
+# Start MinIO for dev
+docker run -p 9000:9000 -p 9001:9001 \
+  -e MINIO_ROOT_USER=minioadmin \
+  -e MINIO_ROOT_PASSWORD=minioadmin \
+  quay.io/minio/minio server /data --console-address ":9001"
+
+# Setup bae
 git clone <repository-url>
 cd bae
 npm install  # Tailwind CSS setup
 cp .env.example .env
-# Edit .env: add encryption key from `openssl rand -hex 32`
+# Edit .env: 
+#   - Add encryption key from: openssl rand -hex 32
+#   - Add Discogs API key from: https://www.discogs.com/settings/developers
 cd bae && dx serve
 ```
 
-Dev mode activates automatically in debug builds when `.env` exists. With `BAE_USE_LOCAL_STORAGE=true`, data goes to `/tmp/bae-dev-storage/` instead of S3. See [BAE_LIBRARY_CONFIGURATION.md](BAE_LIBRARY_CONFIGURATION.md) for details.
+Dev mode activates automatically in debug builds when `.env` exists. Requires MinIO running locally and a valid Discogs API key. See [BAE_LIBRARY_CONFIGURATION.md](BAE_LIBRARY_CONFIGURATION.md) for details.
 
 ## Documentation
 
