@@ -1,4 +1,4 @@
-use dioxus::desktop::{Config, WindowBuilder};
+use dioxus::desktop::{Config as DioxusConfig, WindowBuilder};
 use dioxus::prelude::*;
 
 mod album_import_context;
@@ -7,6 +7,7 @@ mod cache;
 mod chunking;
 mod cloud_storage;
 mod components;
+mod config;
 mod cue_flac;
 mod database;
 mod discogs;
@@ -20,7 +21,6 @@ mod subsonic;
 use components::album_import::ImportWorkflowManager;
 use components::*;
 use library_context::SharedLibraryManager;
-use std::path::PathBuf;
 use subsonic::create_router;
 
 /// Root application context containing all top-level dependencies
@@ -47,12 +47,6 @@ enum Route {
 const FAVICON: Asset = asset!("/assets/favicon.ico");
 const MAIN_CSS: Asset = asset!("/assets/main.css");
 const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
-
-/// Get the library path
-fn get_library_path() -> PathBuf {
-    let home_dir = dirs::home_dir().expect("Failed to get home directory");
-    home_dir.join("Music").join("bae")
-}
 
 /// Initialize cache manager
 async fn create_cache_manager() -> cache::CacheManager {
@@ -99,8 +93,8 @@ async fn create_cloud_storage(
 }
 
 /// Initialize database
-async fn create_database() -> database::Database {
-    let library_path = get_library_path();
+async fn create_database(config: &config::Config) -> database::Database {
+    let library_path = config.get_library_path();
 
     println!(
         "Main: Creating library directory: {}",
@@ -145,21 +139,14 @@ fn create_library_manager(
 }
 
 fn main() {
-    // Load .env file in debug builds for dev mode
-    #[cfg(debug_assertions)]
-    {
-        if dotenvy::dotenv().is_ok() {
-            println!("Main: Dev mode activated - loaded .env file");
-        } else {
-            println!("Main: No .env file found, using production config");
-        }
-    }
-    
     // Create tokio runtime for async operations
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
 
     println!("Main: Building dependencies...");
-    
+
+    // Load application configuration (handles .env loading in debug builds)
+    let config = config::Config::load();
+
     // Create lazy secure config (no keyring access yet to avoid password prompting!)
     let secure_config = secure_config::SecureConfig::new();
 
@@ -174,7 +161,7 @@ fn main() {
     let cloud_storage = rt.block_on(create_cloud_storage(&secure_config));
 
     // Initialize database
-    let database = rt.block_on(create_database());
+    let database = rt.block_on(create_database(&config));
 
     // Build library manager with all injected dependencies
     let library_manager =
@@ -239,8 +226,8 @@ async fn start_subsonic_server(
     }
 }
 
-fn make_config() -> Config {
-    Config::default().with_window(make_window())
+fn make_config() -> DioxusConfig {
+    DioxusConfig::default().with_window(make_window())
 }
 
 fn make_window() -> WindowBuilder {
