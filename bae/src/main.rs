@@ -145,11 +145,21 @@ fn create_library_manager(
 }
 
 fn main() {
+    // Load .env file in debug builds for dev mode
+    #[cfg(debug_assertions)]
+    {
+        if dotenvy::dotenv().is_ok() {
+            println!("Main: Dev mode activated - loaded .env file");
+        } else {
+            println!("Main: No .env file found, using production config");
+        }
+    }
+    
     // Create tokio runtime for async operations
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
 
     println!("Main: Building dependencies...");
-
+    
     // Create lazy secure config (no keyring access yet to avoid password prompting!)
     let secure_config = secure_config::SecureConfig::new();
 
