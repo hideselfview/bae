@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use tokio::fs;
 use thiserror::Error;
+use tokio::fs;
+use tokio::sync::RwLock;
 
 /// Errors that can occur during cache operations
 #[derive(Error, Debug)]
@@ -55,7 +55,6 @@ pub struct CacheManager {
     current_size: Arc<RwLock<u64>>,
 }
 
-
 impl CacheManager {
     /// Create a new cache manager with default configuration
     pub async fn new() -> Result<Self, CacheError> {
@@ -82,11 +81,11 @@ impl CacheManager {
     /// Get a chunk from cache if it exists
     pub async fn get_chunk(&self, chunk_id: &str) -> Result<Option<Vec<u8>>, CacheError> {
         let mut entries = self.entries.write().await;
-        
+
         if let Some(entry) = entries.get_mut(chunk_id) {
             // Update last accessed time for LRU
             entry.last_accessed = std::time::SystemTime::now();
-            
+
             // Read chunk data from file
             match fs::read(&entry.file_path).await {
                 Ok(data) => {
@@ -95,7 +94,10 @@ impl CacheManager {
                 }
                 Err(e) => {
                     // File doesn't exist or can't be read - remove from cache
-                    println!("CacheManager: Cache entry corrupted for chunk {}, removing: {}", chunk_id, e);
+                    println!(
+                        "CacheManager: Cache entry corrupted for chunk {}, removing: {}",
+                        chunk_id, e
+                    );
                     let mut current_size = self.current_size.write().await;
                     *current_size = current_size.saturating_sub(entry.size_bytes);
                     entries.remove(chunk_id);
@@ -111,7 +113,7 @@ impl CacheManager {
     /// Put a chunk into the cache
     pub async fn put_chunk(&self, chunk_id: &str, data: &[u8]) -> Result<(), CacheError> {
         let chunk_size = data.len() as u64;
-        
+
         // Check if we need to evict chunks to make space
         self.ensure_space_available(chunk_size).await?;
 
@@ -137,8 +139,10 @@ impl CacheManager {
         entries.insert(chunk_id.to_string(), entry);
         *current_size += chunk_size;
 
-        println!("CacheManager: Cached chunk {} ({} bytes, total cache: {} bytes)", 
-                chunk_id, chunk_size, *current_size);
+        println!(
+            "CacheManager: Cached chunk {} ({} bytes, total cache: {} bytes)",
+            chunk_id, chunk_size, *current_size
+        );
 
         Ok(())
     }
@@ -151,33 +155,42 @@ impl CacheManager {
         let mut dir_entries = fs::read_dir(&self.config.cache_dir).await?;
         while let Some(entry) = dir_entries.next_entry().await? {
             let path = entry.path();
-            
+
             // Only process .enc files
             if path.extension().and_then(|s| s.to_str()) == Some("enc") {
                 if let Some(file_stem) = path.file_stem().and_then(|s| s.to_str()) {
                     let chunk_id = file_stem.to_string();
-                    
+
                     match entry.metadata().await {
                         Ok(metadata) => {
                             let cache_entry = CacheEntry {
                                 file_path: path,
                                 size_bytes: metadata.len(),
-                                last_accessed: metadata.accessed().unwrap_or(std::time::SystemTime::now()),
+                                last_accessed: metadata
+                                    .accessed()
+                                    .unwrap_or(std::time::SystemTime::now()),
                             };
-                            
+
                             *current_size += cache_entry.size_bytes;
                             entries.insert(chunk_id, cache_entry);
                         }
                         Err(e) => {
-                            println!("Warning: Failed to read metadata for cache file {}: {}", path.display(), e);
+                            println!(
+                                "Warning: Failed to read metadata for cache file {}: {}",
+                                path.display(),
+                                e
+                            );
                         }
                     }
                 }
             }
         }
 
-        println!("CacheManager: Loaded {} existing cache entries ({} bytes)", 
-                entries.len(), *current_size);
+        println!(
+            "CacheManager: Loaded {} existing cache entries ({} bytes)",
+            entries.len(),
+            *current_size
+        );
         Ok(())
     }
 
@@ -188,12 +201,14 @@ impl CacheManager {
 
         // Check if we need to evict by size
         while *current_size + needed_bytes > self.config.max_size_bytes && !entries.is_empty() {
-            self.evict_lru_chunk(&mut entries, &mut current_size).await?;
+            self.evict_lru_chunk(&mut entries, &mut current_size)
+                .await?;
         }
 
         // Check if we need to evict by count
         while entries.len() >= self.config.max_chunks && !entries.is_empty() {
-            self.evict_lru_chunk(&mut entries, &mut current_size).await?;
+            self.evict_lru_chunk(&mut entries, &mut current_size)
+                .await?;
         }
 
         Ok(())
@@ -215,11 +230,18 @@ impl CacheManager {
             if let Some(entry) = entries.remove(&chunk_id) {
                 // Remove the file
                 if let Err(e) = fs::remove_file(&entry.file_path).await {
-                    println!("Warning: Failed to remove evicted cache file {}: {}", entry.file_path.display(), e);
+                    println!(
+                        "Warning: Failed to remove evicted cache file {}: {}",
+                        entry.file_path.display(),
+                        e
+                    );
                 }
 
                 *current_size = current_size.saturating_sub(entry.size_bytes);
-                println!("CacheManager: Evicted chunk {} ({} bytes)", chunk_id, entry.size_bytes);
+                println!(
+                    "CacheManager: Evicted chunk {} ({} bytes)",
+                    chunk_id, entry.size_bytes
+                );
             }
         }
 

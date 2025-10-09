@@ -1,3 +1,5 @@
+use crate::library::LibraryError;
+use crate::library_context::SharedLibraryManager;
 use axum::{
     extract::{Query, State},
     http::StatusCode,
@@ -8,8 +10,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tower_http::cors::CorsLayer;
-use crate::library::LibraryError;
-use crate::library_context::SharedLibraryManager;
 
 /// Subsonic API server state
 #[derive(Clone)]
@@ -22,8 +22,7 @@ pub struct SubsonicState {
 
 /// Common query parameters for Subsonic API
 #[derive(Debug, Deserialize)]
-pub struct SubsonicQuery {
-}
+pub struct SubsonicQuery {}
 
 /// Standard Subsonic API response envelope
 #[derive(Debug, Serialize)]
@@ -335,33 +334,42 @@ async fn stream_song(
                 ("Content-Length", &audio_data.len().to_string()),
                 ("Accept-Ranges", "bytes"),
             ];
-            
+
             (StatusCode::OK, headers, audio_data).into_response()
         }
         Err(e) => {
             println!("Streaming error for song {}: {}", song_id, e);
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("Streaming error: {}", e)).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Streaming error: {}", e),
+            )
+                .into_response()
         }
     }
 }
 
 /// Load artists from database and group by first letter
-async fn load_artists(library_manager: &SharedLibraryManager) -> Result<ArtistsResponse, LibraryError> {
+async fn load_artists(
+    library_manager: &SharedLibraryManager,
+) -> Result<ArtistsResponse, LibraryError> {
     let albums = library_manager.get().get_albums().await?;
-    
+
     // Group artists by first letter
     let mut artist_map: HashMap<String, HashMap<String, u32>> = HashMap::new();
-    
+
     for album in albums {
-        let first_letter = album.artist_name.chars().next()
+        let first_letter = album
+            .artist_name
+            .chars()
+            .next()
             .unwrap_or('A')
             .to_uppercase()
             .to_string();
-        
+
         let artists = artist_map.entry(first_letter).or_insert_with(HashMap::new);
         *artists.entry(album.artist_name).or_insert(0) += 1;
     }
-    
+
     let mut indices = Vec::new();
     for (letter, artists) in artist_map {
         let artist_list: Vec<Artist> = artists
@@ -372,7 +380,7 @@ async fn load_artists(library_manager: &SharedLibraryManager) -> Result<ArtistsR
                 album_count: count,
             })
             .collect();
-        
+
         if !artist_list.is_empty() {
             indices.push(ArtistIndex {
                 name: letter,
@@ -380,23 +388,25 @@ async fn load_artists(library_manager: &SharedLibraryManager) -> Result<ArtistsR
             });
         }
     }
-    
+
     // Sort indices by letter
     indices.sort_by(|a, b| a.name.cmp(&b.name));
-    
+
     Ok(ArtistsResponse {
         artists: ArtistsIndex { index: indices },
     })
 }
 
 /// Load albums from database
-async fn load_albums(library_manager: &SharedLibraryManager) -> Result<AlbumListResponse, LibraryError> {
+async fn load_albums(
+    library_manager: &SharedLibraryManager,
+) -> Result<AlbumListResponse, LibraryError> {
     let db_albums = library_manager.get().get_albums().await?;
-    
+
     let mut albums = Vec::new();
     for db_album in db_albums {
         let tracks = library_manager.get().get_tracks(&db_album.id).await?;
-        
+
         albums.push(Album {
             id: db_album.id.clone(),
             name: db_album.title,
@@ -409,7 +419,7 @@ async fn load_albums(library_manager: &SharedLibraryManager) -> Result<AlbumList
             cover_art: db_album.cover_art_url,
         });
     }
-    
+
     Ok(AlbumListResponse {
         album_list: AlbumList { album: albums },
     })
@@ -425,23 +435,27 @@ async fn load_album_with_songs(
         .into_iter()
         .find(|a| a.id == album_id)
         .ok_or_else(|| LibraryError::Import("Album not found".to_string()))?;
-    
+
     let tracks = library_manager.get().get_tracks(album_id).await?;
-    
+
     let songs: Vec<Song> = tracks
         .into_iter()
         .map(|track| Song {
             id: track.id,
             title: track.title,
             album: db_album.title.clone(),
-            artist: track.artist_name.as_ref().unwrap_or(&db_album.artist_name).clone(),
+            artist: track
+                .artist_name
+                .as_ref()
+                .unwrap_or(&db_album.artist_name)
+                .clone(),
             album_id: db_album.id.clone(),
             artist_id: format!("artist_{}", db_album.artist_name.replace(" ", "_")),
             track: track.track_number,
             year: db_album.year,
             genre: None,
             cover_art: db_album.cover_art_url.clone(),
-            size: None, // TODO: Calculate from chunks
+            size: None,                             // TODO: Calculate from chunks
             content_type: "audio/flac".to_string(), // TODO: Detect from files
             suffix: "flac".to_string(),
             duration: track.duration_ms.map(|ms| (ms / 1000) as i32),
@@ -449,7 +463,7 @@ async fn load_album_with_songs(
             path: format!("{}/{}", db_album.artist_name, db_album.title),
         })
         .collect();
-    
+
     let album = Album {
         id: db_album.id.clone(),
         name: db_album.title,
@@ -461,7 +475,7 @@ async fn load_album_with_songs(
         genre: None,
         cover_art: db_album.cover_art_url,
     };
-    
+
     Ok(serde_json::json!({
         "album": {
             "id": album.id,
@@ -485,52 +499,64 @@ async fn stream_track_chunks(
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     let library_manager = &state.library_manager;
     println!("Starting chunk reassembly for track: {}", track_id);
-    
+
     // Check if this is a CUE/FLAC track with track positions
-    if let Some(track_position) = library_manager.get().get_track_position(track_id).await
-        .map_err(|e| format!("Database error: {}", e))? {
-        
+    if let Some(track_position) = library_manager
+        .get()
+        .get_track_position(track_id)
+        .await
+        .map_err(|e| format!("Database error: {}", e))?
+    {
         println!("Detected CUE/FLAC track - using efficient chunk range streaming");
         return stream_cue_track_chunks(state, track_id, &track_position).await;
     }
-    
+
     // Fallback to regular file streaming for individual tracks
     println!("Using regular file streaming");
-    
+
     // Get files for this track
     let files = library_manager.get().get_files_for_track(track_id).await?;
     if files.is_empty() {
         return Err("No files found for track".into());
     }
-    
+
     // For now, just handle the first file (most tracks have one file)
     let file = &files[0];
-    println!("Processing file: {} ({} bytes)", file.original_filename, file.file_size);
-    
+    println!(
+        "Processing file: {} ({} bytes)",
+        file.original_filename, file.file_size
+    );
+
     // Get chunks for this file
     let chunks = library_manager.get().get_chunks_for_file(&file.id).await?;
     if chunks.is_empty() {
         return Err("No chunks found for file".into());
     }
-    
+
     println!("Found {} chunks to reassemble", chunks.len());
-    
+
     // Sort chunks by index to ensure correct order
     let mut sorted_chunks = chunks;
     sorted_chunks.sort_by_key(|c| c.chunk_index);
-    
+
     // Reassemble chunks into audio data
     let mut audio_data = Vec::new();
-    
+
     for chunk in sorted_chunks {
-        println!("Processing chunk {} (index {})", chunk.id, chunk.chunk_index);
-        
+        println!(
+            "Processing chunk {} (index {})",
+            chunk.id, chunk.chunk_index
+        );
+
         // Download and decrypt chunk (with caching)
         let chunk_data = download_and_decrypt_chunk(state, &chunk).await?;
         audio_data.extend_from_slice(&chunk_data);
     }
-    
-    println!("Successfully reassembled {} bytes of audio data", audio_data.len());
+
+    println!(
+        "Successfully reassembled {} bytes of audio data",
+        audio_data.len()
+    );
     Ok(audio_data)
 }
 
@@ -540,47 +566,58 @@ async fn download_and_decrypt_chunk(
     chunk: &crate::database::DbChunk,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     let cache_manager = &state.cache_manager;
-    
+
     // Check cache first (for both local and cloud chunks)
-    if let Some(cached_encrypted_data) = cache_manager.get_chunk(&chunk.id).await
-        .map_err(|e| format!("Cache error: {}", e))? {
-        
+    if let Some(cached_encrypted_data) = cache_manager
+        .get_chunk(&chunk.id)
+        .await
+        .map_err(|e| format!("Cache error: {}", e))?
+    {
         // Cache hit - decrypt and return (using injected encryption service)
-        let decrypted_data = state.encryption_service.decrypt_chunk(&cached_encrypted_data)
+        let decrypted_data = state
+            .encryption_service
+            .decrypt_chunk(&cached_encrypted_data)
             .map_err(|e| format!("Failed to decrypt cached chunk: {}", e))?;
-        
+
         return Ok(decrypted_data);
     }
-    
+
     // Cache miss - need to download
     let encrypted_data = if chunk.is_local {
         // Read from local storage (legacy support)
-        let local_path = chunk.storage_location.strip_prefix("local:")
+        let local_path = chunk
+            .storage_location
+            .strip_prefix("local:")
             .ok_or("Invalid local storage location")?;
-        
+
         println!("Reading chunk from local path: {}", local_path);
         tokio::fs::read(local_path).await?
     } else {
         // Download from cloud storage (using injected cloud storage manager)
         println!("Downloading chunk from cloud: {}", chunk.storage_location);
-        
-        let cloud_storage = state.cloud_storage.as_ref()
-            .ok_or_else(|| "Cloud storage not configured. Please configure S3 settings in the app.".to_string())?;
-        
+
+        let cloud_storage = state.cloud_storage.as_ref().ok_or_else(|| {
+            "Cloud storage not configured. Please configure S3 settings in the app.".to_string()
+        })?;
+
         // Download encrypted chunk data
-        cloud_storage.download_chunk(&chunk.storage_location).await
+        cloud_storage
+            .download_chunk(&chunk.storage_location)
+            .await
             .map_err(|e| format!("Failed to download chunk: {}", e))?
     };
-    
+
     // Store in cache for future requests
     if let Err(e) = cache_manager.put_chunk(&chunk.id, &encrypted_data).await {
         println!("Warning: Failed to cache chunk {}: {}", chunk.id, e);
     }
-    
+
     // Decrypt and return (using injected encryption service)
-    let decrypted_data = state.encryption_service.decrypt_chunk(&encrypted_data)
+    let decrypted_data = state
+        .encryption_service
+        .decrypt_chunk(&encrypted_data)
         .map_err(|e| format!("Failed to decrypt chunk: {}", e))?;
-    
+
     Ok(decrypted_data)
 }
 
@@ -592,77 +629,101 @@ async fn stream_cue_track_chunks(
     track_position: &crate::database::DbTrackPosition,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     let library_manager = &state.library_manager;
-    println!("Streaming CUE/FLAC track: chunks {}-{}", 
-            track_position.start_chunk_index, track_position.end_chunk_index);
-    
+    println!(
+        "Streaming CUE/FLAC track: chunks {}-{}",
+        track_position.start_chunk_index, track_position.end_chunk_index
+    );
+
     // Get the file for this track
     let files = library_manager.get().get_files_for_track(track_id).await?;
     if files.is_empty() {
         return Err("No files found for CUE track".into());
     }
-    
+
     let file = &files[0];
-    
+
     // Check if this file has FLAC headers stored in database
     if !file.has_cue_sheet {
         return Err("File is not marked as CUE/FLAC".into());
     }
-    
-    let flac_headers = file.flac_headers.as_ref()
+
+    let flac_headers = file
+        .flac_headers
+        .as_ref()
         .ok_or("No FLAC headers found in database")?;
-    
+
     println!("Using stored FLAC headers: {} bytes", flac_headers.len());
-    
+
     // Get the album_id for this track
-    let album_id = library_manager.get().get_album_id_for_track(track_id).await
+    let album_id = library_manager
+        .get()
+        .get_album_id_for_track(track_id)
+        .await
         .map_err(|e| format!("Failed to get album ID: {}", e))?;
-    
+
     // Get only the chunks we need for this track (efficient!)
     let chunk_range = track_position.start_chunk_index..=track_position.end_chunk_index;
-    let chunks = library_manager.get().get_chunks_in_range(&album_id, chunk_range).await
+    let chunks = library_manager
+        .get()
+        .get_chunks_in_range(&album_id, chunk_range)
+        .await
         .map_err(|e| format!("Failed to get chunk range: {}", e))?;
-    
+
     if chunks.is_empty() {
         return Err("No chunks found in track range".into());
     }
-    
-    println!("Downloading {} chunks instead of {} total chunks ({}% reduction)", 
-            chunks.len(), 
-            file.file_size / (1024 * 1024), // Approximate total chunks
-            100 - (chunks.len() * 100) / (file.file_size / (1024 * 1024)) as usize);
-    
+
+    println!(
+        "Downloading {} chunks instead of {} total chunks ({}% reduction)",
+        chunks.len(),
+        file.file_size / (1024 * 1024), // Approximate total chunks
+        100 - (chunks.len() * 100) / (file.file_size / (1024 * 1024)) as usize
+    );
+
     // Sort chunks by index to ensure correct order
     let mut sorted_chunks = chunks;
     sorted_chunks.sort_by_key(|c| c.chunk_index);
-    
+
     // Store chunk count before moving
     let chunk_count = sorted_chunks.len();
-    
+
     // Start with FLAC headers for instant playback
     let mut audio_data = flac_headers.clone();
-    
+
     // Append track chunks
     for chunk in sorted_chunks {
-        println!("Processing track chunk {} (index {})", chunk.id, chunk.chunk_index);
-        
+        println!(
+            "Processing track chunk {} (index {})",
+            chunk.id, chunk.chunk_index
+        );
+
         // Download and decrypt chunk (with caching)
         let chunk_data = download_and_decrypt_chunk(state, &chunk).await?;
         audio_data.extend_from_slice(&chunk_data);
     }
-    
-    println!("Successfully assembled CUE track: {} bytes (headers + {} chunks)", 
-            audio_data.len(), chunk_count);
-    
+
+    println!(
+        "Successfully assembled CUE track: {} bytes (headers + {} chunks)",
+        audio_data.len(),
+        chunk_count
+    );
+
     // Phase 4: Extract precise track boundaries using audio processing
-    println!("Extracting precise track boundaries: {}ms to {}ms", 
-            track_position.start_time_ms, track_position.end_time_ms);
-    
+    println!(
+        "Extracting precise track boundaries: {}ms to {}ms",
+        track_position.start_time_ms, track_position.end_time_ms
+    );
+
     let precise_audio = crate::audio_processing::AudioProcessor::extract_track_from_flac(
         &audio_data,
         track_position.start_time_ms as u64,
         track_position.end_time_ms as u64,
-    ).map_err(|e| format!("Precise track extraction failed: {}", e))?;
-    
-    println!("Successfully extracted precise track: {} bytes", precise_audio.len());
+    )
+    .map_err(|e| format!("Precise track extraction failed: {}", e))?;
+
+    println!(
+        "Successfully extracted precise track: {} bytes",
+        precise_audio.len()
+    );
     Ok(precise_audio)
 }

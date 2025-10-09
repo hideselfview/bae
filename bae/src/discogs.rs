@@ -1,4 +1,4 @@
-use crate::models::{DiscogsRelease, DiscogsTrack, DiscogsMasterReleaseVersion, DiscogsMaster};
+use crate::models::{DiscogsMaster, DiscogsMasterReleaseVersion, DiscogsRelease, DiscogsTrack};
 use reqwest::{Client, Error as ReqwestError};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -42,7 +42,6 @@ pub struct DiscogsSearchResult {
     pub result_type: String,
 }
 
-
 /// Master versions response wrapper
 #[derive(Debug, Deserialize)]
 struct MasterVersionsResponse {
@@ -54,8 +53,8 @@ struct MasterVersionsResponse {
 struct VersionResponse {
     id: u64,
     title: String,
-    format: String,  // Fixed: format is a string, not Vec<String>
-    label: String,   // Fixed: label is a string, not Vec<String>
+    format: String, // Fixed: format is a string, not Vec<String>
+    label: String,  // Fixed: label is a string, not Vec<String>
     catno: String,
     country: String,
     released: Option<String>,
@@ -106,7 +105,6 @@ struct TrackResponse {
     duration: Option<String>,
 }
 
-
 #[derive(Clone)]
 pub struct DiscogsClient {
     client: Client,
@@ -124,14 +122,18 @@ impl DiscogsClient {
     }
 
     /// Search for masters by query string
-    pub async fn search_masters(&self, query: &str, format: &str) -> Result<Vec<DiscogsSearchResult>, DiscogsError> {
+    pub async fn search_masters(
+        &self,
+        query: &str,
+        format: &str,
+    ) -> Result<Vec<DiscogsSearchResult>, DiscogsError> {
         let url = format!("{}/database/search", self.base_url);
-        
+
         let mut params = HashMap::new();
         params.insert("q", query);
         params.insert("type", "master");
         params.insert("token", &self.api_key);
-        
+
         if !format.is_empty() {
             params.insert("format", format);
         }
@@ -146,7 +148,7 @@ impl DiscogsClient {
 
         if response.status().is_success() {
             let search_response: SearchResponse = response.json().await?;
-            
+
             Ok(search_response
                 .results
                 .into_iter()
@@ -166,7 +168,7 @@ impl DiscogsClient {
     /// Get detailed information about a master release
     pub async fn get_master(&self, master_id: &str) -> Result<DiscogsMaster, DiscogsError> {
         let url = format!("{}/masters/{}", self.base_url, master_id);
-        
+
         let mut params = HashMap::new();
         params.insert("token", &self.api_key);
 
@@ -180,7 +182,7 @@ impl DiscogsClient {
 
         if response.status().is_success() {
             let master: MasterResponse = response.json().await?;
-            
+
             let tracklist = master
                 .tracklist
                 .unwrap_or_default()
@@ -196,7 +198,6 @@ impl DiscogsClient {
             // TODO fix this
             let label = Vec::new();
 
-            
             let discogs_master = DiscogsMaster {
                 id: master.id.to_string(),
                 title: master.title,
@@ -206,7 +207,7 @@ impl DiscogsClient {
                 country: None, // Masters don't have country info
                 tracklist,
             };
-            
+
             Ok(discogs_master)
         } else if response.status() == 404 {
             Err(DiscogsError::NotFound)
@@ -222,9 +223,12 @@ impl DiscogsClient {
     }
 
     /// Get versions of a master release
-    pub async fn get_master_versions(&self, master_id: &str) -> Result<Vec<DiscogsMasterReleaseVersion>, DiscogsError> {
+    pub async fn get_master_versions(
+        &self,
+        master_id: &str,
+    ) -> Result<Vec<DiscogsMasterReleaseVersion>, DiscogsError> {
         let url = format!("{}/masters/{}/versions", self.base_url, master_id);
-        
+
         let per_page = "100".to_string();
         let mut params = HashMap::new();
         params.insert("token", &self.api_key);
@@ -241,14 +245,14 @@ impl DiscogsClient {
         if response.status().is_success() {
             // Get the raw response text first for debugging on error
             let response_text = response.text().await?;
-            
+
             let versions_response: MasterVersionsResponse = serde_json::from_str(&response_text)
                 .map_err(|e| {
                     println!("JSON parsing error for master_id {}: {}", master_id, e);
                     println!("Raw response: {}", response_text);
                     e
                 })?;
-            
+
             Ok(versions_response
                 .versions
                 .into_iter()
@@ -281,11 +285,10 @@ impl DiscogsClient {
         }
     }
 
-
     /// Get detailed information about a specific release
     pub async fn get_release(&self, id: &str) -> Result<DiscogsRelease, DiscogsError> {
         let url = format!("{}/releases/{}", self.base_url, id);
-        
+
         let mut params = HashMap::new();
         params.insert("token", &self.api_key);
 
@@ -299,7 +302,7 @@ impl DiscogsClient {
 
         if response.status().is_success() {
             let release: ReleaseResponse = response.json().await?;
-            
+
             let tracklist = release
                 .tracklist
                 .unwrap_or_default()
@@ -311,16 +314,13 @@ impl DiscogsClient {
                 })
                 .collect();
 
-            let cover_image = release
-                .images
-                .as_ref()
-                .and_then(|images| {
-                    images
-                        .iter()
-                        .find(|img| img.image_type == "primary")
-                        .or_else(|| images.first())
-                        .map(|img| img.uri.clone())
-                });
+            let cover_image = release.images.as_ref().and_then(|images| {
+                images
+                    .iter()
+                    .find(|img| img.image_type == "primary")
+                    .or_else(|| images.first())
+                    .map(|img| img.uri.clone())
+            });
 
             Ok(DiscogsRelease {
                 id: release.id.to_string(),

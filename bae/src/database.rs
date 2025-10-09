@@ -1,10 +1,10 @@
-use sqlx::{SqlitePool, Row};
-use uuid::Uuid;
 use chrono::{DateTime, Utc};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use sqlx::{Row, SqlitePool};
+use uuid::Uuid;
 
 /// Database models for bae storage system
-/// 
+///
 /// This implements the storage strategy described in the README:
 /// - Albums and tracks stored as metadata
 /// - Files split into encrypted chunks
@@ -32,7 +32,7 @@ pub struct DbTrack {
     pub title: String,
     pub track_number: Option<i32>,
     pub duration_ms: Option<i64>,
-    
+
     pub artist_name: Option<String>, // Can differ from album artist
     pub discogs_position: Option<String>, // e.g., "A1", "1", "1-1"
     pub created_at: DateTime<Utc>,
@@ -44,10 +44,10 @@ pub struct DbFile {
     pub track_id: String,
     pub original_filename: String,
     pub file_size: i64,
-    pub format: String, // "flac", "mp3", etc.
+    pub format: String,                // "flac", "mp3", etc.
     pub flac_headers: Option<Vec<u8>>, // FLAC header blocks for instant streaming
     pub audio_start_byte: Option<i64>, // Where audio frames begin (after headers)
-    pub has_cue_sheet: bool, // Is this a CUE/FLAC file?
+    pub has_cue_sheet: bool,           // Is this a CUE/FLAC file?
     pub created_at: DateTime<Utc>,
 }
 
@@ -89,10 +89,10 @@ pub struct DbTrackPosition {
     pub id: String,
     pub track_id: String,
     pub file_id: String,
-    pub start_time_ms: i64, // Track start in milliseconds
-    pub end_time_ms: i64, // Track end in milliseconds
+    pub start_time_ms: i64,     // Track start in milliseconds
+    pub end_time_ms: i64,       // Track end in milliseconds
     pub start_chunk_index: i32, // First chunk containing this track
-    pub end_chunk_index: i32, // Last chunk containing this track
+    pub end_chunk_index: i32,   // Last chunk containing this track
     pub created_at: DateTime<Utc>,
 }
 
@@ -108,7 +108,7 @@ impl Database {
         let database_url = format!("sqlite://{}?mode=rwc", database_path);
         println!("Database: Connecting to {}", database_url);
         let pool = SqlitePool::connect(&database_url).await?;
-        
+
         let db = Database { pool };
         db.create_tables().await?;
         Ok(db)
@@ -253,34 +253,40 @@ impl Database {
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_tracks_album_id ON tracks (album_id)")
             .execute(&self.pool)
             .await?;
-        
+
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_files_track_id ON files (track_id)")
             .execute(&self.pool)
             .await?;
-            
+
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_chunks_album_id ON chunks (album_id)")
             .execute(&self.pool)
             .await?;
-            
+
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_file_chunks_file_id ON file_chunks (file_id)")
             .execute(&self.pool)
             .await?;
-            
+
         sqlx::query("CREATE INDEX IF NOT EXISTS idx_cue_sheets_file_id ON cue_sheets (file_id)")
             .execute(&self.pool)
             .await?;
-            
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_track_positions_track_id ON track_positions (track_id)")
-            .execute(&self.pool)
-            .await?;
-            
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_track_positions_file_id ON track_positions (file_id)")
-            .execute(&self.pool)
-            .await?;
 
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_chunks_last_accessed ON chunks (last_accessed)")
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_track_positions_track_id ON track_positions (track_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_track_positions_file_id ON track_positions (file_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_chunks_last_accessed ON chunks (last_accessed)",
+        )
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }
@@ -307,7 +313,7 @@ impl Database {
         .bind(album.updated_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
-        
+
         Ok(())
     }
 
@@ -331,7 +337,7 @@ impl Database {
         .bind(track.created_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
-        
+
         Ok(())
     }
 
@@ -360,7 +366,7 @@ impl Database {
                     .with_timezone(&Utc),
             });
         }
-        
+
         Ok(albums)
     }
 
@@ -386,7 +392,7 @@ impl Database {
                     .with_timezone(&Utc),
             });
         }
-        
+
         Ok(tracks)
     }
 
@@ -411,7 +417,7 @@ impl Database {
         .bind(file.created_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
-        
+
         Ok(())
     }
 
@@ -437,7 +443,7 @@ impl Database {
         .bind(chunk.created_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
-        
+
         Ok(())
     }
 
@@ -460,7 +466,7 @@ impl Database {
         .bind(file_chunk.created_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
-        
+
         Ok(())
     }
 
@@ -492,14 +498,17 @@ impl Database {
                 checksum: row.get("checksum"),
                 storage_location: row.get("storage_location"),
                 is_local: row.get("is_local"),
-                last_accessed: row.get::<Option<String>, _>("last_accessed")
-                    .map(|s| DateTime::parse_from_rfc3339(&s).unwrap().with_timezone(&Utc)),
+                last_accessed: row.get::<Option<String>, _>("last_accessed").map(|s| {
+                    DateTime::parse_from_rfc3339(&s)
+                        .unwrap()
+                        .with_timezone(&Utc)
+                }),
                 created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
                     .unwrap()
                     .with_timezone(&Utc),
             });
         }
-        
+
         Ok(chunks)
     }
 
@@ -526,7 +535,7 @@ impl Database {
                     .with_timezone(&Utc),
             });
         }
-        
+
         Ok(files)
     }
 
@@ -545,12 +554,15 @@ impl Database {
         .bind(cue_sheet.created_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
-        
+
         Ok(())
     }
 
     /// Insert a new track position record
-    pub async fn insert_track_position(&self, position: &DbTrackPosition) -> Result<(), sqlx::Error> {
+    pub async fn insert_track_position(
+        &self,
+        position: &DbTrackPosition,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
             INSERT INTO track_positions (
@@ -569,12 +581,15 @@ impl Database {
         .bind(position.created_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
-        
+
         Ok(())
     }
 
     /// Get track position for a track
-    pub async fn get_track_position(&self, track_id: &str) -> Result<Option<DbTrackPosition>, sqlx::Error> {
+    pub async fn get_track_position(
+        &self,
+        track_id: &str,
+    ) -> Result<Option<DbTrackPosition>, sqlx::Error> {
         let row = sqlx::query("SELECT * FROM track_positions WHERE track_id = ?")
             .bind(track_id)
             .fetch_optional(&self.pool)
@@ -599,7 +614,11 @@ impl Database {
     }
 
     /// Get chunks in a specific range for an album (for CUE track streaming)
-    pub async fn get_chunks_in_range(&self, album_id: &str, chunk_range: std::ops::RangeInclusive<i32>) -> Result<Vec<DbChunk>, sqlx::Error> {
+    pub async fn get_chunks_in_range(
+        &self,
+        album_id: &str,
+        chunk_range: std::ops::RangeInclusive<i32>,
+    ) -> Result<Vec<DbChunk>, sqlx::Error> {
         let rows = sqlx::query(
             "SELECT * FROM chunks WHERE album_id = ? AND chunk_index >= ? AND chunk_index <= ? ORDER BY chunk_index"
         )
@@ -620,14 +639,17 @@ impl Database {
                 checksum: row.get("checksum"),
                 storage_location: row.get("storage_location"),
                 is_local: row.get("is_local"),
-                last_accessed: row.get::<Option<String>, _>("last_accessed")
-                    .map(|s| DateTime::parse_from_rfc3339(&s).unwrap().with_timezone(&Utc)),
+                last_accessed: row.get::<Option<String>, _>("last_accessed").map(|s| {
+                    DateTime::parse_from_rfc3339(&s)
+                        .unwrap()
+                        .with_timezone(&Utc)
+                }),
                 created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
                     .unwrap()
                     .with_timezone(&Utc),
             });
         }
-        
+
         Ok(chunks)
     }
 }
@@ -695,12 +717,7 @@ impl DbTrack {
 }
 
 impl DbFile {
-    pub fn new(
-        track_id: &str,
-        original_filename: &str,
-        file_size: i64,
-        format: &str,
-    ) -> Self {
+    pub fn new(track_id: &str, original_filename: &str, file_size: i64, format: &str) -> Self {
         DbFile {
             id: Uuid::new_v4().to_string(),
             track_id: track_id.to_string(),

@@ -1,7 +1,7 @@
-use dioxus::prelude::*;
-use crate::library_context::use_library_manager;
 use crate::database::DbAlbum;
+use crate::library_context::use_library_manager;
 use crate::Route;
+use dioxus::prelude::*;
 
 /// Library browser page
 #[component]
@@ -22,7 +22,7 @@ pub fn Library() -> Element {
             println!("Library: Inside async spawn, fetching albums");
             loading.set(true);
             error.set(None);
-            
+
             match library_manager.get().get_albums().await {
                 Ok(album_list) => {
                     albums.set(album_list.clone());
@@ -46,10 +46,11 @@ pub fn Library() -> Element {
             if query.is_empty() {
                 filtered_albums.set(albums());
             } else {
-                let filtered = albums().into_iter()
+                let filtered = albums()
+                    .into_iter()
                     .filter(|album| {
-                        album.title.to_lowercase().contains(&query) ||
-                        album.artist_name.to_lowercase().contains(&query)
+                        album.title.to_lowercase().contains(&query)
+                            || album.artist_name.to_lowercase().contains(&query)
                     })
                     .collect();
                 filtered_albums.set(filtered);
@@ -62,11 +63,11 @@ pub fn Library() -> Element {
             class: "container mx-auto p-6",
             div {
                 class: "flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6",
-                h1 { 
+                h1 {
                     class: "text-3xl font-bold text-white mb-4 sm:mb-0",
-                    "Music Library" 
+                    "Music Library"
                 }
-                
+
                 // Search bar
                 div {
                     class: "relative",
@@ -83,7 +84,7 @@ pub fn Library() -> Element {
                     }
                 }
             }
-            
+
             if loading() {
                 div {
                     class: "flex justify-center items-center py-12",
@@ -152,7 +153,7 @@ pub fn Library() -> Element {
                     if !search_query().is_empty() {
                         div {
                             class: "mb-4 text-gray-400 text-sm",
-                            {format!("Found {} album{} matching \"{}\"", 
+                            {format!("Found {} album{} matching \"{}\"",
                                 filtered_albums().len(),
                                 if filtered_albums().len() == 1 { "" } else { "s" },
                                 search_query()
@@ -192,7 +193,7 @@ fn AlbumCard(album: DbAlbum) -> Element {
                     navigator.push(Route::AlbumDetail { album_id: album_id.clone() });
                 }
             },
-            
+
             // Album cover
             div {
                 class: "aspect-square bg-gray-700 flex items-center justify-center",
@@ -209,7 +210,7 @@ fn AlbumCard(album: DbAlbum) -> Element {
                     }
                 }
             }
-            
+
             // Album info
             div {
                 class: "p-4",
@@ -233,4 +234,3 @@ fn AlbumCard(album: DbAlbum) -> Element {
         }
     }
 }
-

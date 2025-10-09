@@ -1,6 +1,6 @@
-use dioxus::prelude::*;
-use crate::models::ImportItem;
 use crate::library_context::use_library_manager;
+use crate::models::ImportItem;
+use dioxus::prelude::*;
 use rfd::AsyncFileDialog;
 use std::path::Path;
 
@@ -9,20 +9,20 @@ use std::path::Path;
 /// Callback for when user selects a folder for import
 pub fn on_folder_selected(folder_path: String) -> Result<(), String> {
     let path = Path::new(&folder_path);
-    
+
     // Check if path exists and is a directory
     if !path.exists() {
         return Err("Selected path does not exist".to_string());
     }
-    
+
     if !path.is_dir() {
         return Err("Selected path is not a directory".to_string());
     }
-    
+
     // Check for audio files
     let audio_extensions = ["mp3", "flac", "wav", "m4a", "aac", "ogg"];
     let mut has_audio_files = false;
-    
+
     if let Ok(entries) = std::fs::read_dir(path) {
         for entry in entries.flatten() {
             if let Some(extension) = entry.path().extension() {
@@ -35,11 +35,11 @@ pub fn on_folder_selected(folder_path: String) -> Result<(), String> {
             }
         }
     }
-    
+
     if !has_audio_files {
         return Err("No audio files found in selected folder".to_string());
     }
-    
+
     println!("Selected folder: {} (contains audio files)", folder_path);
     Ok(())
 }
@@ -50,14 +50,19 @@ pub async fn on_import_started_async(
     folder_path: &str,
     library_manager: &crate::library_context::SharedLibraryManager,
 ) -> Result<String, String> {
-    println!("Starting real import for {} from folder: {}", item.title(), folder_path);
-    
+    println!(
+        "Starting real import for {} from folder: {}",
+        item.title(),
+        folder_path
+    );
+
     // Import the album
-    let album_id = library_manager.get()
+    let album_id = library_manager
+        .get()
         .import_album(item, Path::new(folder_path))
         .await
         .map_err(|e| format!("Import failed: {}", e))?;
-    
+
     println!("Successfully imported album with ID: {}", album_id);
     Ok(album_id)
 }
@@ -71,13 +76,22 @@ pub fn on_import_started(item: &ImportItem, folder_path: &str) -> Result<(), Str
 
 /// Callback for when import process completes
 pub fn on_import_completed(item: &ImportItem, folder_path: &str) -> Result<(), String> {
-    println!("Import completed for {} from folder: {}", item.title(), folder_path);
+    println!(
+        "Import completed for {} from folder: {}",
+        item.title(),
+        folder_path
+    );
     Ok(())
 }
 
 /// Callback for when import process fails
 pub fn on_import_failed(item: &ImportItem, folder_path: &str, error: &str) {
-    println!("Import failed for {} from folder: {} - Error: {}", item.title(), folder_path, error);
+    println!(
+        "Import failed for {} from folder: {} - Error: {}",
+        item.title(),
+        folder_path,
+        error
+    );
 }
 
 #[derive(Props, PartialEq, Clone)]
@@ -131,10 +145,10 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                     on_import_failed(&item, folder, &e);
                     return;
                 }
-                
+
                 current_step.set(ImportStep::ImportProgress);
                 import_progress.set(0);
-                
+
                 // Start real import process
                 let item_clone = item.clone();
                 let folder_clone = folder.clone();
@@ -142,13 +156,15 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                 spawn(async move {
                     // Update progress to show we're starting
                     import_progress.set(10);
-                    
+
                     // Perform the actual import
-                    match on_import_started_async(&item_clone, &folder_clone, &library_manager).await {
+                    match on_import_started_async(&item_clone, &folder_clone, &library_manager)
+                        .await
+                    {
                         Ok(album_id) => {
                             import_progress.set(100);
                             println!("Import successful! Album ID: {}", album_id);
-                            
+
                             // Complete the import
                             if let Err(e) = on_import_completed(&item_clone, &folder_clone) {
                                 on_import_failed(&item_clone, &folder_clone, &e);
@@ -250,7 +266,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                             class: "text-lg font-semibold text-gray-900 mb-4",
                             "Select Data Source"
                         }
-                        
+
                         div {
                             class: "border border-gray-200 rounded-lg p-4",
                             div {
@@ -322,7 +338,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                             class: "text-2xl font-bold text-gray-900 mb-6",
                             "Importing Album"
                         }
-                        
+
                         div {
                             class: "bg-white rounded-lg shadow p-8",
                             div {
@@ -339,7 +355,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                                     "{import_progress}% Complete"
                                 }
                             }
-                            
+
                             div {
                                 class: "text-sm text-gray-500",
                                 "Processing files and adding to library..."
@@ -370,7 +386,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                                 "Album has been successfully added to your library."
                             }
                         }
-                        
+
                         div {
                             class: "space-x-4",
                             button {

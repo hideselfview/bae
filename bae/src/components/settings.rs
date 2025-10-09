@@ -1,12 +1,12 @@
-use dioxus::prelude::*;
-use crate::secure_config::{SecureConfig, use_secure_config};
 use crate::cloud_storage::S3Config;
+use crate::secure_config::{use_secure_config, SecureConfig};
+use dioxus::prelude::*;
 
 /// Settings page
 #[component]
 pub fn Settings() -> Element {
     let secure_config = use_secure_config();
-    
+
     let mut api_key_input = use_signal(|| String::new());
     let mut is_saving = use_signal(|| false);
     let mut save_message = use_signal(|| None::<String>);
@@ -35,7 +35,7 @@ pub fn Settings() -> Element {
         let secure_config_clone = secure_config_for_effect.clone();
         spawn(async move {
             let secure_config = secure_config_clone;
-            
+
             // Try to load config to check what exists
             let exists = match secure_config.get() {
                 Ok(data) => data.discogs_api_key.is_some(),
@@ -43,14 +43,14 @@ pub fn Settings() -> Element {
             };
             has_api_key.set(exists);
             is_editing.set(!exists);
-            
+
             let s3_exists = match secure_config.get() {
                 Ok(data) => data.s3_config.is_some(),
                 Err(_) => false,
             };
             has_s3_config.set(s3_exists);
             is_editing_s3.set(!s3_exists);
-            
+
             is_loading.set(false);
         });
     });
@@ -69,11 +69,13 @@ pub fn Settings() -> Element {
             // Validate and store API key using SecureConfig
             match SecureConfig::validate_and_store_discogs_api_key(&key).await {
                 Ok(_) => {
-                    save_message.set(Some("API key saved and validated successfully!".to_string()));
+                    save_message.set(Some(
+                        "API key saved and validated successfully!".to_string(),
+                    ));
                     has_api_key.set(true);
                     is_editing.set(false);
                     api_key_input.set(String::new()); // Clear the input for security
-                } 
+                }
                 Err(e) => {
                     save_message.set(Some(format!("Error: {}", e)));
                 }
@@ -135,9 +137,12 @@ pub fn Settings() -> Element {
         let access_key = s3_access_key.read().clone();
         let secret_key = s3_secret_key.read().clone();
         let endpoint = s3_endpoint.read().clone();
-        
-        if bucket.trim().is_empty() || region.trim().is_empty() || 
-           access_key.trim().is_empty() || secret_key.trim().is_empty() {
+
+        if bucket.trim().is_empty()
+            || region.trim().is_empty()
+            || access_key.trim().is_empty()
+            || secret_key.trim().is_empty()
+        {
             s3_save_message.set(Some("Please fill in all required fields".to_string()));
             return;
         }
@@ -151,12 +156,18 @@ pub fn Settings() -> Element {
                 region,
                 access_key_id: access_key,
                 secret_access_key: secret_key,
-                endpoint_url: if endpoint.trim().is_empty() { None } else { Some(endpoint) },
+                endpoint_url: if endpoint.trim().is_empty() {
+                    None
+                } else {
+                    Some(endpoint)
+                },
             };
 
             match SecureConfig::validate_and_store_s3_config(&config).await {
                 Ok(_) => {
-                    s3_save_message.set(Some("S3 configuration saved and validated successfully!".to_string()));
+                    s3_save_message.set(Some(
+                        "S3 configuration saved and validated successfully!".to_string(),
+                    ));
                     has_s3_config.set(true);
                     is_editing_s3.set(false);
                     // Clear inputs for security
@@ -165,7 +176,7 @@ pub fn Settings() -> Element {
                     s3_access_key.set(String::new());
                     s3_secret_key.set(String::new());
                     s3_endpoint.set(String::new());
-                } 
+                }
                 Err(e) => {
                     s3_save_message.set(Some(format!("Error: {}", e)));
                 }
@@ -235,9 +246,9 @@ pub fn Settings() -> Element {
     rsx! {
         div {
             class: "container mx-auto p-6 max-w-2xl",
-            h1 { 
+            h1 {
                 class: "text-3xl font-bold mb-6",
-                "Settings" 
+                "Settings"
             }
 
             // API Key Management Section
@@ -247,7 +258,7 @@ pub fn Settings() -> Element {
                     class: "text-xl font-bold mb-4",
                     "Discogs API Key"
                 }
-                
+
                 p {
                     class: "text-gray-600 mb-4",
                     "To search and import albums, you need a Discogs API key. "
@@ -304,7 +315,7 @@ pub fn Settings() -> Element {
                                 }
                             }
                         }
-                        
+
                         div {
                             class: "flex gap-2",
                             button {
@@ -349,7 +360,7 @@ pub fn Settings() -> Element {
                     class: "text-xl font-bold mb-4",
                     "Cloud Storage (S3/MinIO)"
                 }
-                
+
                 p {
                     class: "text-gray-600 mb-4",
                     "Configure S3-compatible cloud storage for your music library. Supports AWS S3, MinIO, and other S3-compatible services."
@@ -384,7 +395,7 @@ pub fn Settings() -> Element {
                 } else {
                     div {
                         class: "space-y-4",
-                        
+
                         // Bucket Name
                         div {
                             label {
@@ -478,7 +489,7 @@ pub fn Settings() -> Element {
                                 "Leave empty for AWS S3. For MinIO, use: http://localhost:9000"
                             }
                         }
-                        
+
                         div {
                             class: "flex gap-2",
                             button {

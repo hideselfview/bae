@@ -1,12 +1,15 @@
-use dioxus::prelude::*;
 use crate::discogs;
 use crate::discogs::DiscogsSearchResult;
-use crate::models::{ImportItem, DiscogsMasterReleaseVersion};
+use crate::models::{DiscogsMasterReleaseVersion, ImportItem};
+use dioxus::prelude::*;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SearchView {
     SearchResults,
-    ReleaseDetails { master_id: String, master_title: String },
+    ReleaseDetails {
+        master_id: String,
+        master_title: String,
+    },
 }
 
 #[derive(Clone)]
@@ -23,22 +26,31 @@ pub struct AlbumImportContext {
 }
 
 impl AlbumImportContext {
-    
-    fn get_client(&mut self, secure_config: &crate::secure_config::SecureConfig) -> Result<&discogs::DiscogsClient, String> {
+    fn get_client(
+        &mut self,
+        secure_config: &crate::secure_config::SecureConfig,
+    ) -> Result<&discogs::DiscogsClient, String> {
         if self.client.is_none() {
             // Lazy load API key from secure config (may prompt for keychain password)
-            let config_data = secure_config.get()
+            let config_data = secure_config
+                .get()
                 .map_err(|e| format!("Failed to access secure config: {}", e))?;
-            
-            let api_key = config_data.discogs_api_key.as_ref()
-                .ok_or_else(|| "No API key configured. Please go to Settings to add your Discogs API key.".to_string())?;
-            
+
+            let api_key = config_data.discogs_api_key.as_ref().ok_or_else(|| {
+                "No API key configured. Please go to Settings to add your Discogs API key."
+                    .to_string()
+            })?;
+
             self.client = Some(discogs::DiscogsClient::new(api_key.clone()));
         }
         Ok(self.client.as_ref().unwrap())
     }
 
-    pub fn search_albums(&mut self, query: String, secure_config: &crate::secure_config::SecureConfig) {
+    pub fn search_albums(
+        &mut self,
+        query: String,
+        secure_config: &crate::secure_config::SecureConfig,
+    ) {
         if query.trim().is_empty() {
             self.search_results.set(Vec::new());
             return;
@@ -70,20 +82,27 @@ impl AlbumImportContext {
                     error_message.set(Some(format!("Search failed: {}", e)));
                 }
             }
-            
+
             is_searching.set(false);
         });
     }
 
     pub fn navigate_to_releases(&mut self, master_id: String, master_title: String) {
-        self.current_view.set(SearchView::ReleaseDetails { master_id, master_title });
+        self.current_view.set(SearchView::ReleaseDetails {
+            master_id,
+            master_title,
+        });
     }
 
     pub fn navigate_back_to_search(&mut self) {
         self.current_view.set(SearchView::SearchResults);
     }
 
-    pub async fn import_master(&mut self, master_id: String, secure_config: &crate::secure_config::SecureConfig) -> Result<ImportItem, String> {
+    pub async fn import_master(
+        &mut self,
+        master_id: String,
+        secure_config: &crate::secure_config::SecureConfig,
+    ) -> Result<ImportItem, String> {
         let client = match self.get_client(secure_config) {
             Ok(client) => client.clone(),
             Err(error) => {
@@ -93,7 +112,9 @@ impl AlbumImportContext {
         };
 
         // Find the thumbnail from search results
-        let search_thumb = self.search_results.read()
+        let search_thumb = self
+            .search_results
+            .read()
             .iter()
             .find(|result| result.id.to_string() == master_id)
             .and_then(|result| result.thumb.clone());
@@ -106,7 +127,10 @@ impl AlbumImportContext {
                 // If master has no thumbnail but search results had one, use the search thumbnail
                 if master.thumb.is_none() && search_thumb.is_some() {
                     master.thumb = search_thumb;
-                    println!("AlbumImportContext: Using search thumbnail for master {}", master.title);
+                    println!(
+                        "AlbumImportContext: Using search thumbnail for master {}",
+                        master.title
+                    );
                 }
                 let import_item = ImportItem::Master(master);
                 Ok(import_item)
@@ -122,7 +146,11 @@ impl AlbumImportContext {
         result
     }
 
-    pub async fn get_master_versions(&mut self, master_id: String, secure_config: &crate::secure_config::SecureConfig) -> Result<Vec<DiscogsMasterReleaseVersion>, String> {
+    pub async fn get_master_versions(
+        &mut self,
+        master_id: String,
+        secure_config: &crate::secure_config::SecureConfig,
+    ) -> Result<Vec<DiscogsMasterReleaseVersion>, String> {
         let client = match self.get_client(secure_config) {
             Ok(client) => client.clone(),
             Err(error) => {
@@ -147,7 +175,12 @@ impl AlbumImportContext {
         result
     }
 
-    pub async fn import_release(&mut self, release_id: String, master_id: String, secure_config: &crate::secure_config::SecureConfig) -> Result<ImportItem, String> {
+    pub async fn import_release(
+        &mut self,
+        release_id: String,
+        master_id: String,
+        secure_config: &crate::secure_config::SecureConfig,
+    ) -> Result<ImportItem, String> {
         let client = match self.get_client(secure_config) {
             Ok(client) => client.clone(),
             Err(error) => {
@@ -179,9 +212,7 @@ impl AlbumImportContext {
 
 /// Provider component to make search context available throughout the app
 #[component]
-pub fn AlbumImportContextProvider(
-    children: Element,
-) -> Element {
+pub fn AlbumImportContextProvider(children: Element) -> Element {
     let album_import_ctx = AlbumImportContext {
         search_query: use_signal(|| String::new()),
         search_results: use_signal(|| Vec::new()),
@@ -193,9 +224,9 @@ pub fn AlbumImportContextProvider(
         current_view: use_signal(|| SearchView::SearchResults),
         client: None,
     };
-    
+
     use_context_provider(move || album_import_ctx);
-    
+
     rsx! {
         {children}
     }

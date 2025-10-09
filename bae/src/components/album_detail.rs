@@ -1,8 +1,8 @@
-use dioxus::prelude::*;
+use crate::database::{DbAlbum, DbTrack};
 use crate::library::LibraryError;
 use crate::library_context::use_library_manager;
-use crate::database::{DbAlbum, DbTrack};
 use crate::Route;
+use dioxus::prelude::*;
 
 /// Album detail page showing album info and tracklist
 #[component]
@@ -24,7 +24,7 @@ pub fn AlbumDetail(album_id: String) -> Element {
                 async move {
                     loading.set(true);
                     error.set(None);
-                    
+
                     match load_album_details(&album_id, &library_manager).await {
                         Ok((album_data, tracks_data)) => {
                             album.set(Some(album_data));
@@ -44,7 +44,7 @@ pub fn AlbumDetail(album_id: String) -> Element {
     rsx! {
         div {
             class: "container mx-auto p-6",
-            
+
             // Back button
             div {
                 class: "mb-6",
@@ -54,7 +54,7 @@ pub fn AlbumDetail(album_id: String) -> Element {
                     "← Back to Library"
                 }
             }
-            
+
             if loading() {
                 div {
                     class: "flex justify-center items-center py-12",
@@ -84,13 +84,13 @@ fn AlbumDetailView(album: DbAlbum, tracks: Vec<DbTrack>) -> Element {
     rsx! {
         div {
             class: "grid grid-cols-1 lg:grid-cols-3 gap-8",
-            
+
             // Album artwork and info
             div {
                 class: "lg:col-span-1",
                 div {
                     class: "bg-gray-800 rounded-lg p-6",
-                    
+
                     // Album cover
                     div {
                         class: "aspect-square bg-gray-700 rounded-lg mb-6 flex items-center justify-center overflow-hidden",
@@ -107,7 +107,7 @@ fn AlbumDetailView(album: DbAlbum, tracks: Vec<DbTrack>) -> Element {
                             }
                         }
                     }
-                    
+
                     // Album metadata
                     div {
                         h1 {
@@ -118,7 +118,7 @@ fn AlbumDetailView(album: DbAlbum, tracks: Vec<DbTrack>) -> Element {
                             class: "text-lg text-gray-300 mb-4",
                             "{album.artist_name}"
                         }
-                        
+
                         div {
                             class: "space-y-2 text-sm text-gray-400",
                             if let Some(year) = album.year {
@@ -147,7 +147,7 @@ fn AlbumDetailView(album: DbAlbum, tracks: Vec<DbTrack>) -> Element {
                     }
                 }
             }
-            
+
             // Tracklist
             div {
                 class: "lg:col-span-2",
@@ -157,7 +157,7 @@ fn AlbumDetailView(album: DbAlbum, tracks: Vec<DbTrack>) -> Element {
                         class: "text-xl font-bold text-white mb-4",
                         "Tracklist"
                     }
-                    
+
                     if tracks.is_empty() {
                         div {
                             class: "text-center py-8 text-gray-400",
@@ -183,7 +183,7 @@ fn TrackRow(track: DbTrack) -> Element {
     rsx! {
         div {
             class: "flex items-center py-3 px-4 rounded-lg hover:bg-gray-700 transition-colors group",
-            
+
             // Track number
             div {
                 class: "w-12 text-right text-gray-400 text-sm font-mono",
@@ -193,7 +193,7 @@ fn TrackRow(track: DbTrack) -> Element {
                     "—"
                 }
             }
-            
+
             // Track info
             div {
                 class: "flex-1 ml-4",
@@ -208,7 +208,7 @@ fn TrackRow(track: DbTrack) -> Element {
                     }
                 }
             }
-            
+
             // Duration (if available)
             div {
                 class: "text-gray-400 text-sm font-mono",
@@ -237,12 +237,13 @@ async fn load_album_details(
 ) -> Result<(DbAlbum, Vec<DbTrack>), LibraryError> {
     // Get all albums to find the one we want
     let albums = library_manager.get().get_albums().await?;
-    let album = albums.into_iter()
+    let album = albums
+        .into_iter()
         .find(|a| a.id == album_id)
         .ok_or_else(|| LibraryError::Import("Album not found".to_string()))?;
-    
+
     // Get tracks for this album
     let tracks = library_manager.get().get_tracks(album_id).await?;
-    
+
     Ok((album, tracks))
 }

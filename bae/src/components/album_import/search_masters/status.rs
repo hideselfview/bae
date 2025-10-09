@@ -1,5 +1,5 @@
-use dioxus::prelude::*;
 use crate::album_import_context::AlbumImportContext;
+use dioxus::prelude::*;
 
 /// Displays loading and error states for search masters operations
 #[component]
@@ -10,9 +10,9 @@ pub fn SearchMastersStatus() -> Element {
         if *album_import_ctx.is_searching_masters.read() {
             div {
                 class: "text-center py-8",
-                p { 
+                p {
                     class: "text-gray-600",
-                    "Searching..." 
+                    "Searching..."
                 }
             }
         } else if let Some(error) = album_import_ctx.error_message.read().as_ref() {

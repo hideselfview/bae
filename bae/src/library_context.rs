@@ -1,5 +1,5 @@
-use dioxus::prelude::*;
 use crate::library::LibraryManager;
+use dioxus::prelude::*;
 use std::sync::Arc;
 
 /// Shared library manager that can be accessed from both UI and Subsonic server

@@ -1,27 +1,27 @@
-use dioxus::prelude::*;
 use dioxus::desktop::{Config, WindowBuilder};
+use dioxus::prelude::*;
 
-mod models;
-mod discogs;
-mod secure_config;
-mod components;
 mod album_import_context;
+mod audio_processing;
+mod cache;
+mod chunking;
+mod cloud_storage;
+mod components;
+mod cue_flac;
 mod database;
+mod discogs;
+mod encryption;
 mod library;
 mod library_context;
-mod chunking;
-mod encryption;
-mod cloud_storage;
-mod cache;
-mod cue_flac;
-mod audio_processing;
+mod models;
+mod secure_config;
 mod subsonic;
 
-use components::*;
 use components::album_import::ImportWorkflowManager;
+use components::*;
 use library_context::SharedLibraryManager;
-use subsonic::create_router;
 use std::path::PathBuf;
+use subsonic::create_router;
 
 /// Root application context containing all top-level dependencies
 #[derive(Clone)]
@@ -56,7 +56,8 @@ fn get_library_path() -> PathBuf {
 
 /// Initialize cache manager
 async fn create_cache_manager() -> cache::CacheManager {
-    let cache_manager = cache::CacheManager::new().await
+    let cache_manager = cache::CacheManager::new()
+        .await
         .expect("Failed to create cache manager");
 
     println!("Main: Cache manager created");
@@ -101,16 +102,19 @@ async fn create_cloud_storage(
 async fn create_database() -> database::Database {
     let library_path = get_library_path();
 
-    println!("Main: Creating library directory: {}", library_path.display());
+    println!(
+        "Main: Creating library directory: {}",
+        library_path.display()
+    );
 
-    std::fs::create_dir_all(&library_path)
-        .expect("Failed to create library directory");
+    std::fs::create_dir_all(&library_path).expect("Failed to create library directory");
 
     let db_path = library_path.join("library.db");
 
     println!("Main: Initializing database at: {}", db_path.display());
 
-    let database = database::Database::new(db_path.to_str().unwrap()).await
+    let database = database::Database::new(db_path.to_str().unwrap())
+        .await
         .expect("Failed to create database");
 
     println!("Main: Database created");
@@ -128,11 +132,8 @@ fn create_library_manager(
 
     println!("Main: Chunking service created");
 
-    let library_manager = library::LibraryManager::new(
-        database,
-        chunking_service,
-        cloud_storage.clone(),
-    );
+    let library_manager =
+        library::LibraryManager::new(database, chunking_service, cloud_storage.clone());
 
     println!("Main: Library manager created");
 
@@ -148,7 +149,7 @@ fn main() {
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
 
     println!("Main: Building dependencies...");
-    
+
     // Create lazy secure config (no keyring access yet to avoid password prompting!)
     let secure_config = secure_config::SecureConfig::new();
 
@@ -166,18 +167,15 @@ fn main() {
     let database = rt.block_on(create_database());
 
     // Build library manager with all injected dependencies
-    let library_manager = create_library_manager(
-        database,
-        encryption_service.clone(),
-        cloud_storage.clone(),
-    );
-    
+    let library_manager =
+        create_library_manager(database, encryption_service.clone(), cloud_storage.clone());
+
     // Create root application context
     let app_context = AppContext {
         library_manager: library_manager.clone(),
         secure_config: secure_config.clone(),
     };
-    
+
     // Start Subsonic API server in background thread
     std::thread::spawn(move || {
         rt.block_on(start_subsonic_server(
@@ -187,15 +185,15 @@ fn main() {
             cloud_storage,
         ));
     });
-    
+
     // Start the desktop app (this will run in the main thread)
     println!("Main: Starting Dioxus desktop app...");
-    
+
     LaunchBuilder::desktop()
         .with_cfg(make_config())
         .with_context_provider(move || Box::new(app_context.clone()))
         .launch(App);
-    
+
     println!("Main: Dioxus desktop app quit");
 }
 
@@ -207,9 +205,14 @@ async fn start_subsonic_server(
     cloud_storage: Option<cloud_storage::CloudStorageManager>,
 ) {
     println!("Starting Subsonic API server...");
-    
-    let app = create_router(library_manager, cache_manager, encryption_service, cloud_storage);
-    
+
+    let app = create_router(
+        library_manager,
+        cache_manager,
+        encryption_service,
+        cloud_storage,
+    );
+
     let listener = match tokio::net::TcpListener::bind("127.0.0.1:4533").await {
         Ok(listener) => {
             println!("Subsonic API server listening on http://127.0.0.1:4533");
@@ -220,7 +223,7 @@ async fn start_subsonic_server(
             return;
         }
     };
-    
+
     if let Err(e) = axum::serve(listener, app).await {
         println!("Subsonic server error: {}", e);
     }

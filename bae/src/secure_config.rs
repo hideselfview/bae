@@ -56,11 +56,11 @@ impl SecureConfig {
         if let Some(data) = self.inner.get() {
             return Ok(data);
         }
-        
+
         // Not loaded yet, need to load from keychain
         println!("SecureConfig: Loading from keychain (password may be required)...");
         let data = Self::load_from_keychain()?;
-        
+
         // Try to store it (race condition is fine, first one wins)
         match self.inner.set(data) {
             Ok(()) => Ok(self.inner.get().unwrap()),
@@ -106,7 +106,7 @@ impl SecureConfig {
             },
             Err(e) => return Err(SecureConfigError::Keyring(e)),
         };
-        
+
         // Load or generate encryption master key
         let encryption_master_key = match Entry::new("bae", "encryption_master_key") {
             Ok(entry) => match entry.get_password() {
@@ -120,19 +120,20 @@ impl SecureConfig {
                     use aes_gcm::{aead::OsRng, Aes256Gcm, KeyInit};
                     let key = Aes256Gcm::generate_key(OsRng);
                     let key_hex = hex::encode(key.as_slice());
-                    
+
                     // Store it in keyring
-                    entry.set_password(&key_hex)
+                    entry
+                        .set_password(&key_hex)
                         .map_err(|e| SecureConfigError::Keyring(e))?;
                     println!("SecureConfig: Stored new encryption master key in keyring");
-                    
+
                     key_hex
                 }
                 Err(e) => return Err(SecureConfigError::Keyring(e)),
             },
             Err(e) => return Err(SecureConfigError::Keyring(e)),
         };
-        
+
         Ok(SecureConfigData {
             discogs_api_key,
             s3_config,
@@ -144,10 +145,10 @@ impl SecureConfig {
     pub async fn validate_discogs_api_key(api_key: &str) -> Result<bool, SecureConfigError> {
         use reqwest::Client;
         use std::collections::HashMap;
-        
+
         let client = Client::new();
         let url = "https://api.discogs.com/database/search";
-        
+
         let mut params = HashMap::new();
         params.insert("q", "test");
         params.insert("type", "release");
@@ -165,12 +166,17 @@ impl SecureConfig {
         match response.status().as_u16() {
             200 => Ok(true),
             401 => Ok(false), // Invalid API key
-            _ => Err(SecureConfigError::Validation(format!("Unexpected API response: {}", response.status()))),
+            _ => Err(SecureConfigError::Validation(format!(
+                "Unexpected API response: {}",
+                response.status()
+            ))),
         }
     }
-    
+
     /// Validate and store Discogs API key
-    pub async fn validate_and_store_discogs_api_key(api_key: &str) -> Result<(), SecureConfigError> {
+    pub async fn validate_and_store_discogs_api_key(
+        api_key: &str,
+    ) -> Result<(), SecureConfigError> {
         // First validate the key
         if !Self::validate_discogs_api_key(api_key).await? {
             return Err(SecureConfigError::Validation("Invalid API key".to_string()));
@@ -180,7 +186,7 @@ impl SecureConfig {
         Self::store_discogs_api_key(api_key)?;
         Ok(())
     }
-    
+
     /// Store Discogs API key without validation (requires creating new SecureConfig instance to see changes)
     pub fn store_discogs_api_key(api_key: &str) -> Result<(), SecureConfigError> {
         let entry = Entry::new("bae", "discogs_api_key")?;
@@ -198,25 +204,33 @@ impl SecureConfig {
     }
 
     /// Validate and store S3 configuration
-    pub async fn validate_and_store_s3_config(config: &crate::cloud_storage::S3Config) -> Result<(), SecureConfigError> {
+    pub async fn validate_and_store_s3_config(
+        config: &crate::cloud_storage::S3Config,
+    ) -> Result<(), SecureConfigError> {
         // Basic validation
-        config.validate()
-            .map_err(|e| SecureConfigError::Validation(format!("Config validation failed: {}", e)))?;
-        
+        config.validate().map_err(|e| {
+            SecureConfigError::Validation(format!("Config validation failed: {}", e))
+        })?;
+
         // Try to create S3 client (validates credentials work)
         crate::cloud_storage::S3CloudStorage::new(config.clone())
             .await
-            .map_err(|e| SecureConfigError::Validation(format!("Failed to initialize S3 client: {}", e)))?;
-        
+            .map_err(|e| {
+                SecureConfigError::Validation(format!("Failed to initialize S3 client: {}", e))
+            })?;
+
         // If validation succeeded, store the config
         Self::store_s3_config(config)?;
         Ok(())
     }
-    
+
     /// Store S3 configuration without validation (requires creating new SecureConfig instance to see changes)
-    pub fn store_s3_config(config: &crate::cloud_storage::S3Config) -> Result<(), SecureConfigError> {
-        config.validate()
-            .map_err(|e| SecureConfigError::Validation(format!("Config validation failed: {}", e)))?;
+    pub fn store_s3_config(
+        config: &crate::cloud_storage::S3Config,
+    ) -> Result<(), SecureConfigError> {
+        config.validate().map_err(|e| {
+            SecureConfigError::Validation(format!("Config validation failed: {}", e))
+        })?;
         let entry = Entry::new("bae", "s3_config")?;
         let json = serde_json::to_string(config)
             .map_err(|e| SecureConfigError::Serialization(e.to_string()))?;
@@ -247,4 +261,3 @@ pub fn use_secure_config() -> SecureConfig {
     let app_context = use_context::<crate::AppContext>();
     app_context.secure_config
 }
-

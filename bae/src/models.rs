@@ -91,7 +91,6 @@ impl ImportItem {
         }
     }
 
-
     pub fn format(&self) -> &[String] {
         match self {
             ImportItem::Master(_) => &[],
@@ -117,8 +116,8 @@ impl ImportItem {
 pub struct DiscogsMasterReleaseVersion {
     pub id: u64,
     pub title: String,
-    pub format: String,  // Fixed: format is a string in the API response
-    pub label: String,   // Fixed: label is a string in the API response
+    pub format: String, // Fixed: format is a string in the API response
+    pub label: String,  // Fixed: label is a string in the API response
     pub catno: String,
     pub country: String,
     pub released: Option<String>,
@@ -150,13 +149,11 @@ pub struct DiscogsTrack {
     pub duration: Option<String>, // Duration as string from Discogs (e.g., "3:45")
 }
 
-impl DiscogsTrack {
-}
+impl DiscogsTrack {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
 
     #[test]
     fn test_album_serialization() {

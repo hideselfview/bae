@@ -1,6 +1,6 @@
 use aes_gcm::{
     aead::{Aead, AeadCore, KeyInit, OsRng},
-    Aes256Gcm, Nonce, Key
+    Aes256Gcm, Key, Nonce,
 };
 use thiserror::Error;
 
@@ -17,7 +17,7 @@ pub enum EncryptionError {
 }
 
 /// Manages encryption keys and provides AES-256-GCM encryption/decryption
-/// 
+///
 /// This implements the security model described in the README:
 /// - Files are split into chunks and each chunk is encrypted separately
 /// - Uses AES-256-GCM for authenticated encryption
@@ -55,25 +55,26 @@ impl EncryptionService {
         if let Some(cipher) = self.cipher.get() {
             return Ok(cipher);
         }
-        
+
         // First use: load key from SecureConfig
         println!("EncryptionService: Loading master key from SecureConfig...");
-        let config_data = self.secure_config.get()
-            .map_err(|e| EncryptionError::KeyManagement(format!("Failed to load secure config: {}", e)))?;
-        
+        let config_data = self.secure_config.get().map_err(|e| {
+            EncryptionError::KeyManagement(format!("Failed to load secure config: {}", e))
+        })?;
+
         // Decode hex key
         let key_bytes = hex::decode(&config_data.encryption_master_key)
             .map_err(|e| EncryptionError::KeyManagement(format!("Invalid key format: {}", e)))?;
-        
+
         if key_bytes.len() != 32 {
             return Err(EncryptionError::KeyManagement(
-                "Invalid key length, expected 32 bytes".to_string()
+                "Invalid key length, expected 32 bytes".to_string(),
             ));
         }
-        
+
         let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
         let cipher = Aes256Gcm::new(key);
-        
+
         // Cache it (thread-safe, first one wins if racing)
         match self.cipher.set(cipher) {
             Ok(()) => Ok(self.cipher.get().unwrap()),
@@ -86,15 +87,15 @@ impl EncryptionService {
     pub fn encrypt(&self, plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>), EncryptionError> {
         // Generate a unique nonce for this encryption
         let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
-        
+
         // Get cipher (lazy loads key on first use)
         let cipher = self.get_cipher()?;
-        
+
         // Encrypt the data
-        let ciphertext = cipher
-            .encrypt(&nonce, plaintext)
-            .map_err(|e| EncryptionError::Encryption(format!("AES-GCM encryption failed: {}", e)))?;
-        
+        let ciphertext = cipher.encrypt(&nonce, plaintext).map_err(|e| {
+            EncryptionError::Encryption(format!("AES-GCM encryption failed: {}", e))
+        })?;
+
         Ok((ciphertext, nonce.to_vec()))
     }
 
@@ -104,20 +105,20 @@ impl EncryptionService {
         // Convert nonce bytes back to Nonce
         if nonce.len() != 12 {
             return Err(EncryptionError::Decryption(
-                "Invalid nonce length, expected 12 bytes".to_string()
+                "Invalid nonce length, expected 12 bytes".to_string(),
             ));
         }
-        
+
         let nonce = Nonce::from_slice(nonce);
-        
+
         // Get cipher (lazy loads key on first use)
         let cipher = self.get_cipher()?;
-        
+
         // Decrypt the data
-        let plaintext = cipher
-            .decrypt(nonce, ciphertext)
-            .map_err(|e| EncryptionError::Decryption(format!("AES-GCM decryption failed: {}", e)))?;
-        
+        let plaintext = cipher.decrypt(nonce, ciphertext).map_err(|e| {
+            EncryptionError::Decryption(format!("AES-GCM decryption failed: {}", e))
+        })?;
+
         Ok(plaintext)
     }
 
@@ -126,10 +127,10 @@ impl EncryptionService {
     pub fn decrypt_chunk(&self, chunk_bytes: &[u8]) -> Result<Vec<u8>, EncryptionError> {
         // Parse the encrypted chunk from bytes
         let encrypted_chunk = EncryptedChunk::from_bytes(chunk_bytes)?;
-        
+
         // Note: We don't verify key_id anymore since we only have one master key per app
         // The encrypted_chunk still stores it for backward compatibility
-        
+
         // Decrypt using the nonce and encrypted data
         self.decrypt(&encrypted_chunk.encrypted_data, &encrypted_chunk.nonce)
     }
@@ -157,62 +158,73 @@ impl EncryptedChunk {
     /// Format: [nonce_len(4)][nonce][key_id_len(4)][key_id][encrypted_data]
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
-        
+
         // Write nonce length and nonce
         bytes.extend_from_slice(&(self.nonce.len() as u32).to_le_bytes());
         bytes.extend_from_slice(&self.nonce);
-        
+
         // Write key ID length and key ID
         let key_id_bytes = self.key_id.as_bytes();
         bytes.extend_from_slice(&(key_id_bytes.len() as u32).to_le_bytes());
         bytes.extend_from_slice(key_id_bytes);
-        
+
         // Write encrypted data
         bytes.extend_from_slice(&self.encrypted_data);
-        
+
         bytes
     }
 
     /// Deserialize encrypted chunk from bytes
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, EncryptionError> {
         if bytes.len() < 8 {
-            return Err(EncryptionError::Decryption("Invalid chunk format".to_string()));
+            return Err(EncryptionError::Decryption(
+                "Invalid chunk format".to_string(),
+            ));
         }
-        
+
         let mut offset = 0;
-        
+
         // Read nonce length and nonce
         let nonce_len = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
         offset += 4;
-        
+
         if offset + nonce_len > bytes.len() {
-            return Err(EncryptionError::Decryption("Invalid nonce length".to_string()));
+            return Err(EncryptionError::Decryption(
+                "Invalid nonce length".to_string(),
+            ));
         }
-        
+
         let nonce = bytes[offset..offset + nonce_len].to_vec();
         offset += nonce_len;
-        
+
         // Read key ID length and key ID
         if offset + 4 > bytes.len() {
-            return Err(EncryptionError::Decryption("Invalid key ID format".to_string()));
+            return Err(EncryptionError::Decryption(
+                "Invalid key ID format".to_string(),
+            ));
         }
-        
+
         let key_id_len = u32::from_le_bytes([
-            bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]
+            bytes[offset],
+            bytes[offset + 1],
+            bytes[offset + 2],
+            bytes[offset + 3],
         ]) as usize;
         offset += 4;
-        
+
         if offset + key_id_len > bytes.len() {
-            return Err(EncryptionError::Decryption("Invalid key ID length".to_string()));
+            return Err(EncryptionError::Decryption(
+                "Invalid key ID length".to_string(),
+            ));
         }
-        
+
         let key_id = String::from_utf8(bytes[offset..offset + key_id_len].to_vec())
             .map_err(|e| EncryptionError::Decryption(format!("Invalid key ID: {}", e)))?;
         offset += key_id_len;
-        
+
         // Read encrypted data
         let encrypted_data = bytes[offset..].to_vec();
-        
+
         Ok(EncryptedChunk {
             encrypted_data,
             nonce,
@@ -224,22 +236,22 @@ impl EncryptedChunk {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     /// Create a test encryption service with a pre-populated test key (avoids keyring)
     fn create_test_encryption_service() -> EncryptionService {
         // Generate a test encryption key
         let test_key = Aes256Gcm::generate_key(OsRng);
         let test_key_hex = hex::encode(test_key.as_slice());
-        
+
         // Create a SecureConfig with pre-populated data (avoids keyring)
         let test_config_data = crate::secure_config::SecureConfigData {
             discogs_api_key: None,
             s3_config: None,
             encryption_master_key: test_key_hex,
         };
-        
+
         let secure_config = crate::secure_config::SecureConfig::new_with_data(test_config_data);
-        
+
         EncryptionService::new(secure_config)
     }
 
@@ -247,17 +259,17 @@ mod tests {
     fn test_encryption_roundtrip() {
         let encryption_service = create_test_encryption_service();
         let plaintext = b"Hello, world! This is a test message for encryption.";
-        
+
         // Encrypt
         let (ciphertext, nonce) = encryption_service.encrypt(plaintext).unwrap();
-        
+
         // Verify ciphertext is different from plaintext
         assert_ne!(ciphertext, plaintext);
         assert_eq!(nonce.len(), 12); // AES-GCM nonce is 12 bytes
-        
+
         // Decrypt
         let decrypted = encryption_service.decrypt(&ciphertext, &nonce).unwrap();
-        
+
         // Verify decryption matches original
         assert_eq!(decrypted, plaintext);
     }
@@ -269,13 +281,13 @@ mod tests {
             vec![6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17], // 12 bytes
             "test_key_id".to_string(),
         );
-        
+
         // Serialize
         let bytes = chunk.to_bytes();
-        
+
         // Deserialize
         let deserialized = EncryptedChunk::from_bytes(&bytes).unwrap();
-        
+
         // Verify
         assert_eq!(deserialized.encrypted_data, chunk.encrypted_data);
         assert_eq!(deserialized.nonce, chunk.nonce);
@@ -286,20 +298,20 @@ mod tests {
     fn test_different_nonces() {
         let encryption_service = create_test_encryption_service();
         let plaintext = b"Same message";
-        
+
         // Encrypt twice
         let (ciphertext1, nonce1) = encryption_service.encrypt(plaintext).unwrap();
         let (ciphertext2, nonce2) = encryption_service.encrypt(plaintext).unwrap();
-        
+
         // Nonces should be different
         assert_ne!(nonce1, nonce2);
         // Ciphertexts should be different (due to different nonces)
         assert_ne!(ciphertext1, ciphertext2);
-        
+
         // Both should decrypt to the same plaintext
         let decrypted1 = encryption_service.decrypt(&ciphertext1, &nonce1).unwrap();
         let decrypted2 = encryption_service.decrypt(&ciphertext2, &nonce2).unwrap();
-        
+
         assert_eq!(decrypted1, plaintext);
         assert_eq!(decrypted2, plaintext);
     }

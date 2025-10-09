@@ -1,6 +1,6 @@
 use aws_config::{BehaviorVersion, Region};
-use aws_sdk_s3::{Client, Error as S3Error, primitives::ByteStreamError};
 use aws_credential_types::Credentials;
+use aws_sdk_s3::{primitives::ByteStreamError, Client, Error as S3Error};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use thiserror::Error;
@@ -35,21 +35,28 @@ pub struct S3Config {
 impl S3Config {
     pub fn validate(&self) -> Result<(), CloudStorageError> {
         if self.bucket_name.trim().is_empty() {
-            return Err(CloudStorageError::Config("Bucket name cannot be empty".to_string()));
+            return Err(CloudStorageError::Config(
+                "Bucket name cannot be empty".to_string(),
+            ));
         }
         if self.region.trim().is_empty() {
-            return Err(CloudStorageError::Config("Region cannot be empty".to_string()));
+            return Err(CloudStorageError::Config(
+                "Region cannot be empty".to_string(),
+            ));
         }
         if self.access_key_id.trim().is_empty() {
-            return Err(CloudStorageError::Config("Access key ID cannot be empty".to_string()));
+            return Err(CloudStorageError::Config(
+                "Access key ID cannot be empty".to_string(),
+            ));
         }
         if self.secret_access_key.trim().is_empty() {
-            return Err(CloudStorageError::Config("Secret access key cannot be empty".to_string()));
+            return Err(CloudStorageError::Config(
+                "Secret access key cannot be empty".to_string(),
+            ));
         }
         Ok(())
     }
 }
-
 
 /// Trait for cloud storage operations (allows mocking for tests)
 #[async_trait::async_trait]
@@ -73,7 +80,7 @@ impl S3CloudStorage {
             config.secret_access_key,
             None, // session_token
             None, // expiration
-            "bae-s3-config"
+            "bae-s3-config",
         );
 
         // Build AWS config
@@ -102,8 +109,8 @@ impl S3CloudStorage {
             // Fallback for malformed chunk IDs
             return format!("chunks/misc/{}.enc", chunk_id);
         }
-        
-        let prefix = &chunk_id[..2];    // First 2 chars: "ab"
+
+        let prefix = &chunk_id[..2]; // First 2 chars: "ab"
         let subprefix = &chunk_id[2..4]; // Next 2 chars: "cd"
         format!("chunks/{}/{}/{}.enc", prefix, subprefix, chunk_id)
     }
@@ -113,9 +120,13 @@ impl S3CloudStorage {
 impl CloudStorage for S3CloudStorage {
     async fn upload_chunk(&self, chunk_id: &str, data: &[u8]) -> Result<String, CloudStorageError> {
         let key = self.chunk_key(chunk_id);
-        
-        println!("S3CloudStorage: Uploading chunk {} ({} bytes)", chunk_id, data.len());
-        
+
+        println!(
+            "S3CloudStorage: Uploading chunk {} ({} bytes)",
+            chunk_id,
+            data.len()
+        );
+
         self.client
             .put_object()
             .bucket(&self.bucket_name)
@@ -125,10 +136,13 @@ impl CloudStorage for S3CloudStorage {
             .send()
             .await
             .map_err(|e| CloudStorageError::SdkError(format!("Put object failed: {}", e)))?;
-        
+
         let storage_location = format!("s3://{}/{}", self.bucket_name, key);
-        println!("S3CloudStorage: Successfully uploaded chunk to {}", storage_location);
-        
+        println!(
+            "S3CloudStorage: Successfully uploaded chunk to {}",
+            storage_location
+        );
+
         Ok(storage_location)
     }
 
@@ -136,27 +150,33 @@ impl CloudStorage for S3CloudStorage {
         // Parse S3 location: s3://bucket/key
         let key = storage_location
             .strip_prefix(&format!("s3://{}/", self.bucket_name))
-            .ok_or_else(|| CloudStorageError::Download(
-                format!("Invalid S3 location: {}", storage_location)
-            ))?;
-        
-        println!("S3CloudStorage: Downloading chunk from {}", storage_location);
-        
-        let response = self.client
+            .ok_or_else(|| {
+                CloudStorageError::Download(format!("Invalid S3 location: {}", storage_location))
+            })?;
+
+        println!(
+            "S3CloudStorage: Downloading chunk from {}",
+            storage_location
+        );
+
+        let response = self
+            .client
             .get_object()
             .bucket(&self.bucket_name)
             .key(key)
             .send()
             .await
             .map_err(|e| CloudStorageError::SdkError(format!("Get object failed: {}", e)))?;
-        
+
         let data = response.body.collect().await?.into_bytes().to_vec();
-        
-        println!("S3CloudStorage: Successfully downloaded {} bytes", data.len());
+
+        println!(
+            "S3CloudStorage: Successfully downloaded {} bytes",
+            data.len()
+        );
         Ok(data)
     }
 }
-
 
 /// Cloud storage manager that handles chunk lifecycle
 #[derive(Clone)]
@@ -182,13 +202,20 @@ impl CloudStorageManager {
     }
 
     /// Upload a chunk file to cloud storage
-    pub async fn upload_chunk_file(&self, chunk_id: &str, file_path: &Path) -> Result<String, CloudStorageError> {
+    pub async fn upload_chunk_file(
+        &self,
+        chunk_id: &str,
+        file_path: &Path,
+    ) -> Result<String, CloudStorageError> {
         let data = fs::read(file_path).await?;
         self.storage.upload_chunk(chunk_id, &data).await
     }
 
     /// Download chunk data from cloud storage
-    pub async fn download_chunk(&self, storage_location: &str) -> Result<Vec<u8>, CloudStorageError> {
+    pub async fn download_chunk(
+        &self,
+        storage_location: &str,
+    ) -> Result<Vec<u8>, CloudStorageError> {
         self.storage.download_chunk(storage_location).await
     }
 }

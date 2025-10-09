@@ -1,28 +1,24 @@
-use dioxus::prelude::*;
-use crate::{models, album_import_context::AlbumImportContext};
+use super::{import_workflow::ImportWorkflow, release_item::ReleaseItem};
 use crate::models::DiscogsMasterReleaseVersion;
 use crate::secure_config::use_secure_config;
-use super::{release_item::ReleaseItem, import_workflow::ImportWorkflow};
+use crate::{album_import_context::AlbumImportContext, models};
+use dioxus::prelude::*;
 
 #[component]
-pub fn ReleaseList(
-    master_id: String,
-    master_title: String,
-    on_back: EventHandler<()>
-) -> Element {
+pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandler<()>) -> Element {
     let album_import_ctx = use_context::<AlbumImportContext>();
     let release_results = use_signal(|| Vec::<DiscogsMasterReleaseVersion>::new());
     let selected_import_item = use_signal(|| None::<models::ImportItem>);
     let secure_config = use_secure_config();
 
     let master_id_clone1 = master_id.clone();
-    
+
     // Load releases on component mount
     use_effect({
         let album_import_ctx = album_import_ctx.clone();
         let release_results = release_results.clone();
         let secure_config = secure_config.clone();
-        
+
         move || {
             let master_id = master_id_clone1.clone();
             let mut release_results = release_results.clone();
@@ -30,7 +26,10 @@ pub fn ReleaseList(
             let secure_config = secure_config.clone();
 
             spawn(async move {
-                match album_import_ctx.get_master_versions(master_id, &secure_config).await {
+                match album_import_ctx
+                    .get_master_versions(master_id, &secure_config)
+                    .await
+                {
                     Ok(versions) => {
                         release_results.set(versions);
                     }
@@ -41,7 +40,6 @@ pub fn ReleaseList(
             });
         }
     });
-
 
     let on_import_release = {
         let selected_import_item = selected_import_item;
@@ -54,9 +52,12 @@ pub fn ReleaseList(
             let mut selected_import_item = selected_import_item.clone();
             let mut album_import_ctx = album_import_ctx.clone();
             let secure_config = secure_config.clone();
-            
+
             spawn(async move {
-                match album_import_ctx.import_release(release_id, master_id, &secure_config).await {
+                match album_import_ctx
+                    .import_release(release_id, master_id, &secure_config)
+                    .await
+                {
                     Ok(import_item) => {
                         selected_import_item.set(Some(import_item));
                     }
@@ -97,20 +98,20 @@ pub fn ReleaseList(
                         onclick: move |_| on_back.call(()),
                         "← Back to Search"
                     }
-                    h1 { 
+                    h1 {
                         class: "text-3xl font-bold",
                         "Releases for: {master_title}"
                     }
                 }
             }
-            
+
 
             if *album_import_ctx.is_loading_versions.read() {
                 div {
                     class: "text-center py-8",
-                    p { 
+                    p {
                         class: "text-gray-600",
-                        "Loading releases..." 
+                        "Loading releases..."
                     }
                 }
             } else if let Some(error) = album_import_ctx.error_message.read().as_ref() {

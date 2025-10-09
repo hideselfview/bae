@@ -1,6 +1,6 @@
-use dioxus::prelude::*;
 use crate::album_import_context::AlbumImportContext;
 use crate::secure_config::use_secure_config;
+use dioxus::prelude::*;
 
 /// Search masters input form with text field and search button
 #[component]

@@ -1,7 +1,6 @@
-use dioxus::prelude::*;
+use super::{release_list::ReleaseList, search_masters::SearchMastersPage};
 use crate::album_import_context::{AlbumImportContext, SearchView};
-use super::{search_masters::SearchMastersPage, release_list::ReleaseList};
-
+use dioxus::prelude::*;
 
 /// Manages the import workflow and navigation between search and releases views
 #[component]
@@ -22,7 +21,10 @@ pub fn ImportWorkflowManager() -> Element {
                 SearchMastersPage {}
             }
         }
-        SearchView::ReleaseDetails { master_id, master_title } => {
+        SearchView::ReleaseDetails {
+            master_id,
+            master_title,
+        } => {
             rsx! {
                 ReleaseList {
                     master_id: master_id.clone(),

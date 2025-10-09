@@ -1,6 +1,6 @@
-use dioxus::prelude::*;
 use crate::album_import_context::AlbumImportContext;
 use crate::discogs::DiscogsSearchResult;
+use dioxus::prelude::*;
 
 #[derive(Props, PartialEq, Clone)]
 pub struct SearchMastersItemProps {
