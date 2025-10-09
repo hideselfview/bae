@@ -1,0 +1,4 @@
+---
+alwaysApply: true
+---
+Add blank lines before/after log statements when surrounded by substantial code operations, variable assignments, or control flow constructs. Skip spacing when the log is first in a block or follows a comment. Goal: give logs breathing room as visual breakpoints.
