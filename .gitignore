@@ -19,3 +19,9 @@ Thumbs.db
 
 # Node
 node_modules/
+
+# Development environment
+.env
+
+# But keep example file
+!.env.example

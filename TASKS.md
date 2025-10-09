@@ -3,8 +3,9 @@
 > [!NOTE]  
 > bae has moved beyond **pre-implementation** and now has a working core system!
 > We have a functional album import workflow with encrypted chunk storage and basic Subsonic streaming.
-> **Current Architecture**: Cloud-first storage with S3 as primary, local cache for streaming, optional source folder checkouts.
-> Our current focus is completing the cloud-first storage model while keeping these things out of scope:
+> **Current Architecture**: Cloud-first storage with S3 as primary, local cache for streaming, database sync to S3.
+> **Current Focus**: Building first-launch setup wizard and library initialization system.
+> Our current focus is completing the simplified cloud-first storage model while keeping these things out of scope:
 >
 > - Scanning or monitoring files for changes
 > - Checking disk space
@@ -20,6 +21,22 @@
 
 - [x] Set up local Rust development environment with Dioxus tooling
 - [x] Set up Dioxus desktop project structure
+- [x] Add local development mode support (see `BAE_LIBRARY_CONFIGURATION.md`)
+  - [x] Create `.env.example` file with all configuration options
+  - [x] Update `.gitignore` to exclude `.env` file
+  - [x] Hardwire dev storage path to `/tmp/bae-dev-storage`
+  - [ ] Implement `.env` file loading in debug builds
+  - [ ] Add local filesystem storage mode (alternative to S3)
+  - [ ] Add dev mode warning banner in UI
+  - [ ] Add compile-time check to prevent dev mode in release builds
+- [ ] Build first-launch setup wizard (see `BAE_LIBRARY_CONFIGURATION.md`)
+  - [ ] Create setup wizard UI (S3 configuration + optional Discogs)
+  - [ ] Implement S3 connection validation
+  - [ ] Add library manifest detection (`s3://bucket/bae-library.json`)
+  - [ ] Build library initialization for new libraries
+  - [ ] Implement config persistence to `~/.bae/config.yaml`
+  - [ ] Add credential storage via system keyring
+  - [ ] Add startup check to redirect to setup if unconfigured
 
 ## Core Features
 
@@ -50,12 +67,11 @@
   - [x] Implement click-through navigation from library to album details
   - [ ] Implement sorting and organization features (pending)
 - [ ] Create settings management interface
-- [ ] Implement multi-library support
-  - [ ] Design library profile concept (S3 location + credentials = one library)
-  - [ ] Add library connection/switching UI (like sign in/out)
-  - [ ] Implement library persistence (save known libraries locally)
-  - [ ] Add library switching with state reload (disconnect from current, connect to new)
-  - [ ] Support multiple library profiles with quick switching
+- [ ] Implement multi-library support (future)
+  - [ ] Add library switching UI in settings
+  - [ ] Support multiple libraries in `config.yaml`
+  - [ ] Implement library switching with database reload
+  - [ ] Add per-library database storage in `~/.bae/libraries/{id}/`
 
 ### Storage Strategy
 
@@ -81,9 +97,9 @@
 - [x] Build cloud-first storage system
   - [x] Update import flow to be cloud-first (no local ~/Music storage)
   - [x] Implement CacheManager for local chunk caching with LRU eviction
-  - [x] Implement CheckoutManager for source folder lifecycle
   - [x] Integrate cache layer into streaming pipeline
-  - [x] Add source folder path tracking to database schema
+  - [ ] Implement database sync to S3 (after imports and periodic)
+  - [ ] Add library manifest creation/detection in S3
 - [x] Build library manager
   - [x] Create library management system
   - [x] Implement album and track import workflows
@@ -210,6 +226,15 @@
   - [ ] Add Subsonic-compatible error translation
 
 
+## Future Features
+
+### Torrent Integration
+- [ ] Design torrent workflow integration
+  - [ ] Research chunk-to-torrent mapping approach
+  - [ ] Design checkout/recreation system for seeding
+  - [ ] Plan BitTorrent client integration
+  - [ ] Add torrent management UI
+
 ## Deployment & Distribution
 
 - [ ] Create installer for multiple platforms
@@ -219,17 +244,29 @@
 
 ## Current Import Process
 
-**What happens when you import an album:**
+**Initial setup (first launch):**
 
+*Production mode:*
+1. **Setup wizard** prompts for S3 configuration (required) and Discogs API key (optional)
+2. **Library detection** checks for `bae-library.json` manifest in S3 bucket
+3. **Library initialization** creates manifest if new library, or downloads database if existing
+4. **Config persistence** saves library settings to `~/.bae/config.yaml`
+
+*Development mode (`.env` file):*
+1. **Auto-initialization** loads config from `.env`, skips setup wizard
+2. **Local storage** uses `/tmp/bae-dev-storage/` directory instead of S3 (if enabled)
+3. **Insecure mode** credentials in plain text, only works in debug builds
+
+**Album import workflow:**
 1. **User selects source folder** containing album files
 2. **File scanning** identifies audio files and matches them to Discogs tracklist  
 3. **Chunking** splits files into 1MB AES-256-GCM encrypted chunks
 4. **Cloud upload** stores all chunks in S3 with hash-based partitioning (`chunks/ab/cd/chunk_uuid.enc`)
-5. **Source folder tracking** records original folder path for optional checkout recreation
-6. **Database storage** saves album/track metadata and S3 chunk locations
-7. **Import completion** - chunks exist only in S3, source folder remains for seeding/backup
+5. **Database update** saves album/track metadata and S3 chunk locations locally
+6. **Database sync** uploads SQLite database to S3 (`bae-library.db`)
+7. **Source folder** remains untouched on disk (no tracking, no management)
 
-**For streaming:**
-- Cache-first streaming: Check local cache → Download from S3 → Cache → Decrypt → Stream
+**Streaming:**
+- Cache-first: Check local cache → Download from S3 → Cache → Decrypt → Stream
 - Cache uses LRU eviction with configurable size limits (default: 1GB, 10K chunks)
-- CheckoutManager can recreate original files from cloud chunks for seeding/backup
+- Manifest statistics update every 5-10 minutes in background

@@ -13,7 +13,7 @@ bae streaming architecture combines:
 
 ### Cloud-First Chunk Storage
 
-bae uses a cloud-first storage model with local caching for streaming:
+bae uses a cloud-first storage model with local caching for streaming. For library configuration and initialization details, see [BAE_LIBRARY_CONFIGURATION.md](BAE_LIBRARY_CONFIGURATION.md).
 
 ```
 Source Folder: /Users/user/Downloads/Album/
@@ -32,11 +32,18 @@ Streaming: Cache → Decrypt → Reassemble → Stream
 **Album-Level Chunking:** bae concatenates all album files (audio, artwork, notes) into a single stream and splits into uniform encrypted chunks. This provides BitTorrent compatibility while preserving privacy through uniform chunk sizes. See `BAE_IMPORT_WORKFLOW.md` for import details and `BAE_CUE_FLAC_SPEC.md` for CUE/FLAC handling.
 
 **Database Schema:**
-- `albums` → album metadata from Discogs + source folder path
+- `albums` → album metadata from Discogs
 - `tracks` → individual track metadata  
 - `files` → original file info (filename, size, format)
 - `chunks` → encrypted album chunks (index, S3 location, checksum)
 - `file_chunks` → file-to-chunk mapping (which chunks contain which files)
+
+**Database Sync:**
+- SQLite database backed up to S3 immediately after each import
+- Manifest statistics updated every 5-10 minutes in background
+- On shutdown to capture any pending changes
+- Enables multi-device library access
+- Database stored at `s3://bucket/bae-library.db`
 
 **Chunk Format:**
 ```
@@ -51,18 +58,14 @@ Streaming: Cache → Decrypt → Reassemble → Stream
 - Encrypted with AES-256-GCM before upload
 - Source of truth for all music data
 - Scales to millions of chunks without S3 throttling
+- Database backup: `s3://bucket/bae-library.db`
+- Library manifest: `s3://bucket/bae-library.json` (indicates library presence)
 
-**Local Cache (`~/.bae/cache/`):**
-- Recently accessed chunks cached locally
-- Same encrypted format as S3
-- LRU eviction with configurable size limits
-- Transparent to streaming layer
-
-**Source Checkouts (Optional):**
-- Original folder remains on disk: `/path/to/album/`
-- Unencrypted original files for seeding/backup
-- Can be deleted after successful import
-- Can be recreated by downloading and reassembling chunks
+**Local Storage (`~/.bae/`):**
+- Cache directory: `~/.bae/cache/` (encrypted chunks, LRU eviction)
+- Database: `~/.bae/libraries/{library_id}/library.db` (SQLite, synced to S3)
+- Config file: `~/.bae/config.yaml` (library settings, S3 credentials)
+- Encryption keys stored in system keyring
 
 ## Subsonic API Implementation
 
@@ -233,7 +236,7 @@ TODO: Implement proper user management and token-based auth.
 **Cloud Storage:**
 - Chunk upload and download implemented
 - Local cache management (CacheManager with LRU eviction)
-- Checkout management (CheckoutManager for source folders)
+- Database sync to S3 (after imports and periodically)
 
 ## Future Architecture
 
@@ -321,11 +324,15 @@ Track Request → Check Local Cache → Download Missing Chunks → Decrypt → 
 - Streaming endpoint with chunk reassembly
 - Cloud chunk upload and download (S3)
 - Local chunk caching with LRU eviction (CacheManager)
-- Source folder lifecycle management (CheckoutManager)
 - Database schema for tracks/files/chunks
 - **CUE/FLAC support with precise seeking**
 - **FLAC header storage for streaming**
 - **Chunk-range streaming reduces bandwidth**
+
+### In Progress
+- Database sync to S3 (periodic backup)
+- Library initialization and manifest detection
+- First-launch setup wizard (S3 + Discogs configuration)
 
 ### Not Implemented
 - Transcoding pipeline (FLAC → MP3/OGG for bandwidth)

@@ -77,7 +77,7 @@ This fetches complete release data including tracklist for import. bae converts 
 
 ## Storage Model
 
-bae uses a cloud-first storage approach with optional local checkouts:
+bae uses a cloud-first storage approach. For library configuration and initialization details, see [BAE_LIBRARY_CONFIGURATION.md](BAE_LIBRARY_CONFIGURATION.md).
 
 ### Import Process
 1. **User selects source folder** containing album files
@@ -86,18 +86,14 @@ bae uses a cloud-first storage approach with optional local checkouts:
 4. **FLAC header extraction** stores headers in database (CUE/FLAC only)
 5. **Chunking and encryption** concatenates entire album folder (audio + artwork + notes) into single stream and splits into uniform 1MB AES-256-GCM encrypted chunks (see `BAE_STREAMING_ARCHITECTURE.md` for chunk format details)
 6. **Cloud upload** stores all chunks in S3 storage with hash-based partitioning
-7. **Local checkout** source folder remains as-is for seeding/backup (optional)
-8. **Database records** chunk locations, source folder path, and track positions (CUE/FLAC)
+7. **Database sync** immediately uploads SQLite database to S3 after successful import
+8. **Source folder** remains untouched on disk
 
 ### Storage Locations
-- **Primary storage**: S3 cloud storage (encrypted chunks)
-- **Source checkout**: Original folder on disk (unencrypted files)
-- **Streaming cache**: `~/.bae/cache/` (encrypted chunks, LRU eviction)
-
-### Checkout Management
-- Source folders can be deleted after successful import
-- bae can recreate checkouts by downloading and reassembling chunks from S3
-- Useful for torrent seeding or local backup needs
+- **Primary storage**: S3 cloud storage (encrypted chunks + SQLite database backup)
+- **Local cache**: `~/.bae/cache/` (encrypted chunks, LRU eviction)
+- **Local database**: `~/.bae/libraries/{library_id}/library.db` (SQLite, synced to S3)
+- **Library config**: `~/.bae/config.yaml` (S3 settings, library list)
 
 
 ## Implementation Requirements
@@ -110,9 +106,9 @@ bae uses a cloud-first storage approach with optional local checkouts:
 
 **Storage Components:**
 - `ChunkingService` splits files into encrypted chunks
-- `CloudStorageManager` handles S3 upload/download with hash-based partitioning
+- `CloudStorageManager` handles S3 upload/download with hash-based partitioning and database sync
 - `CacheManager` manages local chunk cache with LRU eviction
-- `CheckoutManager` handles source folder lifecycle
+- `LibraryManager` handles library initialization and manifest detection in S3
 - `CueFlacProcessor` handles CUE sheet parsing and FLAC header extraction (see `BAE_CUE_FLAC_SPEC.md`)
 
 **UI Components:**
