@@ -33,6 +33,7 @@ docker run -p 9000:9000 -p 9001:9001 \
 # Setup bae
 git clone <repository-url>
 cd bae
+./scripts/install-hooks.sh  # Install git hooks for formatting checks
 npm install  # Tailwind CSS setup
 cp .env.example .env
 # Edit .env: 
