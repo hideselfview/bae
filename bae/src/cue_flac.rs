@@ -472,19 +472,19 @@ mod tests {
     #[test]
     fn test_parse_quoted_string_with_special_chars() {
         let result = CueFlacProcessor::parse_quoted_string(
-            "\"Weird Tales: i. Electric Frost / ii. Golgotha / iii. Altar of Melektaus\"",
+            "\"Track with Sections: i. First Part / ii. Second Part / iii. Third Part\"",
         );
         assert!(result.is_ok());
         let (_, string) = result.unwrap();
         assert_eq!(
             string,
-            "Weird Tales: i. Electric Frost / ii. Golgotha / iii. Altar of Melektaus"
+            "Track with Sections: i. First Part / ii. Second Part / iii. Third Part"
         );
     }
 
     #[test]
     fn test_parse_comment_line() {
-        let input = "REM GENRE \"Doom Metal\"\n";
+        let input = "REM GENRE \"Genre Name\"\n";
         let result = CueFlacProcessor::parse_comment_line(input);
         assert!(result.is_ok());
         let (remaining, _) = result.unwrap();
@@ -493,7 +493,7 @@ mod tests {
 
     #[test]
     fn test_parse_file_line() {
-        let input = "FILE \"Electric Wizard - Dopethrone.flac\" WAVE\n";
+        let input = "FILE \"Artist Name - Album Title.flac\" WAVE\n";
         let result = CueFlacProcessor::parse_file_line(input);
         assert!(result.is_ok());
         let (remaining, _) = result.unwrap();
@@ -530,19 +530,19 @@ FILE "test.flac" WAVE
 
     #[test]
     fn test_parse_cue_sheet_with_comments() {
-        let cue_content = r#"REM GENRE "Doom Metal"
+        let cue_content = r#"REM GENRE "Genre Name"
 REM DATE 2000 / 2004
-REM COMMENT "Vinyl Rip by Necromandus"
-PERFORMER "Electric Wizard"
-TITLE "Dopethrone"
-FILE "Electric Wizard - Dopethrone.flac" WAVE
+REM COMMENT "Vinyl Rip by User Name"
+PERFORMER "Artist Name"
+TITLE "Album Title"
+FILE "Artist Name - Album Title.flac" WAVE
   TRACK 01 AUDIO
-    TITLE "Vinum Sabbathi"
-    PERFORMER "Electric Wizard"
+    TITLE "Track One"
+    PERFORMER "Artist Name"
     INDEX 01 00:00:00
   TRACK 02 AUDIO
-    TITLE "Funeralopolis"
-    PERFORMER "Electric Wizard"
+    TITLE "Track Two"
+    PERFORMER "Artist Name"
     INDEX 01 03:04:00
 "#;
 
@@ -550,17 +550,17 @@ FILE "Electric Wizard - Dopethrone.flac" WAVE
         assert!(result.is_ok());
         let (_, cue_sheet) = result.unwrap();
 
-        assert_eq!(cue_sheet.title, "Dopethrone");
-        assert_eq!(cue_sheet.performer, "Electric Wizard");
+        assert_eq!(cue_sheet.title, "Album Title");
+        assert_eq!(cue_sheet.performer, "Artist Name");
         assert_eq!(cue_sheet.tracks.len(), 2);
-        assert_eq!(cue_sheet.tracks[0].title, "Vinum Sabbathi");
-        assert_eq!(cue_sheet.tracks[1].title, "Funeralopolis");
+        assert_eq!(cue_sheet.tracks[0].title, "Track One");
+        assert_eq!(cue_sheet.tracks[1].title, "Track Two");
     }
 
     #[test]
     fn test_parse_cue_sheet_with_windows_line_endings() {
         // Windows line endings (\r\n)
-        let cue_content = "REM GENRE \"Doom Metal\"\r\nPERFORMER \"Test Artist\"\r\nTITLE \"Test Album\"\r\nFILE \"test.flac\" WAVE\r\n  TRACK 01 AUDIO\r\n    TITLE \"Track 1\"\r\n    PERFORMER \"Test Artist\"\r\n    INDEX 01 00:00:00\r\n";
+        let cue_content = "REM GENRE \"Genre Name\"\r\nPERFORMER \"Test Artist\"\r\nTITLE \"Test Album\"\r\nFILE \"test.flac\" WAVE\r\n  TRACK 01 AUDIO\r\n    TITLE \"Track 1\"\r\n    PERFORMER \"Test Artist\"\r\n    INDEX 01 00:00:00\r\n";
 
         let result = CueFlacProcessor::parse_cue_content(cue_content);
         assert!(result.is_ok());
