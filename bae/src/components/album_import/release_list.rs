@@ -1,6 +1,6 @@
 use super::{import_workflow::ImportWorkflow, release_item::ReleaseItem};
-use crate::models::DiscogsMasterReleaseVersion;
 use crate::config::use_config;
+use crate::models::DiscogsMasterReleaseVersion;
 use crate::{album_import_context::AlbumImportContext, models};
 use dioxus::prelude::*;
 

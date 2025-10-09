@@ -19,10 +19,7 @@ pub fn SearchMastersList() -> Element {
             let config = config.clone();
             spawn(async move {
                 // Fetch full master details using the search context
-                match album_import_ctx
-                    .import_master(master_id, &config)
-                    .await
-                {
+                match album_import_ctx.import_master(master_id, &config).await {
                     Ok(import_item) => {
                         selected_import_item.set(Some(import_item));
                     }

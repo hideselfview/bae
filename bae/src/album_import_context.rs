@@ -37,11 +37,7 @@ impl AlbumImportContext {
         Ok(self.client.as_ref().unwrap())
     }
 
-    pub fn search_albums(
-        &mut self,
-        query: String,
-        config: &crate::config::Config,
-    ) {
+    pub fn search_albums(&mut self, query: String, config: &crate::config::Config) {
         if query.trim().is_empty() {
             self.search_results.set(Vec::new());
             return;
