@@ -2,13 +2,13 @@
 
 **bae** is a cloud-backed music library that starts with metadata as the source of truth. Search the [Discogs database](https://www.discogs.com/developers) for albums, select the exact release you have, point bae to your music files, and it handles the rest - chunking, encrypting, uploading to S3, and making everything streamable through a Subsonic-compatible API.
 
-Your music is encrypted and stored in S3-compatible cloud storage with a local cache for fast streaming. The SQLite database syncs to S3, enabling multi-device access. Source files remain untouched on disk. Any Subsonic client (DSub, play:Sub, Clementine, Jamstash) can connect for browsing and playback.
+Your music is encrypted and stored in S3-compatible cloud storage with a local cache for fast streaming. The SQLite database also lives in S3, so your library is fully cloud-backed. Any Subsonic client (DSub, play:Sub, Clementine, Jamstash) can connect to the local API for browsing and playback.
 
 ## How it works
 
 **Setup:** On first launch, configure S3 storage (required) and optionally add a Discogs API key. The system detects existing libraries or initializes a new one. Configuration is stored in `~/.bae/config.yaml` with credentials in the system keyring.
 
-**Import:** Search Discogs for your album, select the specific release (or master if you just know the album title), then point to your source folder. bae scans the folder, matches files to the Discogs tracklist, chunks and encrypts everything, then uploads to S3. Source files remain untouched. The local SQLite database syncs to S3 after each import.
+**Import:** Search Discogs for your album, select the specific release (or master if you just know the album title), then point to your source folder. bae scans the folder, matches files to the Discogs tracklist, chunks and encrypts everything, then uploads to S3. The local SQLite database syncs to S3 after each import.
 
 **Streaming:** bae runs a Subsonic 1.16.1 API server on localhost:4533. The streaming system downloads chunks from S3 (or local cache), decrypts them, and reassembles audio in real-time. Works with any Subsonic client.
 
