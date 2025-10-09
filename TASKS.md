@@ -1,22 +1,5 @@
 # bae Implementation Progress
 
-> [!NOTE]  
-> bae has moved beyond **pre-implementation** and now has a working core system!
-> We have a functional album import workflow with encrypted chunk storage and basic Subsonic streaming.
-> **Current Architecture**: Cloud-first storage with S3 as primary, local cache for streaming, database sync to S3.
-> **Current Focus**: Building first-launch setup wizard and library initialization system.
-> Our current focus is completing the simplified cloud-first storage model while keeping these things out of scope:
->
-> - Scanning or monitoring files for changes
-> - Checking disk space
-> - Thinking about exclusive disk access
-> - Permissions
-> - Error handling/unhappy paths
-> - Health monitoring, monitoring in general, statistics
-> - Key rotation
-> - Retry mechanisms
-> - Caching, prefetching, optimization
-
 ## Setup & Initial Infrastructure
 
 - [x] Set up local Rust development environment with Dioxus tooling
