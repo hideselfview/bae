@@ -252,8 +252,8 @@
 3. **Library initialization** creates manifest if new library, or downloads database if existing
 4. **Config persistence** saves library settings to `~/.bae/config.yaml`
 
-*Development mode (`.env` file):*
-1. **Auto-initialization** loads config from `.env`, skips setup wizard
+*Development mode (`.env` file in debug builds):*
+1. **Auto-detection** finds `.env` file and loads config, skips setup wizard
 2. **Local storage** uses `/tmp/bae-dev-storage/` directory instead of S3 (if enabled)
 3. **Insecure mode** credentials in plain text, only works in debug builds
 

@@ -272,14 +272,37 @@ The S3 user/role needs these permissions:
 
 For local development, bae supports loading configuration from a `.env` file instead of `config.yaml` and system keyring. This simplifies the development workflow by avoiding S3 setup and keyring configuration.
 
+### Activation
+
+Dev mode activates when **both** conditions are met:
+1. **Debug build**: Application compiled with `cargo build` (not `--release`)
+2. **`.env` file exists**: Present in the repository root
+
+**Detection flow:**
+```
+Application startup
+    ↓
+Is this a debug build?
+    ↓ No → Use production config (config.yaml + keyring)
+    ↓ Yes
+    ↓
+Does .env file exist?
+    ↓ No → Use production config (config.yaml + keyring)
+    ↓ Yes → Load .env and use dev mode
+```
+
+**In release builds:**
+- `.env` file is completely ignored (loading code doesn't exist)
+- Only `config.yaml` + keyring are used
+- Setup wizard runs on first launch
+
 ### Configuration File
 
 **File location:** `.env` (repository root, git-ignored)
 
 **Structure:**
 ```bash
-# Development mode flag
-BAE_DEV_MODE=true
+# Dev mode activates automatically in debug builds when this file exists
 
 # S3 Configuration (optional - can use local filesystem instead)
 BAE_S3_BUCKET=my-dev-bucket
@@ -354,9 +377,7 @@ Note: `dev-storage/` is not needed in `.gitignore` since the hardwired path `/tm
 **`.env.example`** (committed to repo):
 ```bash
 # Copy this to .env and fill in your values
-
-# Development mode
-BAE_DEV_MODE=true
+# Dev mode activates automatically in debug builds when this file exists
 
 # Use local filesystem (recommended for dev)
 BAE_USE_LOCAL_STORAGE=true
@@ -386,11 +407,15 @@ BAE_DISCOGS_API_KEY=your-discogs-key-here
 2. Generate encryption key: `openssl rand -hex 32`
 3. Add encryption key to `.env`
 4. Optionally add Discogs API key
-5. Start app - it will initialize local library automatically
+5. Run in debug mode: `cargo run` or `dx serve`
+6. App detects `.env` file and activates dev mode automatically
+7. Local library initializes automatically at `/tmp/bae-dev-storage/`
 
 **Switching to production:**
-- Production build ignores `.env` and uses `config.yaml` + keyring
-- No code changes needed, just different environment
+- Production build (`cargo build --release`) ignores `.env` completely
+- Uses `config.yaml` + keyring instead
+- Setup wizard runs on first launch
+- No code changes needed, just different build profile
 
 ### Security Considerations
 
@@ -401,19 +426,34 @@ BAE_DISCOGS_API_KEY=your-discogs-key-here
 - Easy to accidentally commit secrets
 
 **Mitigations:**
-- Only enable when `BAE_DEV_MODE=true`
+- Only activates in debug builds (compile-time enforcement)
 - Show warning banner in UI when dev mode active
-- Panic if dev mode enabled in release builds
+- `.env` loading code doesn't exist in release builds
 - Clear documentation about security risks
 
 **Production safeguards:**
 ```rust
-#[cfg(not(debug_assertions))]
-fn check_dev_mode() {
-    if std::env::var("BAE_DEV_MODE").is_ok() {
-        panic!("BAE_DEV_MODE is set but this is a release build. This is insecure and not allowed.");
+// .env file loading is only compiled in debug builds
+#[cfg(debug_assertions)]
+fn load_config() {
+    // Try to load .env file if it exists
+    if dotenvy::dotenv().is_ok() {
+        // Dev mode: use environment variables
+        return load_from_env();
     }
+    // No .env: use production config
+    load_from_config_yaml()
+}
+
+#[cfg(not(debug_assertions))]
+fn load_config() {
+    // Release builds always use config.yaml + keyring
+    // .env loading code doesn't exist here
+    load_from_config_yaml()
 }
 ```
 
-This ensures dev mode can only be used in debug builds.
+This ensures:
+- Dev mode can only activate in debug builds (compile-time enforcement)
+- `.env` file loading code doesn't even exist in release builds
+- No way to accidentally use dev mode in production

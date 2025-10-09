@@ -55,7 +55,7 @@ The application also uses Tailwind CSS for styling with automatic compilation du
 
 ### Local development mode
 
-For development, bae supports loading configuration from a `.env` file instead of requiring S3 setup and keyring configuration:
+For development, bae supports loading configuration from a `.env` file instead of requiring S3 setup and keyring configuration. Dev mode activates automatically when running debug builds with a `.env` file present:
 
 ```bash
 # Copy the example file
@@ -66,11 +66,17 @@ openssl rand -hex 32
 
 # Edit .env and add your key
 # Set BAE_USE_LOCAL_STORAGE=true to use local filesystem instead of S3
+
+# Run in development mode
+cargo run
+# or with Dioxus CLI
+cd bae
+dx serve
 ```
 
-With local storage mode enabled, bae stores everything in `/tmp/bae-dev-storage/` and skips the first-launch setup wizard. See the **Local Development Mode** section in [BAE_LIBRARY_CONFIGURATION.md](BAE_LIBRARY_CONFIGURATION.md) for complete details.
+With `BAE_USE_LOCAL_STORAGE=true`, bae stores everything in `/tmp/bae-dev-storage/` and skips the first-launch setup wizard. The app automatically detects the `.env` file to activate dev mode. See the **Local Development Mode** section in [BAE_LIBRARY_CONFIGURATION.md](BAE_LIBRARY_CONFIGURATION.md) for complete details.
 
-⚠️ **Warning:** This mode is insecure and only works in debug builds. Never use for production.
+⚠️ **Warning:** This mode is insecure and only works in debug builds (`cargo run`, `dx serve`). Release builds ignore `.env` completely.
 
 ## Documentation
 
