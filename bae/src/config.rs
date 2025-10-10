@@ -11,8 +11,6 @@ pub enum ConfigError {
     Keyring(#[from] keyring::Error),
     #[error("Serialization error: {0}")]
     Serialization(String),
-    #[error("Validation error: {0}")]
-    Validation(String),
     #[error("Configuration error: {0}")]
     Config(String),
 }
