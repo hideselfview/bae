@@ -33,7 +33,7 @@ jobs:
       if: runner.os == 'Linux'
       run: |
         sudo apt-get update
-        sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+        sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libxdo-dev
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@master
@@ -98,8 +98,8 @@ jobs:
     - name: Run security audit
       working-directory: ./bae
       # Ignore RUSTSEC-2023-0071 (rsa crate): False positive - appears in Cargo.lock
-      # via sqlx-mysql transitive dependency, but sqlx-mysql is not compiled since
-      # we use default-features = false and only enable sqlite feature
+      # via sqlx-mysql transitive dependency, but sqlx-mysql is not actually compiled
+      # or linked since we only use the sqlite feature
       run: cargo audit --ignore RUSTSEC-2023-0071
 
   build-artifacts:
@@ -118,7 +118,7 @@ jobs:
       if: runner.os == 'Linux'
       run: |
         sudo apt-get update
-        sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+        sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libxdo-dev
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@master

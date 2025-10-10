@@ -5,6 +5,7 @@ fn main() {
     let output = Command::new("npx")
         .arg("tailwindcss")
         .args(["-i", "tailwind.css", "-o", "assets/tailwind.css"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output();
 
     match output {
