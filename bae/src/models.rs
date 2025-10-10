@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
+
+#[cfg(test)]
 use std::time::Duration;
 
 /// Represents an artist in the music library
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Artist {
     pub id: String,
@@ -11,6 +14,7 @@ pub struct Artist {
 }
 
 /// Represents a single track
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Track {
     pub id: String,
@@ -21,6 +25,7 @@ pub struct Track {
 }
 
 /// Represents an album in the music library
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Album {
     pub id: String,
@@ -30,17 +35,6 @@ pub struct Album {
     pub genre: Option<String>,
     pub cover_art_url: Option<String>,
     pub tracks: Vec<Track>,
-}
-
-/// Metadata for importing an album
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AlbumMetadata {
-    pub title: String,
-    pub artist_name: String,
-    pub year: Option<u32>,
-    pub genre: Option<String>,
-    pub discogs_id: Option<String>,
-    pub cover_art_url: Option<String>,
 }
 
 /// Represents a Discogs master (full data from master detail API)

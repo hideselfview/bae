@@ -1,0 +1,50 @@
+# Rust Code Quality Rules
+
+## Dead Code Handling
+
+**NEVER use `#[allow(dead_code)]`. Period.**
+
+When compiler warns about unused code, you have TWO options:
+
+### 1. Delete it (preferred)
+If the code isn't used, remove it. We don't keep unused code around.
+
+### 2. Use `#[cfg(...)]` to restrict when it exists
+
+**For test-only code:**
+```rust
+#[cfg(test)]
+pub struct TestOnlyType { ... }
+
+#[cfg(test)]
+use std::time::Duration;
+```
+
+**For feature-gated code:**
+```rust
+#[cfg(feature = "some-feature")]
+pub struct FeatureSpecificType { ... }
+```
+
+**For platform-specific code:**
+```rust
+#[cfg(target_os = "macos")]
+pub struct MacOnlyType { ... }
+```
+
+### Why `#[cfg(...)]` instead of `#[allow(dead_code)]`?
+
+- **Enforces correctness**: If you try to use test-only code in production, you get a compiler error
+- **Self-documenting**: Makes it explicit when/where code should exist
+- **Forces decisions**: When you need the code in production, you must remove the `#[cfg(test)]` and implement it properly
+- **Prevents rot**: Dead code with `#[allow(dead_code)]` can sit unused forever; `#[cfg(test)]` makes it clear it's intentionally limited
+
+### No exceptions
+
+If you find yourself wanting to use `#[allow(dead_code)]`, stop and ask:
+- Is this code actually needed? → Delete it
+- Is this code test-only? → Use `#[cfg(test)]`
+- Is this code feature-gated? → Use `#[cfg(feature = "...")]`
+
+The goal: Keep the codebase clean and force explicit decisions about what code exists in which contexts.
+

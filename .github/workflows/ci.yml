@@ -97,7 +97,10 @@ jobs:
 
     - name: Run security audit
       working-directory: ./bae
-      run: cargo audit
+      # Ignore RUSTSEC-2023-0071 (rsa crate): False positive - appears in Cargo.lock
+      # via sqlx-mysql transitive dependency, but sqlx-mysql is not compiled since
+      # we use default-features = false and only enable sqlite feature
+      run: cargo audit --ignore RUSTSEC-2023-0071
 
   build-artifacts:
     name: Build Artifacts
