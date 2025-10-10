@@ -1,25 +1,21 @@
 use super::{super::import_workflow::ImportWorkflow, item::SearchMastersItem};
-use crate::config::use_config;
 use crate::{album_import_context::AlbumImportContext, models::ImportItem};
 use dioxus::prelude::*;
 
 #[component]
 pub fn SearchMastersList() -> Element {
     let album_import_ctx = use_context::<AlbumImportContext>();
-    let selected_import_item = use_signal(|| None::<ImportItem>);
-    let config = use_config();
+    let mut selected_import_item = use_signal(|| None::<ImportItem>);
 
     let on_import_item = {
-        let selected_import_item = selected_import_item;
         let album_import_ctx = album_import_ctx.clone();
-        let config = config.clone();
+
         move |master_id: String| {
-            let mut selected_import_item = selected_import_item.clone();
             let mut album_import_ctx = album_import_ctx.clone();
-            let config = config.clone();
+
             spawn(async move {
                 // Fetch full master details using the search context
-                match album_import_ctx.import_master(master_id, &config).await {
+                match album_import_ctx.import_master(master_id).await {
                     Ok(import_item) => {
                         selected_import_item.set(Some(import_item));
                     }
@@ -31,19 +27,12 @@ pub fn SearchMastersList() -> Element {
         }
     };
 
-    let on_back_from_import = {
-        let mut selected_import_item = selected_import_item;
-        move |_| {
-            selected_import_item.set(None);
-        }
-    };
-
     // If an item is selected for import, show the import workflow
     if let Some(item) = selected_import_item.read().as_ref() {
         return rsx! {
             ImportWorkflow {
                 item: item.clone(),
-                on_back: on_back_from_import
+                on_back: move |_| selected_import_item.set(None)
             }
         };
     }

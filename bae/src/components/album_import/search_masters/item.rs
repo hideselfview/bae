@@ -78,7 +78,7 @@ pub fn SearchMastersItem(props: SearchMastersItemProps) -> Element {
                         class: "text-green-600 hover:text-green-800 underline",
                         onclick: {
                             let master_id = props.result.id.to_string();
-                            let on_import = props.on_import.clone();
+                            let on_import = props.on_import;
                             move |_| {
                                 on_import.call(master_id.clone());
                             }

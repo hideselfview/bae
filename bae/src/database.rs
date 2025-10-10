@@ -753,6 +753,7 @@ impl DbFile {
 }
 
 impl DbChunk {
+    #[allow(clippy::too_many_arguments)]
     pub fn from_album_chunk(
         chunk_id: &str,
         album_id: &str,

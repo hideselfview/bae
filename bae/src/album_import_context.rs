@@ -1,6 +1,6 @@
-use crate::discogs;
 use crate::discogs::DiscogsSearchResult;
 use crate::models::{DiscogsMasterReleaseVersion, ImportItem};
+use crate::{config::use_config, discogs};
 use dioxus::prelude::*;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -22,43 +22,40 @@ pub struct AlbumImportContext {
     pub is_importing_release: Signal<bool>,
     pub error_message: Signal<Option<String>>,
     pub current_view: Signal<SearchView>,
-    client: Option<discogs::DiscogsClient>, // Single client instance
+    client: discogs::DiscogsClient,
 }
 
 impl AlbumImportContext {
-    fn get_client(
-        &mut self,
-        config: &crate::config::Config,
-    ) -> Result<&discogs::DiscogsClient, String> {
-        if self.client.is_none() {
-            // Get API key from config (always present)
-            self.client = Some(discogs::DiscogsClient::new(config.discogs_api_key.clone()));
+    pub fn new(config: &crate::config::Config) -> Self {
+        Self {
+            search_query: use_signal(String::new),
+            search_results: use_signal(Vec::new),
+            is_searching_masters: use_signal(|| false),
+            is_loading_versions: use_signal(|| false),
+            is_importing_master: use_signal(|| false),
+            is_importing_release: use_signal(|| false),
+            error_message: use_signal(|| None),
+            current_view: use_signal(|| SearchView::SearchResults),
+            client: discogs::DiscogsClient::new(config.discogs_api_key.clone()),
         }
-        Ok(self.client.as_ref().unwrap())
     }
 
-    pub fn search_albums(&mut self, query: String, config: &crate::config::Config) {
+    pub fn search_albums(&self, query: String) {
+        let mut search_results = self.search_results;
+
         if query.trim().is_empty() {
-            self.search_results.set(Vec::new());
+            search_results.set(Vec::new());
             return;
         }
 
-        // Clone signals first to avoid borrowing conflicts
-        let mut search_results = self.search_results.clone();
-        let mut is_searching = self.is_searching_masters.clone();
-        let mut error_message = self.error_message.clone();
+        // Copy signals to avoid borrowing conflicts (Signal implements Copy)
+        let mut is_searching = self.is_searching_masters;
+        let mut error_message = self.error_message;
 
         is_searching.set(true);
         error_message.set(None);
 
-        let client = match self.get_client(config) {
-            Ok(client) => client.clone(),
-            Err(error) => {
-                error_message.set(Some(error));
-                is_searching.set(false);
-                return;
-            }
-        };
+        let client = self.client.clone();
 
         spawn(async move {
             match client.search_masters(&query, "").await {
@@ -85,18 +82,9 @@ impl AlbumImportContext {
         self.current_view.set(SearchView::SearchResults);
     }
 
-    pub async fn import_master(
-        &mut self,
-        master_id: String,
-        config: &crate::config::Config,
-    ) -> Result<ImportItem, String> {
-        let client = match self.get_client(config) {
-            Ok(client) => client.clone(),
-            Err(error) => {
-                self.error_message.set(Some(error.clone()));
-                return Err(error);
-            }
-        };
+    pub async fn import_master(&mut self, master_id: String) -> Result<ImportItem, String> {
+        self.is_importing_master.set(true);
+        self.error_message.set(None);
 
         // Find the thumbnail from search results
         let search_thumb = self
@@ -106,10 +94,7 @@ impl AlbumImportContext {
             .find(|result| result.id.to_string() == master_id)
             .and_then(|result| result.thumb.clone());
 
-        self.is_importing_master.set(true);
-        self.error_message.set(None);
-
-        let result = match client.get_master(&master_id).await {
+        let result = match self.client.get_master(&master_id).await {
             Ok(mut master) => {
                 // If master has no thumbnail but search results had one, use the search thumbnail
                 if master.thumb.is_none() && search_thumb.is_some() {
@@ -136,20 +121,11 @@ impl AlbumImportContext {
     pub async fn get_master_versions(
         &mut self,
         master_id: String,
-        config: &crate::config::Config,
     ) -> Result<Vec<DiscogsMasterReleaseVersion>, String> {
-        let client = match self.get_client(config) {
-            Ok(client) => client.clone(),
-            Err(error) => {
-                self.error_message.set(Some(error.clone()));
-                return Err(error);
-            }
-        };
-
         self.is_loading_versions.set(true);
         self.error_message.set(None);
 
-        let result = match client.get_master_versions(&master_id).await {
+        let result = match self.client.get_master_versions(&master_id).await {
             Ok(versions) => Ok(versions),
             Err(e) => {
                 let error = format!("Failed to load releases: {}", e);
@@ -166,20 +142,11 @@ impl AlbumImportContext {
         &mut self,
         release_id: String,
         master_id: String,
-        config: &crate::config::Config,
     ) -> Result<ImportItem, String> {
-        let client = match self.get_client(config) {
-            Ok(client) => client.clone(),
-            Err(error) => {
-                self.error_message.set(Some(error.clone()));
-                return Err(error);
-            }
-        };
-
         self.is_importing_release.set(true);
         self.error_message.set(None);
 
-        let result = match client.get_release(&release_id).await {
+        let result = match self.client.get_release(&release_id).await {
             Ok(mut release) => {
                 release.master_id = Some(master_id);
                 let import_item = ImportItem::Release(release);
@@ -200,17 +167,8 @@ impl AlbumImportContext {
 /// Provider component to make search context available throughout the app
 #[component]
 pub fn AlbumImportContextProvider(children: Element) -> Element {
-    let album_import_ctx = AlbumImportContext {
-        search_query: use_signal(|| String::new()),
-        search_results: use_signal(|| Vec::new()),
-        is_searching_masters: use_signal(|| false),
-        is_loading_versions: use_signal(|| false),
-        is_importing_master: use_signal(|| false),
-        is_importing_release: use_signal(|| false),
-        error_message: use_signal(|| None),
-        current_view: use_signal(|| SearchView::SearchResults),
-        client: None,
-    };
+    let config = use_config();
+    let album_import_ctx = AlbumImportContext::new(&config);
 
     use_context_provider(move || album_import_ctx);
 

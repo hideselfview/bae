@@ -8,11 +8,11 @@ use dioxus::prelude::*;
 pub fn Library() -> Element {
     println!("Library: Component rendering");
     let library_manager = use_library_manager();
-    let mut albums = use_signal(|| Vec::<DbAlbum>::new());
-    let mut filtered_albums = use_signal(|| Vec::<DbAlbum>::new());
+    let mut albums = use_signal(Vec::<DbAlbum>::new);
+    let mut filtered_albums = use_signal(Vec::<DbAlbum>::new);
     let mut loading = use_signal(|| true);
     let mut error = use_signal(|| None::<String>);
-    let mut search_query = use_signal(|| String::new());
+    let mut search_query = use_signal(String::new);
 
     // Load albums on component mount
     use_effect(move || {
@@ -39,8 +39,6 @@ pub fn Library() -> Element {
 
     // Filter albums when search query changes
     use_effect({
-        let albums = albums.clone();
-        let search_query = search_query.clone();
         move || {
             let query = search_query().to_lowercase();
             if query.is_empty() {

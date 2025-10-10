@@ -417,7 +417,7 @@ impl LibraryManager {
             // Store chunk in database
             let db_chunk = crate::database::DbChunk::from_album_chunk(
                 &chunk.id,
-                &album_id,
+                album_id,
                 chunk.chunk_index,
                 chunk.original_size,
                 chunk.encrypted_size,

@@ -145,8 +145,8 @@ impl ChunkingService {
         );
 
         // Calculate expected chunks for progress reporting
-        let expected_chunks = ((total_bytes_processed + self.config.chunk_size as u64 - 1)
-            / self.config.chunk_size as u64) as usize;
+        let expected_chunks =
+            total_bytes_processed.div_ceil(self.config.chunk_size as u64) as usize;
         println!(
             "ChunkingService: Creating {} encrypted chunks (1MB each)...",
             expected_chunks

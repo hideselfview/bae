@@ -5,7 +5,6 @@ use rfd::AsyncFileDialog;
 use std::path::Path;
 
 /// Import workflow functions using the LibraryManager
-
 /// Callback for when user selects a folder for import
 pub fn on_folder_selected(folder_path: String) -> Result<(), String> {
     let path = Path::new(&folder_path);
@@ -110,32 +109,22 @@ pub enum ImportStep {
 #[component]
 pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
     let library_manager = use_library_manager();
-    let current_step = use_signal(|| ImportStep::DataSourceSelection);
-    let selected_folder = use_signal(|| None::<String>);
-    let import_progress = use_signal(|| 0u8);
-    let folder_error = use_signal(|| None::<String>);
+    let mut current_step = use_signal(|| ImportStep::DataSourceSelection);
+    let mut import_progress = use_signal(|| 0u8);
+    let mut selected_folder = use_signal(|| None::<String>);
+    let mut folder_error = use_signal(|| None::<String>);
 
-    let on_folder_select = {
-        let mut selected_folder = selected_folder;
-        let mut folder_error = folder_error;
-        move |folder_path: String| {
-            selected_folder.set(Some(folder_path));
-            folder_error.set(None); // Clear any previous errors
-        }
+    let mut on_folder_select = move |folder_path: String| {
+        selected_folder.set(Some(folder_path));
+        folder_error.set(None); // Clear any previous errors
     };
 
-    let on_folder_error = {
-        let mut folder_error = folder_error;
-        let mut selected_folder = selected_folder;
-        move |error: String| {
-            folder_error.set(Some(error));
-            selected_folder.set(None); // Clear selection on error
-        }
+    let mut on_folder_error = move |error: String| {
+        folder_error.set(Some(error));
+        selected_folder.set(None); // Clear selection on error
     };
 
     let on_start_import = {
-        let mut current_step = current_step;
-        let mut import_progress = import_progress;
         let item = props.item.clone();
         let library_manager = library_manager.clone();
         move |_| {
@@ -183,9 +172,8 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
         }
     };
 
-    let on_back_to_search = {
-        let on_back = props.on_back.clone();
-        move |_| on_back.call(())
+    let on_back_to_search = move |_| {
+        props.on_back.call(());
     };
 
     let current_step_value = current_step.read().clone();
@@ -280,8 +268,6 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                                 button {
                                     class: "px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700",
                                     onclick: move |_| {
-                                        let mut on_folder_select = on_folder_select.clone();
-                                        let mut on_folder_error = on_folder_error.clone();
                                         spawn(async move {
                                             if let Some(folder_handle) = AsyncFileDialog::new()
                                                 .set_title("Select Music Folder")

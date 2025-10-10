@@ -9,7 +9,7 @@ use tokio::fs;
 #[derive(Error, Debug)]
 pub enum CloudStorageError {
     #[error("S3 error: {0}")]
-    S3(#[from] S3Error),
+    S3(#[from] Box<S3Error>),
     #[error("S3 SDK error: {0}")]
     SdkError(String),
     #[error("ByteStream error: {0}")]

@@ -9,7 +9,7 @@ use dioxus::prelude::*;
 pub fn AlbumDetail(album_id: String) -> Element {
     let library_manager = use_library_manager();
     let mut album = use_signal(|| None::<DbAlbum>);
-    let mut tracks = use_signal(|| Vec::<DbTrack>::new());
+    let mut tracks = use_signal(Vec::<DbTrack>::new);
     let mut loading = use_signal(|| true);
     let mut error = use_signal(|| None::<String>);
 
@@ -17,10 +17,12 @@ pub fn AlbumDetail(album_id: String) -> Element {
     use_effect({
         let album_id = album_id.clone();
         let library_manager = library_manager.clone();
+
         move || {
             spawn({
                 let album_id = album_id.clone();
                 let library_manager = library_manager.clone();
+
                 async move {
                     loading.set(true);
                     error.set(None);

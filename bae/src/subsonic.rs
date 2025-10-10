@@ -366,7 +366,7 @@ async fn load_artists(
             .to_uppercase()
             .to_string();
 
-        let artists = artist_map.entry(first_letter).or_insert_with(HashMap::new);
+        let artists = artist_map.entry(first_letter).or_default();
         *artists.entry(album.artist_name).or_insert(0) += 1;
     }
 

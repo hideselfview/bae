@@ -1,5 +1,4 @@
 use super::{import_workflow::ImportWorkflow, release_item::ReleaseItem};
-use crate::config::use_config;
 use crate::models::DiscogsMasterReleaseVersion;
 use crate::{album_import_context::AlbumImportContext, models};
 use dioxus::prelude::*;
@@ -7,29 +6,21 @@ use dioxus::prelude::*;
 #[component]
 pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandler<()>) -> Element {
     let album_import_ctx = use_context::<AlbumImportContext>();
-    let release_results = use_signal(|| Vec::<DiscogsMasterReleaseVersion>::new());
-    let selected_import_item = use_signal(|| None::<models::ImportItem>);
-    let config = use_config();
+    let mut release_results = use_signal(Vec::<DiscogsMasterReleaseVersion>::new);
+    let mut selected_import_item = use_signal(|| None::<models::ImportItem>);
 
-    let master_id_clone1 = master_id.clone();
+    let master_id_for_effect = master_id.clone();
 
     // Load releases on component mount
     use_effect({
         let album_import_ctx = album_import_ctx.clone();
-        let release_results = release_results.clone();
-        let config = config.clone();
 
         move || {
-            let master_id = master_id_clone1.clone();
-            let mut release_results = release_results.clone();
+            let master_id = master_id_for_effect.clone();
             let mut album_import_ctx = album_import_ctx.clone();
-            let config = config.clone();
 
             spawn(async move {
-                match album_import_ctx
-                    .get_master_versions(master_id, &config)
-                    .await
-                {
+                match album_import_ctx.get_master_versions(master_id).await {
                     Ok(versions) => {
                         release_results.set(versions);
                     }
@@ -42,22 +33,16 @@ pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandle
     });
 
     let on_import_release = {
-        let selected_import_item = selected_import_item;
         let master_id_for_import = master_id.clone();
         let album_import_ctx = album_import_ctx.clone();
-        let config = config.clone();
+
         move |version: DiscogsMasterReleaseVersion| {
             let release_id = version.id.to_string();
             let master_id = master_id_for_import.clone();
-            let mut selected_import_item = selected_import_item.clone();
             let mut album_import_ctx = album_import_ctx.clone();
-            let config = config.clone();
 
             spawn(async move {
-                match album_import_ctx
-                    .import_release(release_id, master_id, &config)
-                    .await
-                {
+                match album_import_ctx.import_release(release_id, master_id).await {
                     Ok(import_item) => {
                         selected_import_item.set(Some(import_item));
                     }
@@ -70,7 +55,6 @@ pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandle
     };
 
     let on_back_from_import = {
-        let mut selected_import_item = selected_import_item;
         move |_| {
             selected_import_item.set(None);
         }
