@@ -6,7 +6,7 @@ This document specifies how bae imports albums using the [Discogs API](https://w
 
 bae uses Discogs as the source of truth for album metadata. Discogs organizes music data hierarchically:
 
-- **Masters** represent abstract albums (e.g., "Abbey Road")
+- **Masters** represent abstract albums
 - **Releases** represent specific physical pressings of those albums (original UK pressing, US reissue, 180g vinyl remaster, etc.)
 
 bae's import workflow adapts to what we know about our music data. If we know which specific release our files represent, we import that release. If we only know the album title, we import the master with its canonical tracklist.
