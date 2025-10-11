@@ -127,7 +127,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
 
     let on_start_import = {
         let item = props.item.clone();
-        let library_manager = library_manager.clone();
+
         move |_| {
             if let Some(folder) = selected_folder.read().as_ref() {
                 // Start the actual import process
@@ -188,6 +188,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
     };
 
     let current_step_value = current_step.read().clone();
+
     match current_step_value {
         ImportStep::DataSourceSelection => {
             rsx! {
