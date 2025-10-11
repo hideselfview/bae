@@ -104,6 +104,7 @@ pub enum ImportStep {
     DataSourceSelection,
     ImportProgress,
     ImportComplete,
+    ImportError(String),
 }
 
 #[component]
@@ -142,31 +143,41 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                 let item_clone = item.clone();
                 let folder_clone = folder.clone();
                 let library_manager = library_manager.clone();
+
                 spawn(async move {
+                    println!("Import spawn: Starting async import task");
+
                     // Update progress to show we're starting
                     import_progress.set(10);
+                    println!("Import spawn: Set progress to 10%");
 
-                    // Perform the actual import
+                    // Perform the actual import with error catching
+                    println!("Import spawn: Calling on_import_started_async");
                     match on_import_started_async(&item_clone, &folder_clone, &library_manager)
                         .await
                     {
                         Ok(album_id) => {
+                            println!("Import spawn: Import succeeded with album_id: {}", album_id);
                             import_progress.set(100);
                             println!("Import successful! Album ID: {}", album_id);
 
                             // Complete the import
                             if let Err(e) = on_import_completed(&item_clone, &folder_clone) {
+                                println!("Import spawn: Completion callback failed: {}", e);
                                 on_import_failed(&item_clone, &folder_clone, &e);
                             } else {
+                                println!("Import spawn: Setting step to ImportComplete");
                                 current_step.set(ImportStep::ImportComplete);
                             }
                         }
                         Err(e) => {
-                            println!("Import failed: {}", e);
+                            println!("Import spawn: Import failed with error: {}", e);
                             on_import_failed(&item_clone, &folder_clone, &e);
-                            // Stay on the current step to show the error
+                            current_step.set(ImportStep::ImportError(e));
                         }
                     }
+
+                    println!("Import spawn: Async import task completed");
                 });
             }
         }
@@ -315,13 +326,15 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
             }
         }
         ImportStep::ImportProgress => {
+            let progress = *import_progress.read();
+            let progress_clamped = progress.clamp(0, 100);
             rsx! {
                 div {
                     class: "max-w-4xl mx-auto p-6",
                     div {
                         class: "text-center",
                         h1 {
-                            class: "text-2xl font-bold text-gray-900 mb-6",
+                            class: "text-2xl font-bold text-white mb-6",
                             "Importing Album"
                         }
 
@@ -333,18 +346,22 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                                     class: "w-full bg-gray-200 rounded-full h-2",
                                     div {
                                         class: "bg-blue-600 h-2 rounded-full transition-all duration-300",
-                                        style: "width: {import_progress}%"
+                                        style: "width: {progress_clamped}%"
                                     }
                                 }
                                 p {
                                     class: "mt-2 text-sm text-gray-600",
-                                    "{import_progress}% Complete"
+                                    "{progress_clamped}% Complete"
                                 }
                             }
 
                             div {
                                 class: "text-sm text-gray-500",
                                 "Processing files and adding to library..."
+                            }
+                            div {
+                                class: "text-xs text-gray-400 mt-2",
+                                "This may take several minutes for large albums."
                             }
                         }
                     }
@@ -387,6 +404,59 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                                     println!("Navigate to library");
                                 },
                                 "View Library"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        ImportStep::ImportError(error_msg) => {
+            let error_display = error_msg.clone();
+            rsx! {
+                div {
+                    class: "max-w-4xl mx-auto p-6",
+                    div {
+                        class: "text-center",
+                        div {
+                            class: "mb-6",
+                            div {
+                                class: "w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4 text-red-600 text-2xl",
+                                "✕"
+                            }
+                            h1 {
+                                class: "text-2xl font-bold text-gray-900 mb-2",
+                                "Import Failed"
+                            }
+                            p {
+                                class: "text-gray-600 mb-4",
+                                "An error occurred while importing the album."
+                            }
+                            div {
+                                class: "bg-red-50 border border-red-200 rounded-lg p-4 mb-6 text-left max-w-2xl mx-auto",
+                                p {
+                                    class: "text-sm font-medium text-red-800 mb-1",
+                                    "Error Details:"
+                                }
+                                p {
+                                    class: "text-sm text-red-700 font-mono break-words",
+                                    "{error_display}"
+                                }
+                            }
+                        }
+
+                        div {
+                            class: "space-x-4",
+                            button {
+                                class: "px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700",
+                                onclick: move |_| {
+                                    current_step.set(ImportStep::DataSourceSelection);
+                                },
+                                "Try Again"
+                            }
+                            button {
+                                class: "px-6 py-2 bg-gray-600 text-white rounded hover:bg-gray-700",
+                                onclick: on_back_to_search,
+                                "Back to Search"
                             }
                         }
                     }

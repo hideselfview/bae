@@ -172,8 +172,8 @@ impl ChunkingService {
             chunks.push(chunk);
             current_chunk_index += 1;
 
-            // Progress reporting every 100 chunks
-            if current_chunk_index % 100 == 0 {
+            // Progress reporting every 10 chunks
+            if current_chunk_index % 10 == 0 {
                 let progress = (current_chunk_index as f64 / expected_chunks as f64) * 100.0;
                 println!(
                     "ChunkingService: Progress: {}/{} chunks ({:.1}%)",

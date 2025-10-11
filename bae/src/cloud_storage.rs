@@ -74,6 +74,14 @@ pub struct S3CloudStorage {
 impl S3CloudStorage {
     /// Create a new S3 cloud storage client
     pub async fn new(config: S3Config) -> Result<Self, CloudStorageError> {
+        Self::new_with_bucket_creation(config, true).await
+    }
+
+    /// Create a new S3 cloud storage client with optional bucket creation
+    pub async fn new_with_bucket_creation(
+        config: S3Config,
+        create_bucket: bool,
+    ) -> Result<Self, CloudStorageError> {
         // Create AWS credentials
         let credentials = Credentials::new(
             config.access_key_id,
@@ -94,11 +102,43 @@ impl S3CloudStorage {
         }
 
         let aws_config = aws_config_builder.load().await;
-        let client = Client::new(&aws_config);
+
+        // Force path-style addressing for S3-compatible services (required for localhost/MinIO)
+        let s3_config = aws_sdk_s3::config::Builder::from(&aws_config)
+            .force_path_style(true)
+            .build();
+
+        let client = Client::from_conf(s3_config);
+
+        let bucket_name = config.bucket_name.clone();
+
+        // Create bucket if it doesn't exist (useful for dev/testing)
+        if create_bucket {
+            match client.head_bucket().bucket(&bucket_name).send().await {
+                Ok(_) => {
+                    println!("S3CloudStorage: Bucket '{}' already exists", bucket_name);
+                }
+                Err(_) => {
+                    println!("S3CloudStorage: Creating bucket '{}'", bucket_name);
+                    client
+                        .create_bucket()
+                        .bucket(&bucket_name)
+                        .send()
+                        .await
+                        .map_err(|e| {
+                            CloudStorageError::SdkError(format!("Create bucket failed: {}", e))
+                        })?;
+                    println!(
+                        "S3CloudStorage: Bucket '{}' created successfully",
+                        bucket_name
+                    );
+                }
+            }
+        }
 
         Ok(S3CloudStorage {
             client,
-            bucket_name: config.bucket_name,
+            bucket_name,
         })
     }
 
