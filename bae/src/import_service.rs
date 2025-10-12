@@ -261,183 +261,184 @@ fn find_audio_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
 
 /// Import service that runs on a dedicated thread
 pub struct ImportService {
-    request_tx: Sender<ImportRequest>,
-    progress_rx: std::sync::Arc<std::sync::Mutex<Receiver<ImportProgress>>>,
+    library_manager: crate::library_context::SharedLibraryManager,
 }
 
 impl ImportService {
-    /// Start the import service on a dedicated thread
-    pub fn start(library_manager: crate::library_context::SharedLibraryManager) -> Self {
+    /// Create a new import service
+    pub fn new(library_manager: crate::library_context::SharedLibraryManager) -> Self {
+        ImportService { library_manager }
+    }
+
+    /// Start the import service thread and return handle
+    pub fn start(self) -> ImportServiceHandle {
         let (request_tx, request_rx) = mpsc::channel();
         let (progress_tx, progress_rx) = mpsc::channel();
         let progress_rx = Arc::new(std::sync::Mutex::new(progress_rx));
 
         // Spawn thread and let it run detached (no graceful shutdown yet - see TASKS.md)
         let _ = thread::spawn(move || {
-            println!("ImportService: Thread started");
-
-            // Create a tokio runtime for async operations (S3 uploads)
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("Failed to create tokio runtime");
-
-            // Process import requests
-            loop {
-                match request_rx.recv() {
-                    Ok(ImportRequest::ImportAlbum { item, folder }) => {
-                        println!(
-                            "ImportService: Received import request for {}",
-                            item.title()
-                        );
-
-                        // Run the import on this thread
-                        let result = runtime.block_on(Self::handle_import(
-                            library_manager.get(),
-                            &item,
-                            &folder,
-                            &progress_tx,
-                        ));
-
-                        if let Err(e) = result {
-                            println!("ImportService: Import failed: {}", e);
-                        }
-                    }
-                    Ok(ImportRequest::Shutdown) => {
-                        println!("ImportService: Shutdown requested");
-                        break;
-                    }
-                    Err(e) => {
-                        println!("ImportService: Channel error: {}", e);
-                        break;
-                    }
-                }
-            }
-
-            println!("ImportService: Thread exiting");
+            run_import_worker(self.library_manager, request_rx, progress_tx);
         });
 
-        ImportService {
+        ImportServiceHandle {
             request_tx,
             progress_rx,
         }
     }
+}
 
-    /// Get a handle for sending requests and receiving progress
-    pub fn handle(&self) -> ImportServiceHandle {
-        ImportServiceHandle {
-            request_tx: self.request_tx.clone(),
-            progress_rx: self.progress_rx.clone(),
-        }
-    }
+/// Run the import worker thread loop
+fn run_import_worker(
+    library_manager: crate::library_context::SharedLibraryManager,
+    request_rx: Receiver<ImportRequest>,
+    progress_tx: Sender<ImportProgress>,
+) {
+    println!("ImportService: Thread started");
 
-    /// Handle a single import request
-    async fn handle_import(
-        library_manager: &crate::library::LibraryManager,
-        item: &ImportItem,
-        folder: &Path,
-        progress_tx: &Sender<ImportProgress>,
-    ) -> Result<(), String> {
-        println!(
-            "ImportService: Starting import for {} from {}",
-            item.title(),
-            folder.display()
-        );
+    // Create a tokio runtime for async operations (S3 uploads)
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("Failed to create tokio runtime");
 
-        // Extract artist and create records
-        let artist_name = extract_artist_name(item);
-        let album = create_album_record(
-            item,
-            &artist_name,
-            Some(folder.to_string_lossy().to_string()),
-        )?;
+    // Get library manager reference (bound for this thread's lifetime)
+    let library_manager = library_manager.get();
 
-        let album_id = album.id.clone();
-        let album_title = album.title.clone();
+    // Process import requests
+    loop {
+        match request_rx.recv() {
+            Ok(ImportRequest::ImportAlbum { item, folder }) => {
+                println!(
+                    "ImportService: Received import request for {}",
+                    item.title()
+                );
 
-        let tracks = create_track_records(item, &album_id)?;
+                let result =
+                    runtime.block_on(handle_import(library_manager, &item, &folder, &progress_tx));
 
-        // Send started progress
-        let _ = progress_tx.send(ImportProgress::Started {
-            album_id: album_id.clone(),
-            album_title: album_title.clone(),
-        });
-
-        // Insert album + tracks in transaction (with status = 'importing')
-        library_manager
-            .insert_album_with_tracks(&album, &tracks)
-            .await
-            .map_err(|e| format!("Database error: {}", e))?;
-
-        println!(
-            "ImportService: Inserted album and {} tracks into database",
-            tracks.len()
-        );
-
-        // Map files to tracks
-        let file_mappings = map_files_to_tracks(folder, &tracks).await?;
-
-        // Process and upload files with progress reporting
-        let progress_tx_clone = progress_tx.clone();
-        let album_id_clone = album_id.clone();
-        let progress_callback = Box::new(
-            move |current, total, phase: crate::library::ProcessingPhase| {
-                let percent = ((current as f64 / total as f64) * 100.0) as u8;
-                let progress_update = match phase {
-                    crate::library::ProcessingPhase::Processing => {
-                        ImportProgress::ProcessingProgress {
-                            album_id: album_id_clone.clone(),
-                            current,
-                            total,
-                            percent,
-                        }
-                    }
-                };
-                let _ = progress_tx_clone.send(progress_update);
-            },
-        );
-
-        library_manager
-            .process_audio_files_with_progress(&file_mappings, &album_id, Some(progress_callback))
-            .await
-            .map_err(|e| {
-                // Mark as failed
-                let _ = tokio::runtime::Handle::current()
-                    .block_on(library_manager.mark_album_failed(&album_id));
-                for track in &tracks {
-                    let _ = tokio::runtime::Handle::current()
-                        .block_on(library_manager.mark_track_failed(&track.id));
+                if let Err(e) = result {
+                    println!("ImportService: Import failed: {}", e);
                 }
-                format!("Import failed: {}", e)
-            })?;
-
-        // Mark all tracks as complete
-        for track in &tracks {
-            library_manager
-                .mark_track_complete(&track.id)
-                .await
-                .map_err(|e| format!("Failed to mark track complete: {}", e))?;
-
-            let _ = progress_tx.send(ImportProgress::TrackComplete {
-                album_id: album_id.clone(),
-                track_id: track.id.clone(),
-            });
+            }
+            Ok(ImportRequest::Shutdown) => {
+                println!("ImportService: Shutdown requested");
+                break;
+            }
+            Err(e) => {
+                println!("ImportService: Channel error: {}", e);
+                break;
+            }
         }
-
-        // Mark album as complete
-        library_manager
-            .mark_album_complete(&album_id)
-            .await
-            .map_err(|e| format!("Failed to mark album complete: {}", e))?;
-
-        let _ = progress_tx.send(ImportProgress::Complete {
-            album_id: album_id.clone(),
-        });
-
-        println!(
-            "ImportService: Import completed successfully for {}",
-            album_title
-        );
-        Ok(())
     }
+
+    println!("ImportService: Thread exiting");
+}
+
+/// Handle a single import request
+async fn handle_import(
+    library_manager: &crate::library::LibraryManager,
+    item: &ImportItem,
+    folder: &Path,
+    progress_tx: &Sender<ImportProgress>,
+) -> Result<(), String> {
+    println!(
+        "ImportService: Starting import for {} from {}",
+        item.title(),
+        folder.display()
+    );
+
+    // Extract artist and create records
+    let artist_name = extract_artist_name(item);
+    let album = create_album_record(
+        item,
+        &artist_name,
+        Some(folder.to_string_lossy().to_string()),
+    )?;
+
+    let album_id = album.id.clone();
+    let album_title = album.title.clone();
+
+    let tracks = create_track_records(item, &album_id)?;
+
+    // Send started progress
+    let _ = progress_tx.send(ImportProgress::Started {
+        album_id: album_id.clone(),
+        album_title: album_title.clone(),
+    });
+
+    // Insert album + tracks in transaction (with status = 'importing')
+    library_manager
+        .insert_album_with_tracks(&album, &tracks)
+        .await
+        .map_err(|e| format!("Database error: {}", e))?;
+
+    println!(
+        "ImportService: Inserted album and {} tracks into database",
+        tracks.len()
+    );
+
+    // Map files to tracks
+    let file_mappings = map_files_to_tracks(folder, &tracks).await?;
+
+    // Process and upload files with progress reporting
+    let progress_tx_clone = progress_tx.clone();
+    let album_id_clone = album_id.clone();
+    let progress_callback = Box::new(
+        move |current, total, phase: crate::library::ProcessingPhase| {
+            let percent = ((current as f64 / total as f64) * 100.0) as u8;
+            let progress_update = match phase {
+                crate::library::ProcessingPhase::Processing => ImportProgress::ProcessingProgress {
+                    album_id: album_id_clone.clone(),
+                    current,
+                    total,
+                    percent,
+                },
+            };
+            let _ = progress_tx_clone.send(progress_update);
+        },
+    );
+
+    library_manager
+        .process_audio_files_with_progress(&file_mappings, &album_id, Some(progress_callback))
+        .await
+        .map_err(|e| {
+            // Mark as failed
+            let _ = tokio::runtime::Handle::current()
+                .block_on(library_manager.mark_album_failed(&album_id));
+            for track in &tracks {
+                let _ = tokio::runtime::Handle::current()
+                    .block_on(library_manager.mark_track_failed(&track.id));
+            }
+            format!("Import failed: {}", e)
+        })?;
+
+    // Mark all tracks as complete
+    for track in &tracks {
+        library_manager
+            .mark_track_complete(&track.id)
+            .await
+            .map_err(|e| format!("Failed to mark track complete: {}", e))?;
+
+        let _ = progress_tx.send(ImportProgress::TrackComplete {
+            album_id: album_id.clone(),
+            track_id: track.id.clone(),
+        });
+    }
+
+    // Mark album as complete
+    library_manager
+        .mark_album_complete(&album_id)
+        .await
+        .map_err(|e| format!("Failed to mark album complete: {}", e))?;
+
+    let _ = progress_tx.send(ImportProgress::Complete {
+        album_id: album_id.clone(),
+    });
+
+    println!(
+        "ImportService: Import completed successfully for {}",
+        album_title
+    );
+    Ok(())
 }

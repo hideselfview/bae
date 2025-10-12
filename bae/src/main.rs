@@ -157,8 +157,8 @@ fn main() {
     );
 
     // Create import service on dedicated thread
-    let import_service = import_service::ImportService::start(library_manager.clone());
-    let import_service_handle = import_service.handle();
+    let import_service = import_service::ImportService::new(library_manager.clone());
+    let import_service_handle = import_service.start();
 
     // Create root application context
     let app_context = AppContext {
