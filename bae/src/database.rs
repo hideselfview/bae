@@ -21,6 +21,7 @@ pub struct DbAlbum {
     pub discogs_release_id: Option<String>,
     pub cover_art_url: Option<String>,
     pub source_folder_path: Option<String>, // Path to original folder for checkout
+    pub import_status: String,              // "importing", "complete", "failed"
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -35,6 +36,7 @@ pub struct DbTrack {
 
     pub artist_name: Option<String>, // Can differ from album artist
     pub discogs_position: Option<String>, // e.g., "A1", "1", "1-1"
+    pub import_status: String,       // "importing", "complete", "failed"
     pub created_at: DateTime<Utc>,
 }
 
@@ -96,7 +98,7 @@ pub struct DbTrackPosition {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Database {
     pool: SqlitePool,
 }
@@ -128,6 +130,7 @@ impl Database {
                 discogs_release_id TEXT,
                 cover_art_url TEXT,
                 source_folder_path TEXT,
+                import_status TEXT NOT NULL DEFAULT 'importing',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
@@ -147,6 +150,7 @@ impl Database {
                 duration_ms INTEGER,
                 artist_name TEXT,
                 discogs_position TEXT,
+                import_status TEXT NOT NULL DEFAULT 'importing',
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (album_id) REFERENCES albums (id) ON DELETE CASCADE
             )
@@ -297,8 +301,8 @@ impl Database {
             r#"
             INSERT INTO albums (
                 id, title, artist_name, year, discogs_master_id, 
-                discogs_release_id, cover_art_url, source_folder_path, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                discogs_release_id, cover_art_url, source_folder_path, import_status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&album.id)
@@ -309,6 +313,7 @@ impl Database {
         .bind(&album.discogs_release_id)
         .bind(&album.cover_art_url)
         .bind(&album.source_folder_path)
+        .bind(&album.import_status)
         .bind(album.created_at.to_rfc3339())
         .bind(album.updated_at.to_rfc3339())
         .execute(&self.pool)
@@ -323,8 +328,8 @@ impl Database {
             r#"
             INSERT INTO tracks (
                 id, album_id, title, track_number, duration_ms, 
-                artist_name, discogs_position, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                artist_name, discogs_position, import_status, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&track.id)
@@ -334,6 +339,7 @@ impl Database {
         .bind(track.duration_ms)
         .bind(&track.artist_name)
         .bind(&track.discogs_position)
+        .bind(&track.import_status)
         .bind(track.created_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
@@ -341,11 +347,100 @@ impl Database {
         Ok(())
     }
 
-    /// Get all albums
-    pub async fn get_albums(&self) -> Result<Vec<DbAlbum>, sqlx::Error> {
-        let rows = sqlx::query("SELECT * FROM albums ORDER BY artist_name, title")
-            .fetch_all(&self.pool)
+    /// Insert album and tracks in a single transaction
+    pub async fn insert_album_with_tracks(
+        &self,
+        album: &DbAlbum,
+        tracks: &[DbTrack],
+    ) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+
+        // Insert album
+        sqlx::query(
+            r#"
+            INSERT INTO albums (
+                id, title, artist_name, year, discogs_master_id, 
+                discogs_release_id, cover_art_url, source_folder_path, import_status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&album.id)
+        .bind(&album.title)
+        .bind(&album.artist_name)
+        .bind(album.year)
+        .bind(&album.discogs_master_id)
+        .bind(&album.discogs_release_id)
+        .bind(&album.cover_art_url)
+        .bind(&album.source_folder_path)
+        .bind(&album.import_status)
+        .bind(album.created_at.to_rfc3339())
+        .bind(album.updated_at.to_rfc3339())
+        .execute(&mut *tx)
+        .await?;
+
+        // Insert all tracks
+        for track in tracks {
+            sqlx::query(
+                r#"
+                INSERT INTO tracks (
+                    id, album_id, title, track_number, duration_ms, 
+                    artist_name, discogs_position, import_status, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(&track.id)
+            .bind(&track.album_id)
+            .bind(&track.title)
+            .bind(track.track_number)
+            .bind(track.duration_ms)
+            .bind(&track.artist_name)
+            .bind(&track.discogs_position)
+            .bind(&track.import_status)
+            .bind(track.created_at.to_rfc3339())
+            .execute(&mut *tx)
             .await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Update track import status
+    pub async fn update_track_status(
+        &self,
+        track_id: &str,
+        status: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE tracks SET import_status = ? WHERE id = ?")
+            .bind(status)
+            .bind(track_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Update album import status
+    pub async fn update_album_status(
+        &self,
+        album_id: &str,
+        status: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE albums SET import_status = ?, updated_at = ? WHERE id = ?")
+            .bind(status)
+            .bind(Utc::now().to_rfc3339())
+            .bind(album_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Get all albums (only completed imports)
+    pub async fn get_albums(&self) -> Result<Vec<DbAlbum>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT * FROM albums WHERE import_status = 'complete' ORDER BY artist_name, title",
+        )
+        .fetch_all(&self.pool)
+        .await?;
 
         let mut albums = Vec::new();
         for row in rows {
@@ -358,6 +453,7 @@ impl Database {
                 discogs_release_id: row.get("discogs_release_id"),
                 cover_art_url: row.get("cover_art_url"),
                 source_folder_path: row.get("source_folder_path"),
+                import_status: row.get("import_status"),
                 created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
                     .unwrap()
                     .with_timezone(&Utc),
@@ -387,6 +483,7 @@ impl Database {
                 duration_ms: row.get("duration_ms"),
                 artist_name: row.get("artist_name"),
                 discogs_position: row.get("discogs_position"),
+                import_status: row.get("import_status"),
                 created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
                     .unwrap()
                     .with_timezone(&Utc),
@@ -671,6 +768,7 @@ impl DbAlbum {
             discogs_release_id: None,
             cover_art_url: master.thumb.clone(),
             source_folder_path,
+            import_status: "importing".to_string(),
             created_at: now,
             updated_at: now,
         }
@@ -691,6 +789,7 @@ impl DbAlbum {
             discogs_release_id: Some(release.id.clone()),
             cover_art_url: release.thumb.clone(),
             source_folder_path,
+            import_status: "importing".to_string(),
             created_at: now,
             updated_at: now,
         }
@@ -711,6 +810,7 @@ impl DbTrack {
             duration_ms: None, // Will be filled in during track mapping
             artist_name: None, // Will be filled in during track mapping
             discogs_position: Some(discogs_track.position.clone()),
+            import_status: "importing".to_string(),
             created_at: Utc::now(),
         }
     }

@@ -12,6 +12,7 @@ mod cue_flac;
 mod database;
 mod discogs;
 mod encryption;
+mod import_service;
 mod library;
 mod library_context;
 mod models;
@@ -27,6 +28,7 @@ use subsonic::create_router;
 pub struct AppContext {
     pub library_manager: SharedLibraryManager,
     pub config: config::Config,
+    pub import_service_handle: import_service::ImportServiceHandle,
 }
 
 #[derive(Debug, Clone, Routable, PartialEq)]
@@ -144,13 +146,27 @@ fn main() {
     let database = rt.block_on(create_database(&config));
 
     // Build library manager with all injected dependencies
-    let library_manager =
-        create_library_manager(database, encryption_service.clone(), cloud_storage.clone());
+    let library_manager = create_library_manager(
+        database.clone(),
+        encryption_service.clone(),
+        cloud_storage.clone(),
+    );
+
+    // Create import service on dedicated thread
+    let chunking_service_for_import = chunking::ChunkingService::new(encryption_service.clone())
+        .expect("Failed to create chunking service for import");
+    let import_service = import_service::ImportService::start(
+        database.clone(),
+        chunking_service_for_import,
+        cloud_storage.clone(),
+    );
+    let import_service_handle = import_service.handle();
 
     // Create root application context
     let app_context = AppContext {
         library_manager: library_manager.clone(),
         config: config.clone(),
+        import_service_handle,
     };
 
     // Start Subsonic API server in background thread

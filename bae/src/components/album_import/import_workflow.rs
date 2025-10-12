@@ -1,8 +1,9 @@
-use crate::library_context::use_library_manager;
+use crate::import_service::{ImportProgress, ImportRequest};
+use crate::library_context::use_import_service;
 use crate::models::ImportItem;
 use dioxus::prelude::*;
 use rfd::AsyncFileDialog;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Import workflow functions using the LibraryManager
 /// Callback for when user selects a folder for import
@@ -43,56 +44,6 @@ pub fn on_folder_selected(folder_path: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Callback for when import process starts - now uses real LibraryManager
-pub async fn on_import_started_async(
-    item: &ImportItem,
-    folder_path: &str,
-    library_manager: &crate::library_context::SharedLibraryManager,
-) -> Result<String, String> {
-    println!(
-        "Starting real import for {} from folder: {}",
-        item.title(),
-        folder_path
-    );
-
-    // Import the album
-    let album_id = library_manager
-        .get()
-        .import_album(item, Path::new(folder_path))
-        .await
-        .map_err(|e| format!("Import failed: {}", e))?;
-
-    println!("Successfully imported album with ID: {}", album_id);
-    Ok(album_id)
-}
-
-/// Legacy sync wrapper for the import process
-pub fn on_import_started(item: &ImportItem, folder_path: &str) -> Result<(), String> {
-    println!("Import started for {} from {}", item.title(), folder_path);
-    // The actual async import will be handled in the UI component
-    Ok(())
-}
-
-/// Callback for when import process completes
-pub fn on_import_completed(item: &ImportItem, folder_path: &str) -> Result<(), String> {
-    println!(
-        "Import completed for {} from folder: {}",
-        item.title(),
-        folder_path
-    );
-    Ok(())
-}
-
-/// Callback for when import process fails
-pub fn on_import_failed(item: &ImportItem, folder_path: &str, error: &str) {
-    println!(
-        "Import failed for {} from folder: {} - Error: {}",
-        item.title(),
-        folder_path,
-        error
-    );
-}
-
 #[derive(Props, PartialEq, Clone)]
 pub struct ImportWorkflowProps {
     pub item: ImportItem,
@@ -109,7 +60,7 @@ pub enum ImportStep {
 
 #[component]
 pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
-    let library_manager = use_library_manager();
+    let import_service = use_import_service();
     let mut current_step = use_signal(|| ImportStep::DataSourceSelection);
     let mut import_progress = use_signal(|| 0u8);
     let mut selected_folder = use_signal(|| None::<String>);
@@ -125,60 +76,75 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
         selected_folder.set(None); // Clear selection on error
     };
 
-    let on_start_import = {
-        let item = props.item.clone();
-
-        move |_| {
-            if let Some(folder) = selected_folder.read().as_ref() {
-                // Start the actual import process
-                if let Err(e) = on_import_started(&item, folder) {
-                    on_import_failed(&item, folder, &e);
-                    return;
-                }
-
-                current_step.set(ImportStep::ImportProgress);
-                import_progress.set(0);
-
-                // Start real import process
-                let item_clone = item.clone();
-                let folder_clone = folder.clone();
-                let library_manager = library_manager.clone();
-
-                spawn(async move {
-                    println!("Import spawn: Starting async import task");
-
-                    // Update progress to show we're starting
-                    import_progress.set(10);
-                    println!("Import spawn: Set progress to 10%");
-
-                    // Perform the actual import with error catching
-                    println!("Import spawn: Calling on_import_started_async");
-                    match on_import_started_async(&item_clone, &folder_clone, &library_manager)
-                        .await
-                    {
-                        Ok(album_id) => {
-                            println!("Import spawn: Import succeeded with album_id: {}", album_id);
-                            import_progress.set(100);
-                            println!("Import successful! Album ID: {}", album_id);
-
-                            // Complete the import
-                            if let Err(e) = on_import_completed(&item_clone, &folder_clone) {
-                                println!("Import spawn: Completion callback failed: {}", e);
-                                on_import_failed(&item_clone, &folder_clone, &e);
-                            } else {
-                                println!("Import spawn: Setting step to ImportComplete");
-                                current_step.set(ImportStep::ImportComplete);
+    // Poll for progress updates from import service
+    let import_service_for_polling = import_service.clone();
+    use_effect(move || {
+        if *current_step.read() == ImportStep::ImportProgress {
+            let import_service_clone = import_service_for_polling.clone();
+            spawn(async move {
+                loop {
+                    // Check for progress updates
+                    if let Some(progress) = import_service_clone.try_recv_progress() {
+                        match progress {
+                            ImportProgress::Started { album_title, .. } => {
+                                println!("Import started: {}", album_title);
+                                import_progress.set(5);
                             }
-                        }
-                        Err(e) => {
-                            println!("Import spawn: Import failed with error: {}", e);
-                            on_import_failed(&item_clone, &folder_clone, &e);
-                            current_step.set(ImportStep::ImportError(e));
+                            ImportProgress::ChunkingProgress { percent, .. } => {
+                                // Map chunking to 0-50% of progress bar
+                                import_progress.set(percent / 2);
+                            }
+                            ImportProgress::UploadProgress { percent, .. } => {
+                                // Map upload to 50-100% of progress bar
+                                import_progress.set(50 + percent / 2);
+                            }
+                            ImportProgress::TrackComplete { .. } => {
+                                println!("Track completed");
+                            }
+                            ImportProgress::Complete { album_id } => {
+                                println!("Import completed: {}", album_id);
+                                import_progress.set(100);
+                                current_step.set(ImportStep::ImportComplete);
+                                break;
+                            }
+                            ImportProgress::Failed { error, .. } => {
+                                println!("Import failed: {}", error);
+                                current_step.set(ImportStep::ImportError(error));
+                                break;
+                            }
                         }
                     }
 
-                    println!("Import spawn: Async import task completed");
-                });
+                    // Sleep briefly before next poll
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                }
+            });
+        }
+    });
+
+    let on_start_import = {
+        let item = props.item.clone();
+        let import_service = import_service.clone();
+
+        move |_| {
+            if let Some(folder) = selected_folder.read().as_ref() {
+                println!("Import started for {} from {}", item.title(), folder);
+
+                // Send import request to service
+                let request = ImportRequest::ImportAlbum {
+                    item: item.clone(),
+                    folder: PathBuf::from(folder),
+                };
+
+                if let Err(e) = import_service.send_request(request) {
+                    println!("Failed to send import request: {}", e);
+                    current_step.set(ImportStep::ImportError(e));
+                    return;
+                }
+
+                // Transition to progress screen
+                current_step.set(ImportStep::ImportProgress);
+                import_progress.set(0);
             }
         }
     };

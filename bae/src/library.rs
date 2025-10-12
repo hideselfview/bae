@@ -117,7 +117,7 @@ impl LibraryManager {
     }
 
     /// Create album database record from Discogs data
-    fn create_album_record(
+    pub fn create_album_record(
         &self,
         import_item: &ImportItem,
         artist_name: &str,
@@ -136,7 +136,7 @@ impl LibraryManager {
     }
 
     /// Create track database records from Discogs tracklist
-    fn create_track_records(
+    pub fn create_track_records(
         &self,
         import_item: &ImportItem,
         album_id: &str,
@@ -169,7 +169,7 @@ impl LibraryManager {
 
     /// Map audio files in source folder to tracks
     /// This is where AI will eventually be used for smart matching
-    async fn map_files_to_tracks(
+    pub async fn map_files_to_tracks(
         &self,
         source_folder: &Path,
         tracks: &[DbTrack],
@@ -332,7 +332,7 @@ impl LibraryManager {
     }
 
     /// Process audio files using album-level chunking - chunk entire album folder, encrypt, and store metadata
-    async fn process_audio_files(
+    pub async fn process_audio_files(
         &self,
         mappings: &[FileMapping],
         album_id: &str,
@@ -702,7 +702,7 @@ impl LibraryManager {
 
 /// Represents a mapping between a track and its source audio file
 #[derive(Debug, Clone)]
-struct FileMapping {
-    track_id: String,
-    source_path: PathBuf,
+pub struct FileMapping {
+    pub track_id: String,
+    pub source_path: PathBuf,
 }

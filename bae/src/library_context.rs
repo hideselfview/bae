@@ -34,3 +34,10 @@ pub fn use_library_manager() -> SharedLibraryManager {
     let app_context = use_context::<crate::AppContext>();
     app_context.library_manager
 }
+
+/// Hook to access the import service handle from components
+/// The import service handle is provided via AppContext in main.rs
+pub fn use_import_service() -> crate::import_service::ImportServiceHandle {
+    let app_context = use_context::<crate::AppContext>();
+    app_context.import_service_handle.clone()
+}
