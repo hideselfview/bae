@@ -1,4 +1,3 @@
-use crate::database::Database;
 use crate::models::ImportItem;
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -74,10 +73,7 @@ pub struct ImportService {
 
 impl ImportService {
     /// Start the import service on a dedicated thread
-    pub fn start(
-        library_manager: crate::library_context::SharedLibraryManager,
-        database: Database,
-    ) -> Self {
+    pub fn start(library_manager: crate::library_context::SharedLibraryManager) -> Self {
         let (request_tx, request_rx) = mpsc::channel();
         let (progress_tx, progress_rx) = mpsc::channel();
         let progress_rx = Arc::new(std::sync::Mutex::new(progress_rx));
@@ -104,7 +100,6 @@ impl ImportService {
                         // Run the import on this thread
                         let result = runtime.block_on(Self::handle_import(
                             library_manager.get(),
-                            &database,
                             &item,
                             &folder,
                             &progress_tx,
@@ -145,7 +140,6 @@ impl ImportService {
     /// Handle a single import request
     async fn handle_import(
         library_manager: &crate::library::LibraryManager,
-        database: &Database,
         item: &ImportItem,
         folder: &Path,
         progress_tx: &Sender<ImportProgress>,
@@ -179,7 +173,7 @@ impl ImportService {
         });
 
         // Insert album + tracks in transaction (with status = 'importing')
-        database
+        library_manager
             .insert_album_with_tracks(&album, &tracks)
             .await
             .map_err(|e| format!("Database error: {}", e))?;
@@ -224,17 +218,17 @@ impl ImportService {
             .map_err(|e| {
                 // Mark as failed
                 let _ = tokio::runtime::Handle::current()
-                    .block_on(database.update_album_status(&album_id, "failed"));
+                    .block_on(library_manager.update_album_status(&album_id, "failed"));
                 for track in &tracks {
                     let _ = tokio::runtime::Handle::current()
-                        .block_on(database.update_track_status(&track.id, "failed"));
+                        .block_on(library_manager.update_track_status(&track.id, "failed"));
                 }
                 format!("Import failed: {}", e)
             })?;
 
         // Mark all tracks as complete
         for track in &tracks {
-            database
+            library_manager
                 .update_track_status(&track.id, "complete")
                 .await
                 .map_err(|e| format!("Failed to update track status: {}", e))?;
@@ -246,7 +240,7 @@ impl ImportService {
         }
 
         // Mark album as complete
-        database
+        library_manager
             .update_album_status(&album_id, "complete")
             .await
             .map_err(|e| format!("Failed to update album status: {}", e))?;

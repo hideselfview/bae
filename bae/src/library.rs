@@ -138,6 +138,38 @@ impl LibraryManager {
         Ok(album)
     }
 
+    /// Insert album and tracks into database in a transaction
+    pub async fn insert_album_with_tracks(
+        &self,
+        album: &DbAlbum,
+        tracks: &[DbTrack],
+    ) -> Result<(), LibraryError> {
+        self.database
+            .insert_album_with_tracks(album, tracks)
+            .await?;
+        Ok(())
+    }
+
+    /// Update track import status
+    pub async fn update_track_status(
+        &self,
+        track_id: &str,
+        status: &str,
+    ) -> Result<(), LibraryError> {
+        self.database.update_track_status(track_id, status).await?;
+        Ok(())
+    }
+
+    /// Update album import status
+    pub async fn update_album_status(
+        &self,
+        album_id: &str,
+        status: &str,
+    ) -> Result<(), LibraryError> {
+        self.database.update_album_status(album_id, status).await?;
+        Ok(())
+    }
+
     /// Create track database records from Discogs tracklist
     pub fn create_track_records(
         &self,
