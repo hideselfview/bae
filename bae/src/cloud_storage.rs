@@ -2,9 +2,7 @@ use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{primitives::ByteStreamError, Client, Error as S3Error};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 use thiserror::Error;
-use tokio::fs;
 
 #[derive(Error, Debug)]
 pub enum CloudStorageError {
@@ -239,16 +237,6 @@ impl CloudStorageManager {
         Ok(CloudStorageManager {
             storage: std::sync::Arc::new(storage),
         })
-    }
-
-    /// Upload a chunk file to cloud storage
-    pub async fn upload_chunk_file(
-        &self,
-        chunk_id: &str,
-        file_path: &Path,
-    ) -> Result<String, CloudStorageError> {
-        let data = fs::read(file_path).await?;
-        self.storage.upload_chunk(chunk_id, &data).await
     }
 
     /// Upload chunk data directly from memory

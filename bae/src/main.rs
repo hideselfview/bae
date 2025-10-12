@@ -92,12 +92,8 @@ async fn create_database(config: &config::Config) -> database::Database {
 }
 
 /// Initialize library manager with all dependencies
-fn create_library_manager(
-    database: database::Database,
-    chunking_service: chunking::ChunkingService,
-    cloud_storage: cloud_storage::CloudStorageManager,
-) -> SharedLibraryManager {
-    let library_manager = library::LibraryManager::new(database, chunking_service, cloud_storage);
+fn create_library_manager(database: database::Database) -> SharedLibraryManager {
+    let library_manager = library::LibraryManager::new(database);
 
     println!("Main: Library manager created");
 
@@ -149,15 +145,15 @@ fn main() {
 
     println!("Main: Chunking service created");
 
-    // Build library manager with all injected dependencies
-    let library_manager = create_library_manager(
-        database.clone(),
+    // Build library manager
+    let library_manager = create_library_manager(database.clone());
+
+    // Create import service on dedicated thread
+    let import_service = import_service::ImportService::new(
+        library_manager.clone(),
         chunking_service.clone(),
         cloud_storage.clone(),
     );
-
-    // Create import service on dedicated thread
-    let import_service = import_service::ImportService::new(library_manager.clone());
     let import_service_handle = import_service.start();
 
     // Create root application context
