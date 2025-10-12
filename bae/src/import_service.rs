@@ -21,13 +21,7 @@ pub enum ImportProgress {
         album_id: String,
         album_title: String,
     },
-    ChunkingProgress {
-        album_id: String,
-        current: usize,
-        total: usize,
-        percent: u8,
-    },
-    UploadProgress {
+    ProcessingProgress {
         album_id: String,
         current: usize,
         total: usize,
@@ -195,13 +189,7 @@ impl ImportService {
         let progress_callback = Box::new(move |current, total, phase: String| {
             let percent = ((current as f64 / total as f64) * 100.0) as u8;
             let progress_update = match phase.as_str() {
-                "chunking" => ImportProgress::ChunkingProgress {
-                    album_id: album_id_clone.clone(),
-                    current,
-                    total,
-                    percent,
-                },
-                "uploading" => ImportProgress::UploadProgress {
+                "processing" => ImportProgress::ProcessingProgress {
                     album_id: album_id_clone.clone(),
                     current,
                     total,

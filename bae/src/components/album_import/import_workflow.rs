@@ -88,15 +88,10 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                         match progress {
                             ImportProgress::Started { album_title, .. } => {
                                 println!("Import started: {}", album_title);
-                                import_progress.set(5);
+                                import_progress.set(0);
                             }
-                            ImportProgress::ChunkingProgress { percent, .. } => {
-                                // Map chunking to 0-50% of progress bar
-                                import_progress.set(percent / 2);
-                            }
-                            ImportProgress::UploadProgress { percent, .. } => {
-                                // Map upload to 50-100% of progress bar
-                                import_progress.set(50 + percent / 2);
+                            ImportProgress::ProcessingProgress { percent, .. } => {
+                                import_progress.set(percent);
                             }
                             ImportProgress::TrackComplete { .. } => {
                                 println!("Track completed");
