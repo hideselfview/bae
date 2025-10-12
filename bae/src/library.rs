@@ -22,6 +22,9 @@ pub enum LibraryError {
     CloudStorage(#[from] CloudStorageError),
 }
 
+/// Progress callback for import operations
+pub type ProgressCallback = Box<dyn Fn(usize, usize, String) + Send + Sync>;
+
 /// The main library manager that coordinates all import operations
 ///
 /// This implements the import workflow described in BAE_IMPORT_WORKFLOW.md:
@@ -332,10 +335,11 @@ impl LibraryManager {
     }
 
     /// Process audio files using album-level chunking - chunk entire album folder, encrypt, and store metadata
-    pub async fn process_audio_files(
+    pub async fn process_audio_files_with_progress(
         &self,
         mappings: &[FileMapping],
         album_id: &str,
+        progress_callback: Option<ProgressCallback>,
     ) -> Result<(), LibraryError> {
         if mappings.is_empty() {
             return Ok(());
@@ -391,7 +395,9 @@ impl LibraryManager {
         let total_chunks = album_result.chunks.len();
 
         for (index, chunk) in album_result.chunks.iter().enumerate() {
-            if index % 100 == 0 || index == total_chunks - 1 {
+            // Report progress every chunk (or every N chunks for large albums)
+            let report_frequency = if total_chunks > 100 { 10 } else { 1 };
+            if index % report_frequency == 0 || index == total_chunks - 1 {
                 let progress = ((index + 1) as f64 / total_chunks as f64) * 100.0;
                 println!(
                     "  Upload progress: {}/{} chunks ({:.1}%)",
@@ -399,6 +405,11 @@ impl LibraryManager {
                     total_chunks,
                     progress
                 );
+
+                // Call progress callback if provided
+                if let Some(ref callback) = progress_callback {
+                    callback(index + 1, total_chunks, "uploading".to_string());
+                }
             }
 
             let cloud_location = cloud_storage
@@ -448,6 +459,16 @@ impl LibraryManager {
         );
 
         Ok(())
+    }
+
+    /// Process audio files using album-level chunking (without progress callback)
+    pub async fn process_audio_files(
+        &self,
+        mappings: &[FileMapping],
+        album_id: &str,
+    ) -> Result<(), LibraryError> {
+        self.process_audio_files_with_progress(mappings, album_id, None)
+            .await
     }
 
     /// Process file mappings - create file records and chunk mappings

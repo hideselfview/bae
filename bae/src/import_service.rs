@@ -202,10 +202,31 @@ impl ImportService {
             .await
             .map_err(|e| format!("File mapping error: {}", e))?;
 
-        // Process and upload files (this will take time)
-        // TODO: Add progress callbacks here
+        // Process and upload files with progress reporting
+        let progress_tx_clone = progress_tx.clone();
+        let album_id_clone = album_id.clone();
+        let progress_callback = Box::new(move |current, total, phase: String| {
+            let percent = ((current as f64 / total as f64) * 100.0) as u8;
+            let progress_update = match phase.as_str() {
+                "chunking" => ImportProgress::ChunkingProgress {
+                    album_id: album_id_clone.clone(),
+                    current,
+                    total,
+                    percent,
+                },
+                "uploading" => ImportProgress::UploadProgress {
+                    album_id: album_id_clone.clone(),
+                    current,
+                    total,
+                    percent,
+                },
+                _ => return,
+            };
+            let _ = progress_tx_clone.send(progress_update);
+        });
+
         library_manager
-            .process_audio_files(&file_mappings, &album_id)
+            .process_audio_files_with_progress(&file_mappings, &album_id, Some(progress_callback))
             .await
             .map_err(|e| {
                 // Mark as failed
