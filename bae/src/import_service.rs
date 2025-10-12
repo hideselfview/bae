@@ -146,18 +146,16 @@ impl ImportService {
 
         // Extract artist and create records
         let artist_name = Self::extract_artist_name(item);
-        let album = library_manager
-            .create_album_record(
-                item,
-                &artist_name,
-                Some(folder.to_string_lossy().to_string()),
-            )
-            .map_err(|e| format!("Failed to create album record: {}", e))?;
+        let album = crate::library::create_album_record(
+            item,
+            &artist_name,
+            Some(folder.to_string_lossy().to_string()),
+        )
+        .map_err(|e| format!("Failed to create album record: {}", e))?;
         let album_id = album.id.clone();
         let album_title = album.title.clone();
 
-        let tracks = library_manager
-            .create_track_records(item, &album_id)
+        let tracks = crate::library::create_track_records(item, &album_id)
             .map_err(|e| format!("Failed to create track records: {}", e))?;
 
         // Send started progress

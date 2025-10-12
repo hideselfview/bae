@@ -31,6 +31,54 @@ pub enum ProcessingPhase {
 /// Progress callback for import operations
 pub type ProgressCallback = Box<dyn Fn(usize, usize, ProcessingPhase) + Send + Sync>;
 
+/// Create album database record from Discogs data
+pub fn create_album_record(
+    import_item: &ImportItem,
+    artist_name: &str,
+    source_folder_path: Option<String>,
+) -> Result<DbAlbum, LibraryError> {
+    let album = match import_item {
+        ImportItem::Master(master) => {
+            DbAlbum::from_discogs_master(master, artist_name, source_folder_path)
+        }
+        ImportItem::Release(release) => {
+            DbAlbum::from_discogs_release(release, artist_name, source_folder_path)
+        }
+    };
+    Ok(album)
+}
+
+/// Create track database records from Discogs tracklist
+pub fn create_track_records(
+    import_item: &ImportItem,
+    album_id: &str,
+) -> Result<Vec<DbTrack>, LibraryError> {
+    let discogs_tracks = import_item.tracklist();
+    let mut tracks = Vec::new();
+
+    for (index, discogs_track) in discogs_tracks.iter().enumerate() {
+        let track_number = parse_track_number(&discogs_track.position, index);
+        let track = DbTrack::from_discogs_track(discogs_track, album_id, track_number);
+        tracks.push(track);
+    }
+
+    Ok(tracks)
+}
+
+/// Parse track number from Discogs position string
+/// Discogs positions can be like "1", "A1", "1-1", etc.
+fn parse_track_number(position: &str, fallback_index: usize) -> Option<i32> {
+    // Try to extract number from position string
+    let numbers: String = position.chars().filter(|c| c.is_numeric()).collect();
+
+    if let Ok(num) = numbers.parse::<i32>() {
+        Some(num)
+    } else {
+        // Fallback to index + 1
+        Some((fallback_index + 1) as i32)
+    }
+}
+
 /// The main library manager that coordinates all import operations
 ///
 /// This implements the import workflow described in BAE_IMPORT_WORKFLOW.md:
@@ -58,90 +106,6 @@ impl LibraryManager {
             chunking_service,
             cloud_storage,
         }
-    }
-
-    /// Import an album from Discogs metadata and local folder
-    /// This is the main import function called from the UI
-    pub async fn import_album(
-        &self,
-        import_item: &ImportItem,
-        source_folder: &Path,
-    ) -> Result<String, LibraryError> {
-        println!(
-            "LibraryManager: Starting import for {} from {}",
-            import_item.title(),
-            source_folder.display()
-        );
-
-        // Step 1: Extract artist name from Discogs data
-        let artist_name = self.extract_artist_name(import_item)?;
-
-        // Step 2: Create album record
-        let source_folder_path = Some(source_folder.to_string_lossy().to_string());
-        let album = self.create_album_record(import_item, &artist_name, source_folder_path)?;
-        let album_id = album.id.clone();
-
-        // Step 3: Create track records from Discogs tracklist
-        let tracks = self.create_track_records(import_item, &album_id)?;
-
-        // Step 4: Find and map audio files to tracks
-        let file_mappings = self.map_files_to_tracks(source_folder, &tracks).await?;
-
-        // Step 5: Process files (chunking, encryption, upload to cloud)
-        // Do this BEFORE database inserts so we can rollback if it fails
-        println!("LibraryManager: Processing and uploading files (this may take several minutes for large albums)...");
-        self.process_audio_files(&file_mappings, &album_id).await?;
-
-        // Step 6: Save to database AFTER successful upload
-        // This ensures we don't have database records for albums that failed to upload
-        println!("LibraryManager: Upload complete, saving to database...");
-        self.database.insert_album(&album).await?;
-
-        for track in &tracks {
-            self.database.insert_track(track).await?;
-        }
-
-        println!(
-            "LibraryManager: Successfully imported album {} with {} tracks",
-            album.title,
-            tracks.len()
-        );
-
-        Ok(album_id)
-    }
-
-    /// Extract artist name from Discogs data
-    /// TODO: Handle multiple artists, featured artists, etc.
-    fn extract_artist_name(&self, import_item: &ImportItem) -> Result<String, LibraryError> {
-        // For now, extract from the title field which usually contains "Artist - Album"
-        // In the future, we'll use the proper artists field from Discogs
-        let title = import_item.title();
-
-        if let Some(dash_pos) = title.find(" - ") {
-            Ok(title[..dash_pos].to_string())
-        } else {
-            // Fallback: use "Various Artists" or extract from first track
-            Ok("Unknown Artist".to_string())
-        }
-    }
-
-    /// Create album database record from Discogs data
-    pub fn create_album_record(
-        &self,
-        import_item: &ImportItem,
-        artist_name: &str,
-        source_folder_path: Option<String>,
-    ) -> Result<DbAlbum, LibraryError> {
-        let album = match import_item {
-            ImportItem::Master(master) => {
-                DbAlbum::from_discogs_master(master, artist_name, source_folder_path)
-            }
-            ImportItem::Release(release) => {
-                DbAlbum::from_discogs_release(release, artist_name, source_folder_path)
-            }
-        };
-
-        Ok(album)
     }
 
     /// Insert album and tracks into database in a transaction
@@ -174,38 +138,6 @@ impl LibraryManager {
     ) -> Result<(), LibraryError> {
         self.database.update_album_status(album_id, status).await?;
         Ok(())
-    }
-
-    /// Create track database records from Discogs tracklist
-    pub fn create_track_records(
-        &self,
-        import_item: &ImportItem,
-        album_id: &str,
-    ) -> Result<Vec<DbTrack>, LibraryError> {
-        let discogs_tracks = import_item.tracklist();
-        let mut tracks = Vec::new();
-
-        for (index, discogs_track) in discogs_tracks.iter().enumerate() {
-            let track_number = self.parse_track_number(&discogs_track.position, index);
-            let track = DbTrack::from_discogs_track(discogs_track, album_id, track_number);
-            tracks.push(track);
-        }
-
-        Ok(tracks)
-    }
-
-    /// Parse track number from Discogs position string
-    /// Discogs positions can be like "1", "A1", "1-1", etc.
-    fn parse_track_number(&self, position: &str, fallback_index: usize) -> Option<i32> {
-        // Try to extract number from position string
-        let numbers: String = position.chars().filter(|c| c.is_numeric()).collect();
-
-        if let Ok(num) = numbers.parse::<i32>() {
-            Some(num)
-        } else {
-            // Fallback to index + 1
-            Some((fallback_index + 1) as i32)
-        }
     }
 
     /// Map audio files in source folder to tracks
