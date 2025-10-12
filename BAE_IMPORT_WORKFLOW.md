@@ -80,14 +80,26 @@ This fetches complete release data including tracklist for import. bae converts 
 bae uses a cloud-first storage approach. For library configuration and initialization details, see [BAE_LIBRARY_CONFIGURATION.md](BAE_LIBRARY_CONFIGURATION.md).
 
 ### Import Process
+
+bae uses a dedicated `ImportService` running on a separate thread to prevent UI blocking during imports. The service communicates via channels for requests and progress updates.
+
+**Import Flow:**
 1. **User selects source folder** containing album files
-2. **File scanning** identifies audio files and matches them to Discogs tracklist
-3. **Format detection** handles both individual tracks and CUE/FLAC albums
-4. **FLAC header extraction** stores headers in database (CUE/FLAC only)
-5. **Chunking and encryption** concatenates entire album folder (audio + artwork + notes) into single stream and splits into uniform 1MB AES-256-GCM encrypted chunks (see `BAE_STREAMING_ARCHITECTURE.md` for chunk format details)
-6. **Cloud upload** stores all chunks in S3 storage with hash-based partitioning
-7. **Database sync** immediately uploads SQLite database to S3 after successful import
-8. **Source folder** remains untouched on disk
+2. **Database transaction** inserts album and tracks with `import_status='importing'` before processing files (prevents foreign key constraint errors)
+3. **File scanning** identifies audio files and matches them to Discogs tracklist
+4. **Format detection** handles both individual tracks and CUE/FLAC albums
+5. **FLAC header extraction** stores headers in database (CUE/FLAC only)
+6. **Chunking and encryption** (runs on ImportService thread) concatenates entire album folder (audio + artwork + notes) into single stream and splits into uniform 1MB AES-256-GCM encrypted chunks (see `BAE_STREAMING_ARCHITECTURE.md` for chunk format details)
+7. **Cloud upload** (async I/O on service thread) stores all chunks in S3 storage with hash-based partitioning, reports progress every 10 chunks
+8. **Status update** marks album and tracks as `import_status='complete'` (or `'failed'` on error)
+9. **Database sync** uploads SQLite database to S3 after successful import
+10. **Source folder** remains untouched on disk
+
+**Progress Updates:**
+- UI polls `ImportService` via channel for real-time progress
+- Reports chunking progress (0-50% of progress bar)
+- Reports upload progress (50-100% of progress bar)
+- Shows per-track completion status
 
 ### Storage Locations
 - **Primary storage**: S3 cloud storage (encrypted chunks + SQLite database backup)
@@ -105,10 +117,11 @@ bae uses a cloud-first storage approach. For library configuration and initializ
 - `get_release()` → `DiscogsRelease`
 
 **Storage Components:**
-- `ChunkingService` splits files into encrypted chunks
+- `ImportService` runs on dedicated thread with own tokio runtime, handles all imports without blocking UI
+- `ChunkingService` splits files into encrypted chunks (CPU work runs on ImportService thread)
 - `CloudStorageManager` handles S3 upload/download with hash-based partitioning and database sync
 - `CacheManager` manages local chunk cache with LRU eviction
-- `LibraryManager` handles library initialization and manifest detection in S3
+- `LibraryManager` orchestrates import workflow, provides progress callbacks
 - `CueFlacProcessor` handles CUE sheet parsing and FLAC header extraction (see `BAE_CUE_FLAC_SPEC.md`)
 
 **UI Components:**
