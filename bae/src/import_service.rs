@@ -3,7 +3,7 @@ use crate::cloud_storage::CloudStorageManager;
 use crate::database::Database;
 use crate::library::LibraryManager;
 use crate::models::ImportItem;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{
     mpsc::{self, Receiver, Sender},
     Arc,
@@ -12,6 +12,7 @@ use std::thread;
 
 /// Request to import an album
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)] // ImportAlbum is the common case, Shutdown is rare
 pub enum ImportRequest {
     ImportAlbum { item: ImportItem, folder: PathBuf },
     Shutdown,
@@ -70,7 +71,6 @@ impl ImportServiceHandle {
 
 /// Import service that runs on a dedicated thread
 pub struct ImportService {
-    handle: Option<thread::JoinHandle<()>>,
     request_tx: Sender<ImportRequest>,
     progress_rx: std::sync::Arc<std::sync::Mutex<Receiver<ImportProgress>>>,
 }
@@ -86,7 +86,8 @@ impl ImportService {
         let (progress_tx, progress_rx) = mpsc::channel();
         let progress_rx = Arc::new(std::sync::Mutex::new(progress_rx));
 
-        let handle = thread::spawn(move || {
+        // Spawn thread and let it run detached (no graceful shutdown yet - see TASKS.md)
+        let _ = thread::spawn(move || {
             println!("ImportService: Thread started");
 
             // Create a tokio runtime for async operations (S3 uploads)
@@ -135,7 +136,6 @@ impl ImportService {
         });
 
         ImportService {
-            handle: Some(handle),
             request_tx,
             progress_rx,
         }
@@ -154,7 +154,7 @@ impl ImportService {
         library_manager: &LibraryManager,
         database: &Database,
         item: &ImportItem,
-        folder: &PathBuf,
+        folder: &Path,
         progress_tx: &Sender<ImportProgress>,
     ) -> Result<(), String> {
         println!(
@@ -276,15 +276,6 @@ impl ImportService {
             title[..dash_pos].to_string()
         } else {
             "Unknown Artist".to_string()
-        }
-    }
-
-    /// Shutdown the service
-    pub fn shutdown(mut self) {
-        println!("ImportService: Sending shutdown signal");
-        let _ = self.request_tx.send(ImportRequest::Shutdown);
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
         }
     }
 }

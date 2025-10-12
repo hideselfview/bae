@@ -51,6 +51,12 @@
   - [x] Implement click-through navigation from library to album details
   - [ ] Implement sorting and organization features (pending)
 - [ ] Create settings management interface
+- [ ] Implement graceful app shutdown
+  - [ ] Add Dioxus app lifecycle hook for cleanup on quit
+  - [ ] Call ImportService shutdown to finish/cancel current import
+  - [ ] Mark interrupted imports as `status='failed'`
+  - [ ] Clean up temp files in `/tmp/bae_chunks`
+  - [ ] Prevent database corruption during active transactions
 - [ ] Implement multi-library support (future)
   - [ ] Add library switching UI in settings
   - [ ] Support multiple libraries in `config.yaml`

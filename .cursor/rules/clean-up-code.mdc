@@ -1,4 +1,4 @@
 ---
 alwaysApply: true
 ---
-Don't leave old or dead code laying around. When we stop using something, remove it!
+Our moto is YAGNI! Repeat after me: YAGNI! Don't leave old or dead code laying around. When we stop using something, remove it! Make sure clippy passes before each commit.
