@@ -345,15 +345,11 @@ impl ImportService {
             .await
             .map_err(|e| {
                 // Mark as failed
-                let _ = tokio::runtime::Handle::current().block_on(
-                    library_manager
-                        .update_album_status(&album_id, crate::database::ImportStatus::Failed),
-                );
+                let _ = tokio::runtime::Handle::current()
+                    .block_on(library_manager.mark_album_failed(&album_id));
                 for track in &tracks {
-                    let _ = tokio::runtime::Handle::current().block_on(
-                        library_manager
-                            .update_track_status(&track.id, crate::database::ImportStatus::Failed),
-                    );
+                    let _ = tokio::runtime::Handle::current()
+                        .block_on(library_manager.mark_track_failed(&track.id));
                 }
                 format!("Import failed: {}", e)
             })?;
@@ -361,9 +357,9 @@ impl ImportService {
         // Mark all tracks as complete
         for track in &tracks {
             library_manager
-                .update_track_status(&track.id, crate::database::ImportStatus::Complete)
+                .mark_track_complete(&track.id)
                 .await
-                .map_err(|e| format!("Failed to update track status: {}", e))?;
+                .map_err(|e| format!("Failed to mark track complete: {}", e))?;
 
             let _ = progress_tx.send(ImportProgress::TrackComplete {
                 album_id: album_id.clone(),
@@ -373,9 +369,9 @@ impl ImportService {
 
         // Mark album as complete
         library_manager
-            .update_album_status(&album_id, crate::database::ImportStatus::Complete)
+            .mark_album_complete(&album_id)
             .await
-            .map_err(|e| format!("Failed to update album status: {}", e))?;
+            .map_err(|e| format!("Failed to mark album complete: {}", e))?;
 
         let _ = progress_tx.send(ImportProgress::Complete {
             album_id: album_id.clone(),

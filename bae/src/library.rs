@@ -121,23 +121,35 @@ impl LibraryManager {
         Ok(())
     }
 
-    /// Update track import status
-    pub async fn update_track_status(
-        &self,
-        track_id: &str,
-        status: crate::database::ImportStatus,
-    ) -> Result<(), LibraryError> {
-        self.database.update_track_status(track_id, status).await?;
+    /// Mark track as complete after successful import
+    pub async fn mark_track_complete(&self, track_id: &str) -> Result<(), LibraryError> {
+        self.database
+            .update_track_status(track_id, crate::database::ImportStatus::Complete)
+            .await?;
         Ok(())
     }
 
-    /// Update album import status
-    pub async fn update_album_status(
-        &self,
-        album_id: &str,
-        status: crate::database::ImportStatus,
-    ) -> Result<(), LibraryError> {
-        self.database.update_album_status(album_id, status).await?;
+    /// Mark track as failed if import errors
+    pub async fn mark_track_failed(&self, track_id: &str) -> Result<(), LibraryError> {
+        self.database
+            .update_track_status(track_id, crate::database::ImportStatus::Failed)
+            .await?;
+        Ok(())
+    }
+
+    /// Mark album as complete after successful import
+    pub async fn mark_album_complete(&self, album_id: &str) -> Result<(), LibraryError> {
+        self.database
+            .update_album_status(album_id, crate::database::ImportStatus::Complete)
+            .await?;
+        Ok(())
+    }
+
+    /// Mark album as failed if import errors
+    pub async fn mark_album_failed(&self, album_id: &str) -> Result<(), LibraryError> {
+        self.database
+            .update_album_status(album_id, crate::database::ImportStatus::Failed)
+            .await?;
         Ok(())
     }
 

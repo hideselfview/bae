@@ -124,11 +124,11 @@ bae uses a dedicated `ImportService` running on a separate thread to prevent UI 
 - `get_release()` → `DiscogsRelease`
 
 **Storage Components:**
-- `ImportService` runs on dedicated thread with own tokio runtime, handles all imports without blocking UI
+- `ImportService` runs on dedicated thread with own tokio runtime, orchestrates import workflow (file mapping, processing), handles all imports without blocking UI
 - `ChunkingService` splits files into encrypted chunks (CPU work runs on Tokio's blocking thread pool via `spawn_blocking`)
 - `CloudStorageManager` handles S3 upload/download with hash-based partitioning and database sync, uploads limited to 20 concurrent via `Semaphore`
 - `CacheManager` manages local chunk cache with LRU eviction
-- `LibraryManager` orchestrates import workflow, provides progress callbacks
+- `LibraryManager` manages entity lifecycle and state transitions (mark_album_complete, mark_track_failed, etc), provides storage operations with progress callbacks
 - `CueFlacProcessor` handles CUE sheet parsing and FLAC header extraction (see `BAE_CUE_FLAC_SPEC.md`)
 
 **UI Components:**
