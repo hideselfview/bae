@@ -13,28 +13,9 @@ pub fn Library() -> Element {
     let mut loading = use_signal(|| true);
     let mut error = use_signal(|| None::<String>);
     let mut search_query = use_signal(String::new);
-    let mut refresh_tick = use_signal(|| 0);
 
-    // Auto-refresh when imports are active (every 2 seconds)
+    // Load albums on component mount
     use_effect(move || {
-        spawn(async move {
-            loop {
-                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                // Check if any albums are importing
-                let has_importing = albums
-                    .read()
-                    .iter()
-                    .any(|a| a.import_status == ImportStatus::Importing);
-                if has_importing {
-                    refresh_tick.set(refresh_tick() + 1);
-                }
-            }
-        });
-    });
-
-    // Load albums on component mount or when refresh_tick changes
-    use_effect(move || {
-        let _ = refresh_tick(); // Depend on refresh_tick
         println!("Library: Starting load_albums effect");
         let library_manager = library_manager.clone();
         spawn(async move {
@@ -202,9 +183,52 @@ fn AlbumGrid(albums: Vec<DbAlbum>) -> Element {
 fn AlbumCard(album: DbAlbum) -> Element {
     let import_service = use_import_service();
     let progress_service = import_service.progress_service();
+    let mut progress_percent = use_signal(|| 0u8);
+    let mut import_complete = use_signal(|| false);
 
-    // Get current progress from ProgressService
-    let progress_data = progress_service.get_album_progress(&album.id);
+    use_effect({
+        let album_id = album.id.clone();
+        let progress_service = progress_service.clone();
+        let is_importing = album.import_status == ImportStatus::Importing;
+
+        move || {
+            if is_importing {
+                let progress_service = progress_service.clone();
+                let album_id = album_id.clone();
+                spawn(async move {
+                    let mut rx = progress_service.subscribe_album(album_id.clone());
+
+                    // Await progress updates - this blocks until messages arrive!
+                    while let Ok(progress) = rx.recv().await {
+                        match progress {
+                            crate::import_service::ImportProgress::ProcessingProgress {
+                                album_id: prog_album_id,
+                                percent,
+                                ..
+                            } if prog_album_id == album_id => {
+                                progress_percent.set(percent);
+                            }
+                            crate::import_service::ImportProgress::Complete {
+                                album_id: prog_album_id,
+                            } if prog_album_id == album_id => {
+                                progress_percent.set(100);
+                                import_complete.set(true);
+                                break;
+                            }
+                            crate::import_service::ImportProgress::Failed {
+                                album_id: prog_album_id,
+                                ..
+                            } if prog_album_id == album_id => {
+                                import_complete.set(true);
+                                break;
+                            }
+                            _ => {}
+                        }
+                    }
+                });
+            }
+        }
+    });
 
     // Determine visual styling based on import status
     let (card_class, overlay_class, status_badge) = match album.import_status {
@@ -214,7 +238,7 @@ fn AlbumCard(album: DbAlbum) -> Element {
             None
         ),
         ImportStatus::Importing => {
-            let progress = progress_data.as_ref().map(|p| p.percent).unwrap_or(0);
+            let progress = progress_percent();
             (
                 "bg-gray-800 rounded-lg overflow-hidden shadow-lg hover:shadow-xl transition-shadow duration-300 cursor-pointer relative",
                 "absolute inset-0 bg-black bg-opacity-50",

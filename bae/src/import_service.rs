@@ -40,14 +40,6 @@ pub enum ImportProgress {
     },
 }
 
-/// Status of an import
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ImportStatus {
-    InProgress,
-    Complete,
-    Failed { error: String },
-}
-
 /// Handle for sending import requests and subscribing to progress updates
 #[derive(Clone)]
 pub struct ImportServiceHandle {
