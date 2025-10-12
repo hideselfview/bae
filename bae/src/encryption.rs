@@ -21,45 +21,27 @@ pub enum EncryptionError {
 /// This implements the security model described in the README:
 /// - Files are split into chunks and each chunk is encrypted separately
 /// - Uses AES-256-GCM for authenticated encryption
-/// - Master key is loaded from SecureConfig (lazy, only when first needed)
 /// - Each chunk gets a unique nonce for security
 #[derive(Clone)]
 pub struct EncryptionService {
-    config: crate::config::Config,
-    cipher: std::sync::Arc<std::sync::OnceLock<Aes256Gcm>>,
+    cipher: Aes256Gcm,
 }
 
 impl std::fmt::Debug for EncryptionService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EncryptionService")
-            .field("config", &"<present>")
-            .field("cipher", &"<lazy>")
+            .field("cipher", &"<initialized>")
             .finish()
     }
 }
 
 impl EncryptionService {
-    /// Create a new encryption service with Config
-    /// Key loading is deferred until first encrypt/decrypt operation
-    pub fn new(config: crate::config::Config) -> Self {
-        EncryptionService {
-            config,
-            cipher: std::sync::Arc::new(std::sync::OnceLock::new()),
-        }
-    }
-
-    /// Get or create the cipher, loading the key from Config on first use
-    fn get_cipher(&self) -> Result<&Aes256Gcm, EncryptionError> {
-        // Check if cipher already created
-        if let Some(cipher) = self.cipher.get() {
-            return Ok(cipher);
-        }
-
-        // First use: load key from Config
-        println!("EncryptionService: Loading master key from Config...");
+    /// Create a new encryption service, loading the key from config
+    pub fn new(config: &crate::config::Config) -> Result<Self, EncryptionError> {
+        println!("EncryptionService: Loading master key...");
 
         // Decode hex key
-        let key_bytes = hex::decode(&self.config.encryption_key)
+        let key_bytes = hex::decode(&config.encryption_key)
             .map_err(|e| EncryptionError::KeyManagement(format!("Invalid key format: {}", e)))?;
 
         if key_bytes.len() != 32 {
@@ -71,11 +53,7 @@ impl EncryptionService {
         let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
         let cipher = Aes256Gcm::new(key);
 
-        // Cache it (thread-safe, first one wins if racing)
-        match self.cipher.set(cipher) {
-            Ok(()) => Ok(self.cipher.get().unwrap()),
-            Err(_) => Ok(self.cipher.get().unwrap()), // Someone else won the race
-        }
+        Ok(EncryptionService { cipher })
     }
 
     /// Encrypt data with AES-256-GCM
@@ -84,11 +62,8 @@ impl EncryptionService {
         // Generate a unique nonce for this encryption
         let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
 
-        // Get cipher (lazy loads key on first use)
-        let cipher = self.get_cipher()?;
-
         // Encrypt the data
-        let ciphertext = cipher.encrypt(&nonce, plaintext).map_err(|e| {
+        let ciphertext = self.cipher.encrypt(&nonce, plaintext).map_err(|e| {
             EncryptionError::Encryption(format!("AES-GCM encryption failed: {}", e))
         })?;
 
@@ -107,11 +82,8 @@ impl EncryptionService {
 
         let nonce = Nonce::from_slice(nonce);
 
-        // Get cipher (lazy loads key on first use)
-        let cipher = self.get_cipher()?;
-
         // Decrypt the data
-        let plaintext = cipher.decrypt(nonce, ciphertext).map_err(|e| {
+        let plaintext = self.cipher.decrypt(nonce, ciphertext).map_err(|e| {
             EncryptionError::Decryption(format!("AES-GCM decryption failed: {}", e))
         })?;
 
@@ -253,7 +225,7 @@ mod tests {
             encryption_key: test_key_hex,
         };
 
-        EncryptionService::new(test_config)
+        EncryptionService::new(&test_config).expect("Failed to create test encryption service")
     }
 
     #[test]

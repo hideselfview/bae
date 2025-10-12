@@ -94,16 +94,10 @@ async fn create_database(config: &config::Config) -> database::Database {
 /// Initialize library manager with all dependencies
 fn create_library_manager(
     database: database::Database,
-    encryption_service: encryption::EncryptionService,
+    chunking_service: chunking::ChunkingService,
     cloud_storage: cloud_storage::CloudStorageManager,
 ) -> SharedLibraryManager {
-    let chunking_service = chunking::ChunkingService::new(encryption_service.clone())
-        .expect("Failed to create chunking service");
-
-    println!("Main: Chunking service created");
-
-    let library_manager =
-        library::LibraryManager::new(database, chunking_service, cloud_storage.clone());
+    let library_manager = library::LibraryManager::new(database, chunking_service, cloud_storage);
 
     println!("Main: Library manager created");
 
@@ -123,9 +117,6 @@ fn main() {
     // Load application configuration (handles .env loading in debug builds)
     let config = config::Config::load();
 
-    // Create encryption service (lazy credential loading, no keyring access yet)
-    let encryption_service = encryption::EncryptionService::new(config.clone());
-
     // Initialize cache manager
     let cache_manager = rt.block_on(create_cache_manager());
 
@@ -136,19 +127,28 @@ fn main() {
     // Initialize database
     let database = rt.block_on(create_database(&config));
 
+    // Create encryption service
+    let encryption_service = encryption::EncryptionService::new(&config).expect(
+        "Failed to initialize encryption service. Check your encryption key configuration.",
+    );
+
+    // Create shared chunking service
+    let chunking_service = chunking::ChunkingService::new(encryption_service.clone())
+        .expect("Failed to create chunking service");
+
+    println!("Main: Chunking service created");
+
     // Build library manager with all injected dependencies
     let library_manager = create_library_manager(
         database.clone(),
-        encryption_service.clone(),
+        chunking_service.clone(),
         cloud_storage.clone(),
     );
 
     // Create import service on dedicated thread
-    let chunking_service_for_import = chunking::ChunkingService::new(encryption_service.clone())
-        .expect("Failed to create chunking service for import");
     let import_service = import_service::ImportService::start(
         database.clone(),
-        chunking_service_for_import,
+        chunking_service.clone(),
         cloud_storage.clone(),
     );
     let import_service_handle = import_service.handle();

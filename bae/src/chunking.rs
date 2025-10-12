@@ -59,7 +59,7 @@ pub struct AlbumChunkingResult {
 }
 
 /// Main chunking service that handles file splitting and encryption
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ChunkingService {
     config: ChunkingConfig,
     encryption_service: EncryptionService,
@@ -73,7 +73,7 @@ impl ChunkingService {
     }
 
     /// Create a new chunking service with custom configuration and encryption service
-    pub fn new_with_config(
+    fn new_with_config(
         config: ChunkingConfig,
         encryption_service: EncryptionService,
     ) -> Result<Self, ChunkingError> {
