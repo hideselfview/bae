@@ -60,6 +60,21 @@ impl LibraryManager {
         }
     }
 
+    /// Get a reference to the chunking service
+    pub fn chunking_service(&self) -> &ChunkingService {
+        &self.chunking_service
+    }
+
+    /// Get a reference to the cloud storage manager
+    pub fn cloud_storage(&self) -> &CloudStorageManager {
+        &self.cloud_storage
+    }
+
+    /// Get a reference to the database
+    pub fn database(&self) -> &Database {
+        &self.database
+    }
+
     /// Insert album and tracks into database in a transaction
     pub async fn insert_album_with_tracks(
         &self,
@@ -101,6 +116,27 @@ impl LibraryManager {
         self.database
             .update_album_status(album_id, crate::database::ImportStatus::Failed)
             .await?;
+        Ok(())
+    }
+
+    /// Add a chunk to the library
+    pub async fn add_chunk(&self, chunk: &crate::database::DbChunk) -> Result<(), LibraryError> {
+        self.database.insert_chunk(chunk).await?;
+        Ok(())
+    }
+
+    /// Add a file to the library
+    pub async fn add_file(&self, file: &crate::database::DbFile) -> Result<(), LibraryError> {
+        self.database.insert_file(file).await?;
+        Ok(())
+    }
+
+    /// Add a file-chunk mapping to the library
+    pub async fn add_file_chunk_mapping(
+        &self,
+        file_chunk: &crate::database::DbFileChunk,
+    ) -> Result<(), LibraryError> {
+        self.database.insert_file_chunk(file_chunk).await?;
         Ok(())
     }
 

@@ -382,6 +382,16 @@ async fn handle_import(
     let file_mappings = map_files_to_tracks(folder, &tracks).await?;
 
     // Process and upload files with progress reporting
+    // TODO: Move this processing logic from LibraryManager to ImportService
+    // Currently process_audio_files_with_progress does:
+    // - Find all files in album folder
+    // - Chunk files using ChunkingService
+    // - Encrypt chunks
+    // - Upload to S3 in parallel (max 20 concurrent)
+    // - Insert chunks into database
+    // - Create file and file-chunk mappings
+    // This should be refactored so ImportService does the orchestration
+    // and LibraryManager just provides add_chunk/add_file/add_file_chunk_mapping methods
     let progress_tx_clone = progress_tx.clone();
     let album_id_clone = album_id.clone();
     let progress_callback = Box::new(
