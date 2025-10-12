@@ -1,7 +1,4 @@
-use crate::chunking::ChunkingService;
-use crate::cloud_storage::CloudStorageManager;
 use crate::database::Database;
-use crate::library::LibraryManager;
 use crate::models::ImportItem;
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -78,9 +75,8 @@ pub struct ImportService {
 impl ImportService {
     /// Start the import service on a dedicated thread
     pub fn start(
+        library_manager: crate::library_context::SharedLibraryManager,
         database: Database,
-        chunking_service: ChunkingService,
-        cloud_storage: CloudStorageManager,
     ) -> Self {
         let (request_tx, request_rx) = mpsc::channel();
         let (progress_tx, progress_rx) = mpsc::channel();
@@ -96,9 +92,6 @@ impl ImportService {
                 .build()
                 .expect("Failed to create tokio runtime");
 
-            let library_manager =
-                LibraryManager::new(database.clone(), chunking_service, cloud_storage);
-
             // Process import requests
             loop {
                 match request_rx.recv() {
@@ -110,7 +103,7 @@ impl ImportService {
 
                         // Run the import on this thread
                         let result = runtime.block_on(Self::handle_import(
-                            &library_manager,
+                            library_manager.get(),
                             &database,
                             &item,
                             &folder,
@@ -151,7 +144,7 @@ impl ImportService {
 
     /// Handle a single import request
     async fn handle_import(
-        library_manager: &LibraryManager,
+        library_manager: &crate::library::LibraryManager,
         database: &Database,
         item: &ImportItem,
         folder: &Path,

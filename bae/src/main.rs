@@ -146,11 +146,8 @@ fn main() {
     );
 
     // Create import service on dedicated thread
-    let import_service = import_service::ImportService::start(
-        database.clone(),
-        chunking_service.clone(),
-        cloud_storage.clone(),
-    );
+    let import_service =
+        import_service::ImportService::start(library_manager.clone(), database.clone());
     let import_service_handle = import_service.handle();
 
     // Create root application context
