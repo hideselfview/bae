@@ -473,17 +473,23 @@ impl LibraryManager {
             })
         };
 
+        // Calculate total chunks upfront so progress reporting works immediately
+        let expected_total_chunks = self
+            .chunking_service
+            .calculate_total_chunks(&all_files)
+            .await?;
+        total_chunks_ref.store(expected_total_chunks, std::sync::atomic::Ordering::SeqCst);
+
+        println!(
+            "LibraryManager: Expecting {} total chunks, starting parallel upload pipeline",
+            expected_total_chunks
+        );
+
         // Stream chunks through the pipeline (spawns uploads in parallel)
         let album_result = self
             .chunking_service
             .chunk_album_streaming(album_folder, &all_files, chunk_callback)
             .await?;
-
-        // Update total chunks for progress tracking
-        total_chunks_ref.store(
-            album_result.total_chunks,
-            std::sync::atomic::Ordering::SeqCst,
-        );
 
         // Wait for all parallel uploads to complete
         let mut handles_vec = upload_handles.lock().await;

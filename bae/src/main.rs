@@ -109,6 +109,17 @@ fn create_library_manager(
 }
 
 fn main() {
+    // Initialize logging with filters to suppress verbose debug logs
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::builder()
+                .with_default_directive(tracing_subscriber::filter::LevelFilter::INFO.into())
+                .parse_lossy(
+                    "bae=info,sqlx=warn,aws_config=warn,aws_smithy=warn,aws_sdk_s3=warn,hyper=warn",
+                ),
+        )
+        .init();
+
     // Create tokio runtime for async operations
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
 

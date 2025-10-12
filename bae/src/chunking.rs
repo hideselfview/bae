@@ -95,6 +95,19 @@ impl ChunkingService {
         })
     }
 
+    /// Calculate total number of chunks without actually processing files
+    pub async fn calculate_total_chunks(
+        &self,
+        file_paths: &[std::path::PathBuf],
+    ) -> Result<usize, ChunkingError> {
+        let mut total_size = 0u64;
+        for file_path in file_paths {
+            let metadata = tokio::fs::metadata(file_path).await?;
+            total_size += metadata.len();
+        }
+        Ok(total_size.div_ceil(self.config.chunk_size as u64) as usize)
+    }
+
     /// Chunk an entire album folder into uniform chunks (BitTorrent-style)
     /// Streams chunks via callback as they're created for immediate upload
     pub async fn chunk_album_streaming(
