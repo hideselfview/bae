@@ -18,9 +18,14 @@ bae uses a cloud-first storage model with local caching for streaming. For libra
 ```
 Source Folder: /Users/user/Downloads/Album/
     ↓
-Import Process: Scan files → Match to Discogs → Album-level Chunking
+Import Pipeline: Scan files → Match to Discogs → Streaming Chunk Pipeline
     ↓
-Album Stream: cover.jpg + notes.txt + audio files → uniform 1MB chunks
+Stream Processing:
+    Read files (8KB increments) → Fill chunk buffer (1MB)
+         ↓                              ↓
+    Continue next file      Encrypt → Upload (parallel)
+         ↓                              ↓
+    [loop until done]           Update progress
     ↓
 Primary Storage: S3 (encrypted chunks with hash-based partitioning)
     ↓
@@ -29,7 +34,7 @@ Local Cache: ~/.bae/cache/ (encrypted chunks, LRU eviction)
 Streaming: Cache → Decrypt → Reassemble → Stream
 ```
 
-**Album-Level Chunking:** bae concatenates all album files (audio, artwork, notes) into a single stream and splits into uniform encrypted chunks. This provides BitTorrent compatibility while preserving privacy through uniform chunk sizes. See `BAE_IMPORT_WORKFLOW.md` for import details and `BAE_CUE_FLAC_SPEC.md` for CUE/FLAC handling.
+**Streaming Pipeline:** bae reads album files sequentially and streams data into chunk buffers. When a buffer fills (1MB), it's immediately encrypted and uploaded in parallel while reading continues. This eliminates temporary files, reduces memory usage, and maximizes throughput through parallel uploads. See `BAE_IMPORT_WORKFLOW.md` for import details and `BAE_CUE_FLAC_SPEC.md` for CUE/FLAC handling.
 
 **Database Schema:**
 - `albums` → album metadata from Discogs

@@ -89,16 +89,22 @@ bae uses a dedicated `ImportService` running on a separate thread to prevent UI 
 3. **File scanning** identifies audio files and matches them to Discogs tracklist
 4. **Format detection** handles both individual tracks and CUE/FLAC albums
 5. **FLAC header extraction** stores headers in database (CUE/FLAC only)
-6. **Chunking and encryption** (runs on ImportService thread) concatenates entire album folder (audio + artwork + notes) into single stream and splits into uniform 1MB AES-256-GCM encrypted chunks (see `BAE_STREAMING_ARCHITECTURE.md` for chunk format details)
-7. **Cloud upload** (async I/O on service thread) stores all chunks in S3 storage with hash-based partitioning, reports progress every 10 chunks
-8. **Status update** marks album and tracks as `import_status='complete'` (or `'failed'` on error)
-9. **Database sync** uploads SQLite database to S3 after successful import
-10. **Source folder** remains untouched on disk
+6. **Streaming pipeline** (runs on ImportService thread):
+   - Reads files sequentially in 8KB increments
+   - Fills 1MB chunk buffers as data streams in
+   - When buffer full → encrypts with AES-256-GCM → spawns parallel upload task
+   - Continues reading next file while uploads run in background
+   - No temporary files created, all processing happens in memory
+7. **Parallel upload** (async I/O with tokio::spawn) uploads encrypted chunks to S3 with hash-based partitioning, multiple chunks upload simultaneously
+8. **Real-time progress** updates after each chunk completes (not phased), showing actual chunks_done/total_chunks
+9. **Status update** marks album and tracks as `import_status='complete'` (or `'failed'` on error)
+10. **Database sync** uploads SQLite database to S3 after successful import
+11. **Source folder** remains untouched on disk
 
 **Progress Updates:**
 - UI polls `ImportService` via channel for real-time progress
-- Reports chunking progress (0-50% of progress bar)
-- Reports upload progress (50-100% of progress bar)
+- Single progress metric: chunks completed / total chunks (0-100%)
+- Progress updates as each chunk finishes uploading
 - Shows per-track completion status
 
 ### Storage Locations

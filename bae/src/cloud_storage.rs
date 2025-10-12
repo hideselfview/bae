@@ -251,6 +251,15 @@ impl CloudStorageManager {
         self.storage.upload_chunk(chunk_id, &data).await
     }
 
+    /// Upload chunk data directly from memory
+    pub async fn upload_chunk_data(
+        &self,
+        chunk_id: &str,
+        data: &[u8],
+    ) -> Result<String, CloudStorageError> {
+        self.storage.upload_chunk(chunk_id, data).await
+    }
+
     /// Download chunk data from cloud storage
     pub async fn download_chunk(
         &self,

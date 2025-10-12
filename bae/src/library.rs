@@ -1,4 +1,4 @@
-use crate::chunking::{AlbumChunkingResult, ChunkingError, ChunkingService, FileChunkMapping};
+use crate::chunking::{ChunkingError, ChunkingService, FileChunkMapping};
 use crate::cloud_storage::{CloudStorageError, CloudStorageManager};
 use crate::database::{Database, DbAlbum, DbChunk, DbFile, DbTrack};
 use crate::models::ImportItem;
@@ -334,7 +334,7 @@ impl LibraryManager {
         Ok(all_files)
     }
 
-    /// Process audio files using album-level chunking - chunk entire album folder, encrypt, and store metadata
+    /// Process audio files using streaming chunk pipeline - chunk, encrypt and upload in parallel
     pub async fn process_audio_files_with_progress(
         &self,
         mappings: &[FileMapping],
@@ -352,7 +352,7 @@ impl LibraryManager {
             .ok_or_else(|| LibraryError::TrackMapping("Invalid source path".to_string()))?;
 
         println!(
-            "LibraryManager: Processing album folder {} with album-level chunking",
+            "LibraryManager: Processing album folder {} with streaming pipeline",
             album_folder.display()
         );
 
@@ -363,94 +363,123 @@ impl LibraryManager {
             all_files.len()
         );
 
-        // Create temporary directory for chunking
-        let temp_dir = std::env::temp_dir().join("bae_album_chunks");
-        tokio::fs::create_dir_all(&temp_dir).await?;
+        // Shared state for parallel uploads
+        let cloud_storage = self.cloud_storage.clone();
+        let database = self.database.clone();
+        let album_id = album_id.to_string();
+        let chunks_completed = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let total_chunks_ref = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let progress_callback = std::sync::Arc::new(progress_callback);
+        let upload_handles = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
 
-        // Chunk the entire album folder
-        let album_result: AlbumChunkingResult = self
+        // Create chunk callback for streaming pipeline with parallel uploads
+        let chunk_callback: crate::chunking::ChunkCallback = {
+            let chunks_completed = chunks_completed.clone();
+            let total_chunks_ref = total_chunks_ref.clone();
+            let progress_callback = progress_callback.clone();
+            let upload_handles = upload_handles.clone();
+
+            Box::new(move |chunk: crate::chunking::AlbumChunk| {
+                let cloud_storage = cloud_storage.clone();
+                let database = database.clone();
+                let album_id = album_id.clone();
+                let chunks_completed = chunks_completed.clone();
+                let total_chunks_ref = total_chunks_ref.clone();
+                let progress_callback = progress_callback.clone();
+                let upload_handles = upload_handles.clone();
+
+                Box::pin(async move {
+                    // Spawn parallel upload task
+                    let handle = tokio::spawn(async move {
+                        // Upload chunk data directly from memory
+                        let cloud_location = cloud_storage
+                            .upload_chunk_data(&chunk.id, &chunk.encrypted_data)
+                            .await
+                            .map_err(|e| format!("Upload failed: {}", e))?;
+
+                        // Store chunk in database
+                        let db_chunk = crate::database::DbChunk::from_album_chunk(
+                            &chunk.id,
+                            &album_id,
+                            chunk.chunk_index,
+                            chunk.original_size,
+                            chunk.encrypted_size,
+                            &chunk.checksum,
+                            &cloud_location,
+                            false,
+                        );
+                        database
+                            .insert_chunk(&db_chunk)
+                            .await
+                            .map_err(|e| format!("Database insert failed: {}", e))?;
+
+                        // Update progress
+                        let completed =
+                            chunks_completed.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                        let total = total_chunks_ref.load(std::sync::atomic::Ordering::SeqCst);
+
+                        if total > 0 {
+                            let progress = ((completed as f64 / total as f64) * 100.0) as u8;
+                            println!(
+                                "  Chunk progress: {}/{} ({:.0}%)",
+                                completed, total, progress
+                            );
+
+                            if let Some(ref callback) = progress_callback.as_ref() {
+                                callback(completed, total, "processing".to_string());
+                            }
+                        }
+
+                        Ok::<(), String>(())
+                    });
+
+                    // Store handle for later awaiting
+                    upload_handles.lock().await.push(handle);
+
+                    Ok(())
+                })
+            })
+        };
+
+        // Stream chunks through the pipeline (spawns uploads in parallel)
+        let album_result = self
             .chunking_service
-            .chunk_album(album_folder, &all_files, &temp_dir)
+            .chunk_album_streaming(album_folder, &all_files, chunk_callback)
             .await?;
 
+        // Update total chunks for progress tracking
+        total_chunks_ref.store(
+            album_result.total_chunks,
+            std::sync::atomic::Ordering::SeqCst,
+        );
+
+        // Wait for all parallel uploads to complete
+        let mut handles_vec = upload_handles.lock().await;
         println!(
-            "LibraryManager: Created {} album chunks from {} files",
-            album_result.chunks.len(),
+            "LibraryManager: Waiting for {} parallel uploads to complete...",
+            handles_vec.len()
+        );
+        while let Some(handle) = handles_vec.pop() {
+            handle
+                .await
+                .map_err(|e| LibraryError::Import(format!("Task join failed: {}", e)))?
+                .map_err(LibraryError::Import)?;
+        }
+
+        let final_completed = chunks_completed.load(std::sync::atomic::Ordering::SeqCst);
+        println!(
+            "LibraryManager: Completed {} chunks from {} files",
+            final_completed,
             album_result.file_mappings.len()
         );
-
-        // album_id is now passed as parameter
-
-        // Use injected cloud storage manager
-        println!(
-            "LibraryManager: Uploading {} chunks to cloud storage...",
-            album_result.chunks.len()
-        );
-        let cloud_storage = &self.cloud_storage;
-        let total_chunks = album_result.chunks.len();
-
-        for (index, chunk) in album_result.chunks.iter().enumerate() {
-            // Report progress every chunk (or every N chunks for large albums)
-            let report_frequency = if total_chunks > 100 { 10 } else { 1 };
-            if index % report_frequency == 0 || index == total_chunks - 1 {
-                let progress = ((index + 1) as f64 / total_chunks as f64) * 100.0;
-                println!(
-                    "  Upload progress: {}/{} chunks ({:.1}%)",
-                    index + 1,
-                    total_chunks,
-                    progress
-                );
-
-                // Call progress callback if provided
-                if let Some(ref callback) = progress_callback {
-                    callback(index + 1, total_chunks, "uploading".to_string());
-                }
-            }
-
-            let cloud_location = cloud_storage
-                .upload_chunk_file(&chunk.id, &chunk.final_path)
-                .await?;
-
-            // Clean up temp file after successful upload
-            if let Err(e) = tokio::fs::remove_file(&chunk.final_path).await {
-                println!(
-                    "    Warning: Failed to clean up temp file {}: {}",
-                    chunk.final_path.display(),
-                    e
-                );
-            }
-
-            // Store chunk in database
-            let db_chunk = crate::database::DbChunk::from_album_chunk(
-                &chunk.id,
-                album_id,
-                chunk.chunk_index,
-                chunk.original_size,
-                chunk.encrypted_size,
-                &chunk.checksum,
-                &cloud_location,
-                false,
-            );
-            self.database.insert_chunk(&db_chunk).await?;
-        }
 
         // Process each audio file mapping and store file records + chunk mappings
         self.process_file_mappings(mappings, &album_result.file_mappings)
             .await?;
 
-        // Clean up temp directory
-        if let Err(e) = tokio::fs::remove_dir_all(&temp_dir).await {
-            println!(
-                "Warning: Failed to clean up temp directory {}: {}",
-                temp_dir.display(),
-                e
-            );
-        }
-
         println!(
-            "LibraryManager: Successfully processed album with {} chunks and {} file mappings",
-            album_result.chunks.len(),
-            album_result.file_mappings.len()
+            "LibraryManager: Successfully processed album with {} chunks",
+            album_result.total_chunks
         );
 
         Ok(())
