@@ -23,7 +23,7 @@ Import Pipeline: Scan files → Match to Discogs → Streaming Chunk Pipeline
 Stream Processing:
     Read files (8KB increments) → Fill chunk buffer (1MB)
          ↓                              ↓
-    Continue next file      Encrypt → Upload (parallel)
+    Continue next file      Encrypt (blocking pool) → Upload (parallel, max 20)
          ↓                              ↓
     [loop until done]           Update progress
     ↓
@@ -34,7 +34,7 @@ Local Cache: ~/.bae/cache/ (encrypted chunks, LRU eviction)
 Streaming: Cache → Decrypt → Reassemble → Stream
 ```
 
-**Streaming Pipeline:** bae reads album files sequentially and streams data into chunk buffers. When a buffer fills (1MB), it's immediately encrypted and uploaded in parallel while reading continues. This eliminates temporary files, reduces memory usage, and maximizes throughput through parallel uploads. See `BAE_IMPORT_WORKFLOW.md` for import details and `BAE_CUE_FLAC_SPEC.md` for CUE/FLAC handling.
+**Streaming Pipeline:** bae reads album files sequentially and streams data into chunk buffers. When a buffer fills (1MB), it's immediately encrypted on Tokio's blocking thread pool (enabling parallel CPU-bound encryption) then uploaded via semaphore-controlled concurrency (max 20 concurrent uploads). Reading continues while encryption and uploads happen in background. This eliminates temporary files, reduces memory usage, and maximizes throughput through parallel processing. See `BAE_IMPORT_WORKFLOW.md` for import details and `BAE_CUE_FLAC_SPEC.md` for CUE/FLAC handling.
 
 **Database Schema:**
 - `albums` → album metadata from Discogs

@@ -175,8 +175,19 @@ impl ChunkingService {
                     let chunk_data: Vec<u8> =
                         chunk_buffer.drain(..self.config.chunk_size).collect();
 
-                    // Encrypt chunk
-                    let chunk = self.create_encrypted_chunk(current_chunk_index, &chunk_data)?;
+                    // Encrypt chunk on blocking thread pool (CPU-bound work)
+                    let chunking_service = self.clone();
+                    let chunk_index = current_chunk_index;
+                    let chunk = tokio::task::spawn_blocking(move || {
+                        chunking_service.create_encrypted_chunk(chunk_index, &chunk_data)
+                    })
+                    .await
+                    .map_err(|e| {
+                        ChunkingError::Io(std::io::Error::other(format!(
+                            "Encryption task failed: {}",
+                            e
+                        )))
+                    })??;
 
                     // Call callback for immediate upload
                     chunk_callback(chunk).await.map_err(|e| {
@@ -193,7 +204,20 @@ impl ChunkingService {
 
         // Process final partial chunk if any data remains
         if !chunk_buffer.is_empty() {
-            let chunk = self.create_encrypted_chunk(current_chunk_index, &chunk_buffer)?;
+            let chunking_service = self.clone();
+            let chunk_index = current_chunk_index;
+            let chunk_data = chunk_buffer;
+            let chunk = tokio::task::spawn_blocking(move || {
+                chunking_service.create_encrypted_chunk(chunk_index, &chunk_data)
+            })
+            .await
+            .map_err(|e| {
+                ChunkingError::Io(std::io::Error::other(format!(
+                    "Encryption task failed: {}",
+                    e
+                )))
+            })??;
+
             chunk_callback(chunk).await.map_err(|e| {
                 ChunkingError::Io(std::io::Error::other(format!(
                     "Chunk callback failed: {}",

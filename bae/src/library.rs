@@ -410,12 +410,17 @@ impl LibraryManager {
         let progress_callback = std::sync::Arc::new(progress_callback);
         let upload_handles = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
 
+        // Limit concurrent uploads to prevent resource exhaustion
+        // 20 concurrent uploads balances throughput with memory/connection limits
+        let upload_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(20));
+
         // Create chunk callback for streaming pipeline with parallel uploads
         let chunk_callback: crate::chunking::ChunkCallback = {
             let chunks_completed = chunks_completed.clone();
             let total_chunks_ref = total_chunks_ref.clone();
             let progress_callback = progress_callback.clone();
             let upload_handles = upload_handles.clone();
+            let upload_semaphore = upload_semaphore.clone();
 
             Box::new(move |chunk: crate::chunking::AlbumChunk| {
                 let cloud_storage = cloud_storage.clone();
@@ -425,10 +430,13 @@ impl LibraryManager {
                 let total_chunks_ref = total_chunks_ref.clone();
                 let progress_callback = progress_callback.clone();
                 let upload_handles = upload_handles.clone();
+                let upload_semaphore = upload_semaphore.clone();
 
                 Box::pin(async move {
-                    // Spawn parallel upload task
+                    // Spawn parallel upload task (semaphore limits concurrency)
                     let handle = tokio::spawn(async move {
+                        // Acquire semaphore permit (blocks if 20 uploads already in progress)
+                        let _permit = upload_semaphore.acquire().await.unwrap();
                         // Upload chunk data directly from memory
                         let cloud_location = cloud_storage
                             .upload_chunk_data(&chunk.id, &chunk.encrypted_data)

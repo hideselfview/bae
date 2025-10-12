@@ -92,10 +92,11 @@ bae uses a dedicated `ImportService` running on a separate thread to prevent UI 
 6. **Streaming pipeline** (runs on ImportService thread):
    - Reads files sequentially in 8KB increments
    - Fills 1MB chunk buffers as data streams in
-   - When buffer full → encrypts with AES-256-GCM → spawns parallel upload task
-   - Continues reading next file while uploads run in background
+   - When buffer full → encrypts via `tokio::task::spawn_blocking` (parallel CPU-bound work on blocking thread pool)
+   - Spawns upload task with semaphore (limits to 20 concurrent uploads)
+   - Continues reading next file while encryption and uploads run in background
    - No temporary files created, all processing happens in memory
-7. **Parallel upload** (async I/O with tokio::spawn) uploads encrypted chunks to S3 with hash-based partitioning, multiple chunks upload simultaneously
+7. **Parallel processing**: Encryption runs on Tokio's blocking thread pool (CPU-bound), uploads limited to 20 concurrent connections via `Semaphore`, prevents resource exhaustion
 8. **Real-time progress** updates after each chunk completes (not phased), showing actual chunks_done/total_chunks
 9. **Status update** marks album and tracks as `import_status='complete'` (or `'failed'` on error)
 10. **Database sync** uploads SQLite database to S3 after successful import
@@ -124,8 +125,8 @@ bae uses a dedicated `ImportService` running on a separate thread to prevent UI 
 
 **Storage Components:**
 - `ImportService` runs on dedicated thread with own tokio runtime, handles all imports without blocking UI
-- `ChunkingService` splits files into encrypted chunks (CPU work runs on ImportService thread)
-- `CloudStorageManager` handles S3 upload/download with hash-based partitioning and database sync
+- `ChunkingService` splits files into encrypted chunks (CPU work runs on Tokio's blocking thread pool via `spawn_blocking`)
+- `CloudStorageManager` handles S3 upload/download with hash-based partitioning and database sync, uploads limited to 20 concurrent via `Semaphore`
 - `CacheManager` manages local chunk cache with LRU eviction
 - `LibraryManager` orchestrates import workflow, provides progress callbacks
 - `CueFlacProcessor` handles CUE sheet parsing and FLAC header extraction (see `BAE_CUE_FLAC_SPEC.md`)
