@@ -80,7 +80,7 @@ impl ImportService {
     pub fn start(
         database: Database,
         chunking_service: ChunkingService,
-        cloud_storage: Option<CloudStorageManager>,
+        cloud_storage: CloudStorageManager,
     ) -> Self {
         let (request_tx, request_rx) = mpsc::channel();
         let (progress_tx, progress_rx) = mpsc::channel();

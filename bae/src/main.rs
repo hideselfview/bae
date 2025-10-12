@@ -60,21 +60,12 @@ async fn create_cache_manager() -> cache::CacheManager {
 }
 
 /// Initialize cloud storage from config
-async fn create_cloud_storage(
-    config: &config::Config,
-) -> Option<cloud_storage::CloudStorageManager> {
+async fn create_cloud_storage(config: &config::Config) -> cloud_storage::CloudStorageManager {
     println!("Main: Initializing cloud storage...");
 
-    match cloud_storage::CloudStorageManager::new(config.s3_config.clone()).await {
-        Ok(cs) => {
-            println!("Main: Cloud storage initialized");
-            Some(cs)
-        }
-        Err(e) => {
-            println!("Main: Warning - Failed to initialize cloud storage: {}", e);
-            None
-        }
-    }
+    cloud_storage::CloudStorageManager::new(config.s3_config.clone())
+        .await
+        .expect("Failed to initialize cloud storage. Please check your S3 configuration.")
 }
 
 /// Initialize database
@@ -104,7 +95,7 @@ async fn create_database(config: &config::Config) -> database::Database {
 fn create_library_manager(
     database: database::Database,
     encryption_service: encryption::EncryptionService,
-    cloud_storage: Option<cloud_storage::CloudStorageManager>,
+    cloud_storage: cloud_storage::CloudStorageManager,
 ) -> SharedLibraryManager {
     let chunking_service = chunking::ChunkingService::new(encryption_service.clone())
         .expect("Failed to create chunking service");
@@ -195,7 +186,7 @@ async fn start_subsonic_server(
     cache_manager: cache::CacheManager,
     library_manager: SharedLibraryManager,
     encryption_service: encryption::EncryptionService,
-    cloud_storage: Option<cloud_storage::CloudStorageManager>,
+    cloud_storage: cloud_storage::CloudStorageManager,
 ) {
     println!("Starting Subsonic API server...");
 

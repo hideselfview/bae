@@ -17,7 +17,7 @@ pub struct SubsonicState {
     pub library_manager: SharedLibraryManager,
     pub cache_manager: crate::cache::CacheManager,
     pub encryption_service: crate::encryption::EncryptionService,
-    pub cloud_storage: Option<crate::cloud_storage::CloudStorageManager>,
+    pub cloud_storage: crate::cloud_storage::CloudStorageManager,
 }
 
 /// Common query parameters for Subsonic API
@@ -140,7 +140,7 @@ pub fn create_router(
     library_manager: SharedLibraryManager,
     cache_manager: crate::cache::CacheManager,
     encryption_service: crate::encryption::EncryptionService,
-    cloud_storage: Option<crate::cloud_storage::CloudStorageManager>,
+    cloud_storage: crate::cloud_storage::CloudStorageManager,
 ) -> Router {
     let state = SubsonicState {
         library_manager,
@@ -596,12 +596,9 @@ async fn download_and_decrypt_chunk(
         // Download from cloud storage (using injected cloud storage manager)
         println!("Downloading chunk from cloud: {}", chunk.storage_location);
 
-        let cloud_storage = state.cloud_storage.as_ref().ok_or_else(|| {
-            "Cloud storage not configured. Please configure S3 settings in the app.".to_string()
-        })?;
-
         // Download encrypted chunk data
-        cloud_storage
+        state
+            .cloud_storage
             .download_chunk(&chunk.storage_location)
             .await
             .map_err(|e| format!("Failed to download chunk: {}", e))?

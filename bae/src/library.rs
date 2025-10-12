@@ -37,7 +37,7 @@ pub type ProgressCallback = Box<dyn Fn(usize, usize, String) + Send + Sync>;
 pub struct LibraryManager {
     database: Database,
     chunking_service: ChunkingService,
-    cloud_storage: Option<CloudStorageManager>,
+    cloud_storage: CloudStorageManager,
 }
 
 impl LibraryManager {
@@ -45,7 +45,7 @@ impl LibraryManager {
     pub fn new(
         database: Database,
         chunking_service: ChunkingService,
-        cloud_storage: Option<CloudStorageManager>,
+        cloud_storage: CloudStorageManager,
     ) -> Self {
         LibraryManager {
             database,
@@ -386,12 +386,7 @@ impl LibraryManager {
             "LibraryManager: Uploading {} chunks to cloud storage...",
             album_result.chunks.len()
         );
-        let cloud_storage = self.cloud_storage.as_ref().ok_or_else(|| {
-            LibraryError::CloudStorage(crate::cloud_storage::CloudStorageError::Config(
-                "Cloud storage not configured. Please configure S3 settings in the app."
-                    .to_string(),
-            ))
-        })?;
+        let cloud_storage = &self.cloud_storage;
         let total_chunks = album_result.chunks.len();
 
         for (index, chunk) in album_result.chunks.iter().enumerate() {
