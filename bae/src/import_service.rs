@@ -2,7 +2,7 @@ use crate::models::ImportItem;
 use std::path::{Path, PathBuf};
 use std::sync::{
     mpsc::{self, Receiver, Sender},
-    Arc,
+    Arc, Mutex,
 };
 use std::thread;
 
@@ -40,22 +40,32 @@ pub enum ImportProgress {
     },
 }
 
-/// Handle for sending import requests and receiving progress updates
+/// Status of an import
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportStatus {
+    InProgress,
+    Complete,
+    Failed { error: String },
+}
+
+/// Handle for sending import requests and subscribing to progress updates
 #[derive(Clone)]
 pub struct ImportServiceHandle {
     request_tx: Sender<ImportRequest>,
-    progress_rx: std::sync::Arc<std::sync::Mutex<Receiver<ImportProgress>>>,
+    progress_service: crate::progress_service::ProgressService,
 }
 
 impl ImportServiceHandle {
+    /// Send an import request to the import service
     pub fn send_request(&self, request: ImportRequest) -> Result<(), String> {
         self.request_tx
             .send(request)
             .map_err(|e| format!("Failed to send import request: {}", e))
     }
 
-    pub fn try_recv_progress(&self) -> Option<ImportProgress> {
-        self.progress_rx.lock().unwrap().try_recv().ok()
+    /// Get the progress service for reading import progress
+    pub fn progress_service(&self) -> &crate::progress_service::ProgressService {
+        &self.progress_service
     }
 }
 
@@ -685,7 +695,10 @@ impl ImportService {
     pub fn start(self) -> ImportServiceHandle {
         let (request_tx, request_rx) = mpsc::channel();
         let (progress_tx, progress_rx) = mpsc::channel();
-        let progress_rx = Arc::new(std::sync::Mutex::new(progress_rx));
+        let progress_rx = Arc::new(Mutex::new(progress_rx));
+
+        // Create ProgressService that will process progress updates
+        let progress_service = crate::progress_service::ProgressService::new(progress_rx.clone());
 
         // Spawn thread and let it run detached (no graceful shutdown yet - see TASKS.md)
         let _ = thread::spawn(move || {
@@ -700,7 +713,7 @@ impl ImportService {
 
         ImportServiceHandle {
             request_tx,
-            progress_rx,
+            progress_service,
         }
     }
 }

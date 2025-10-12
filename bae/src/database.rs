@@ -453,13 +453,11 @@ impl Database {
         Ok(())
     }
 
-    /// Get all albums (only completed imports)
+    /// Get all albums regardless of import status
     pub async fn get_albums(&self) -> Result<Vec<DbAlbum>, sqlx::Error> {
-        let rows =
-            sqlx::query("SELECT * FROM albums WHERE import_status = ? ORDER BY artist_name, title")
-                .bind(ImportStatus::Complete)
-                .fetch_all(&self.pool)
-                .await?;
+        let rows = sqlx::query("SELECT * FROM albums ORDER BY artist_name, title")
+            .fetch_all(&self.pool)
+            .await?;
 
         let mut albums = Vec::new();
         for row in rows {

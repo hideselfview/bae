@@ -16,6 +16,7 @@ mod import_service;
 mod library;
 mod library_context;
 mod models;
+mod progress_service; // Used internally by import_service
 mod subsonic;
 
 use components::album_import::ImportWorkflowManager;

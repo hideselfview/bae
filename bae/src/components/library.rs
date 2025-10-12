@@ -1,5 +1,5 @@
-use crate::database::DbAlbum;
-use crate::library_context::use_library_manager;
+use crate::database::{DbAlbum, ImportStatus};
+use crate::library_context::{use_import_service, use_library_manager};
 use crate::Route;
 use dioxus::prelude::*;
 
@@ -13,9 +13,28 @@ pub fn Library() -> Element {
     let mut loading = use_signal(|| true);
     let mut error = use_signal(|| None::<String>);
     let mut search_query = use_signal(String::new);
+    let mut refresh_tick = use_signal(|| 0);
 
-    // Load albums on component mount
+    // Auto-refresh when imports are active (every 2 seconds)
     use_effect(move || {
+        spawn(async move {
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                // Check if any albums are importing
+                let has_importing = albums
+                    .read()
+                    .iter()
+                    .any(|a| a.import_status == ImportStatus::Importing);
+                if has_importing {
+                    refresh_tick.set(refresh_tick() + 1);
+                }
+            }
+        });
+    });
+
+    // Load albums on component mount or when refresh_tick changes
+    use_effect(move || {
+        let _ = refresh_tick(); // Depend on refresh_tick
         println!("Library: Starting load_albums effect");
         let library_manager = library_manager.clone();
         spawn(async move {
@@ -181,9 +200,37 @@ fn AlbumGrid(albums: Vec<DbAlbum>) -> Element {
 /// Individual album card component
 #[component]
 fn AlbumCard(album: DbAlbum) -> Element {
+    let import_service = use_import_service();
+    let progress_service = import_service.progress_service();
+
+    // Get current progress from ProgressService
+    let progress_data = progress_service.get_album_progress(&album.id);
+
+    // Determine visual styling based on import status
+    let (card_class, overlay_class, status_badge) = match album.import_status {
+        ImportStatus::Complete => (
+            "bg-gray-800 rounded-lg overflow-hidden shadow-lg hover:shadow-xl transition-shadow duration-300 cursor-pointer",
+            "",
+            None
+        ),
+        ImportStatus::Importing => {
+            let progress = progress_data.as_ref().map(|p| p.percent).unwrap_or(0);
+            (
+                "bg-gray-800 rounded-lg overflow-hidden shadow-lg hover:shadow-xl transition-shadow duration-300 cursor-pointer relative",
+                "absolute inset-0 bg-black bg-opacity-50",
+                Some(("Importing", progress, "bg-blue-600"))
+            )
+        },
+        ImportStatus::Failed => (
+            "bg-gray-800 rounded-lg overflow-hidden shadow-lg hover:shadow-xl transition-shadow duration-300 cursor-pointer relative opacity-75",
+            "absolute inset-0 bg-red-900 bg-opacity-30",
+            Some(("Failed", 0u8, "bg-red-600"))
+        ),
+    };
+
     rsx! {
         div {
-            class: "bg-gray-800 rounded-lg overflow-hidden shadow-lg hover:shadow-xl transition-shadow duration-300 cursor-pointer",
+            class: "{card_class}",
             onclick: {
                 let album_id = album.id.clone();
                 let navigator = navigator();
@@ -194,7 +241,7 @@ fn AlbumCard(album: DbAlbum) -> Element {
 
             // Album cover
             div {
-                class: "aspect-square bg-gray-700 flex items-center justify-center",
+                class: "aspect-square bg-gray-700 flex items-center justify-center relative",
                 if let Some(cover_url) = &album.cover_art_url {
                     img {
                         src: "{cover_url}",
@@ -205,6 +252,29 @@ fn AlbumCard(album: DbAlbum) -> Element {
                     div {
                         class: "text-gray-500 text-4xl",
                         "🎵"
+                    }
+                }
+
+                // Overlay for importing/failed albums
+                if !overlay_class.is_empty() {
+                    div { class: "{overlay_class}" }
+                }
+
+                // Status badge
+                if let Some((label, progress, badge_color)) = status_badge {
+                    div {
+                        class: "absolute top-2 right-2 px-2 py-1 {badge_color} text-white text-xs rounded",
+                        "{label}"
+                    }
+                    // Progress bar for importing albums
+                    if progress > 0 {
+                        div {
+                            class: "absolute bottom-0 left-0 right-0 h-1 bg-gray-800",
+                            div {
+                                class: "h-full bg-blue-500 transition-all duration-300",
+                                style: "width: {progress}%"
+                            }
+                        }
                     }
                 }
             }

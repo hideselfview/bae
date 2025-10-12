@@ -74,7 +74,10 @@ pub fn AlbumDetail(album_id: String) -> Element {
                     p { "{err}" }
                 }
             } else if let Some(album_data) = album() {
-                AlbumDetailView { album: album_data, tracks: tracks() }
+                AlbumDetailView {
+                    album: album_data,
+                    tracks: tracks()
+                }
             }
         }
     }

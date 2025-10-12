@@ -1,6 +1,7 @@
-use crate::import_service::{ImportProgress, ImportRequest};
+use crate::import_service::ImportRequest;
 use crate::library_context::use_import_service;
 use crate::models::ImportItem;
+use crate::Route;
 use dioxus::prelude::*;
 use rfd::AsyncFileDialog;
 use std::path::{Path, PathBuf};
@@ -53,16 +54,14 @@ pub struct ImportWorkflowProps {
 #[derive(PartialEq, Clone)]
 pub enum ImportStep {
     DataSourceSelection,
-    ImportProgress,
-    ImportComplete,
     ImportError(String),
 }
 
 #[component]
 pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
     let import_service = use_import_service();
+    let navigator = use_navigator();
     let mut current_step = use_signal(|| ImportStep::DataSourceSelection);
-    let mut import_progress = use_signal(|| 0u8);
     let mut selected_folder = use_signal(|| None::<String>);
     let mut folder_error = use_signal(|| None::<String>);
 
@@ -75,47 +74,6 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
         folder_error.set(Some(error));
         selected_folder.set(None); // Clear selection on error
     };
-
-    // Poll for progress updates from import service
-    let import_service_for_polling = import_service.clone();
-    use_effect(move || {
-        if *current_step.read() == ImportStep::ImportProgress {
-            let import_service_clone = import_service_for_polling.clone();
-            spawn(async move {
-                loop {
-                    // Check for progress updates
-                    if let Some(progress) = import_service_clone.try_recv_progress() {
-                        match progress {
-                            ImportProgress::Started { album_title, .. } => {
-                                println!("Import started: {}", album_title);
-                                import_progress.set(0);
-                            }
-                            ImportProgress::ProcessingProgress { percent, .. } => {
-                                import_progress.set(percent);
-                            }
-                            ImportProgress::TrackComplete { .. } => {
-                                println!("Track completed");
-                            }
-                            ImportProgress::Complete { album_id } => {
-                                println!("Import completed: {}", album_id);
-                                import_progress.set(100);
-                                current_step.set(ImportStep::ImportComplete);
-                                break;
-                            }
-                            ImportProgress::Failed { error, .. } => {
-                                println!("Import failed: {}", error);
-                                current_step.set(ImportStep::ImportError(error));
-                                break;
-                            }
-                        }
-                    }
-
-                    // Sleep briefly before next poll
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                }
-            });
-        }
-    });
 
     let on_start_import = {
         let item = props.item.clone();
@@ -137,9 +95,9 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                     return;
                 }
 
-                // Transition to progress screen
-                current_step.set(ImportStep::ImportProgress);
-                import_progress.set(0);
+                // Import started successfully - navigate to library
+                // User can see progress there
+                navigator.push(Route::Library {});
             }
         }
     };
@@ -281,91 +239,6 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                                 disabled: selected_folder.read().is_none(),
                                 onclick: on_start_import,
                                 "Start Import"
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        ImportStep::ImportProgress => {
-            let progress = *import_progress.read();
-            let progress_clamped = progress.clamp(0, 100);
-            rsx! {
-                div {
-                    class: "max-w-4xl mx-auto p-6",
-                    div {
-                        class: "text-center",
-                        h1 {
-                            class: "text-2xl font-bold text-white mb-6",
-                            "Importing Album"
-                        }
-
-                        div {
-                            class: "bg-white rounded-lg shadow p-8",
-                            div {
-                                class: "mb-6",
-                                div {
-                                    class: "w-full bg-gray-200 rounded-full h-2",
-                                    div {
-                                        class: "bg-blue-600 h-2 rounded-full transition-all duration-300",
-                                        style: "width: {progress_clamped}%"
-                                    }
-                                }
-                                p {
-                                    class: "mt-2 text-sm text-gray-600",
-                                    "{progress_clamped}% Complete"
-                                }
-                            }
-
-                            div {
-                                class: "text-sm text-gray-500",
-                                "Processing files and adding to library..."
-                            }
-                            div {
-                                class: "text-xs text-gray-400 mt-2",
-                                "This may take several minutes for large albums."
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        ImportStep::ImportComplete => {
-            rsx! {
-                div {
-                    class: "max-w-4xl mx-auto p-6",
-                    div {
-                        class: "text-center",
-                        div {
-                            class: "mb-6",
-                            div {
-                                class: "w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4",
-                                "✓"
-                            }
-                            h1 {
-                                class: "text-2xl font-bold text-gray-900 mb-2",
-                                "Import Complete!"
-                            }
-                            p {
-                                class: "text-gray-600",
-                                "Album has been successfully added to your library."
-                            }
-                        }
-
-                        div {
-                            class: "space-x-4",
-                            button {
-                                class: "px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700",
-                                onclick: on_back_to_search,
-                                "Import Another Album"
-                            }
-                            button {
-                                class: "px-6 py-2 bg-gray-600 text-white rounded hover:bg-gray-700",
-                                onclick: move |_| {
-                                    // TODO: Navigate to library view
-                                    println!("Navigate to library");
-                                },
-                                "View Library"
                             }
                         }
                     }
