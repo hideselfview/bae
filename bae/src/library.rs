@@ -1,6 +1,7 @@
 use crate::chunking::{ChunkingError, ChunkingService, FileChunkMapping};
 use crate::cloud_storage::{CloudStorageError, CloudStorageManager};
 use crate::database::{Database, DbAlbum, DbChunk, DbFile, DbTrack};
+use crate::import_service::FileMapping;
 use crate::models::ImportItem;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -138,147 +139,6 @@ impl LibraryManager {
     ) -> Result<(), LibraryError> {
         self.database.update_album_status(album_id, status).await?;
         Ok(())
-    }
-
-    /// Map audio files in source folder to tracks
-    /// This is where AI will eventually be used for smart matching
-    pub async fn map_files_to_tracks(
-        &self,
-        source_folder: &Path,
-        tracks: &[DbTrack],
-    ) -> Result<Vec<FileMapping>, LibraryError> {
-        use crate::cue_flac::CueFlacProcessor;
-
-        println!(
-            "LibraryManager: Mapping files in {} to {} tracks",
-            source_folder.display(),
-            tracks.len()
-        );
-
-        // First, check for CUE/FLAC pairs
-        let cue_flac_pairs = CueFlacProcessor::detect_cue_flac(source_folder)
-            .map_err(|e| LibraryError::TrackMapping(format!("CUE/FLAC detection failed: {}", e)))?;
-
-        if !cue_flac_pairs.is_empty() {
-            println!(
-                "LibraryManager: Found {} CUE/FLAC pairs",
-                cue_flac_pairs.len()
-            );
-            return self.map_cue_flac_to_tracks(cue_flac_pairs, tracks).await;
-        }
-
-        // Fallback to individual audio files
-        let audio_files = self.find_audio_files(source_folder)?;
-
-        if audio_files.is_empty() {
-            return Err(LibraryError::TrackMapping(
-                "No audio files found in source folder".to_string(),
-            ));
-        }
-
-        // Simple mapping strategy for now: sort files by name and match to track order
-        // TODO: Replace with AI-powered matching
-        let mut mappings = Vec::new();
-
-        for (index, track) in tracks.iter().enumerate() {
-            if let Some(audio_file) = audio_files.get(index) {
-                mappings.push(FileMapping {
-                    track_id: track.id.clone(),
-                    source_path: audio_file.clone(),
-                });
-            } else {
-                println!(
-                    "LibraryManager: Warning - no file found for track: {}",
-                    track.title
-                );
-            }
-        }
-
-        println!("LibraryManager: Mapped {} files to tracks", mappings.len());
-        Ok(mappings)
-    }
-
-    /// Map CUE/FLAC pairs to tracks using CUE sheet parsing
-    async fn map_cue_flac_to_tracks(
-        &self,
-        cue_flac_pairs: Vec<crate::cue_flac::CueFlacPair>,
-        tracks: &[DbTrack],
-    ) -> Result<Vec<FileMapping>, LibraryError> {
-        use crate::cue_flac::CueFlacProcessor;
-
-        let mut mappings = Vec::new();
-
-        for pair in cue_flac_pairs {
-            println!(
-                "LibraryManager: Processing CUE/FLAC pair: {} + {}",
-                pair.flac_path.display(),
-                pair.cue_path.display()
-            );
-
-            // Parse the CUE sheet
-            let cue_sheet = CueFlacProcessor::parse_cue_sheet(&pair.cue_path).map_err(|e| {
-                LibraryError::TrackMapping(format!("Failed to parse CUE sheet: {}", e))
-            })?;
-
-            println!(
-                "LibraryManager: CUE sheet contains {} tracks",
-                cue_sheet.tracks.len()
-            );
-
-            // For CUE/FLAC, all tracks map to the same FLAC file
-            // We'll create one mapping per track, all pointing to the same FLAC file
-            for (index, cue_track) in cue_sheet.tracks.iter().enumerate() {
-                if let Some(db_track) = tracks.get(index) {
-                    mappings.push(FileMapping {
-                        track_id: db_track.id.clone(),
-                        source_path: pair.flac_path.clone(),
-                    });
-
-                    println!(
-                        "LibraryManager: Mapped CUE track '{}' to DB track '{}'",
-                        cue_track.title, db_track.title
-                    );
-                } else {
-                    println!(
-                        "LibraryManager: Warning - CUE track '{}' has no corresponding DB track",
-                        cue_track.title
-                    );
-                }
-            }
-        }
-
-        println!(
-            "LibraryManager: Created {} CUE/FLAC mappings",
-            mappings.len()
-        );
-        Ok(mappings)
-    }
-
-    /// Find all audio files in a directory
-    fn find_audio_files(&self, dir: &Path) -> Result<Vec<PathBuf>, LibraryError> {
-        let mut audio_files = Vec::new();
-        let audio_extensions = ["mp3", "flac", "wav", "m4a", "aac", "ogg"];
-
-        for entry in fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if path.is_file() {
-                if let Some(extension) = path.extension() {
-                    if let Some(ext_str) = extension.to_str() {
-                        if audio_extensions.contains(&ext_str.to_lowercase().as_str()) {
-                            audio_files.push(path);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Sort files by name for consistent ordering
-        audio_files.sort();
-
-        println!("LibraryManager: Found {} audio files", audio_files.len());
-        Ok(audio_files)
     }
 
     /// Find ALL files in a folder (for album-level chunking)
@@ -467,16 +327,6 @@ impl LibraryManager {
         );
 
         Ok(())
-    }
-
-    /// Process audio files using album-level chunking (without progress callback)
-    pub async fn process_audio_files(
-        &self,
-        mappings: &[FileMapping],
-        album_id: &str,
-    ) -> Result<(), LibraryError> {
-        self.process_audio_files_with_progress(mappings, album_id, None)
-            .await
     }
 
     /// Process file mappings - create file records and chunk mappings
@@ -727,11 +577,4 @@ impl LibraryManager {
             "Track not found in any album".to_string(),
         ))
     }
-}
-
-/// Represents a mapping between a track and its source audio file
-#[derive(Debug, Clone)]
-pub struct FileMapping {
-    pub track_id: String,
-    pub source_path: PathBuf,
 }

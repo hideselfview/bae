@@ -59,6 +59,147 @@ impl ImportServiceHandle {
     }
 }
 
+/// File mapping for import workflow
+#[derive(Debug, Clone)]
+pub struct FileMapping {
+    pub track_id: String,
+    pub source_path: PathBuf,
+}
+
+/// Map audio files in source folder to tracks
+async fn map_files_to_tracks(
+    source_folder: &Path,
+    tracks: &[crate::database::DbTrack],
+) -> Result<Vec<FileMapping>, String> {
+    use crate::cue_flac::CueFlacProcessor;
+
+    println!(
+        "ImportService: Mapping files in {} to {} tracks",
+        source_folder.display(),
+        tracks.len()
+    );
+
+    // First, check for CUE/FLAC pairs
+    let cue_flac_pairs = CueFlacProcessor::detect_cue_flac(source_folder)
+        .map_err(|e| format!("CUE/FLAC detection failed: {}", e))?;
+
+    if !cue_flac_pairs.is_empty() {
+        println!(
+            "ImportService: Found {} CUE/FLAC pairs",
+            cue_flac_pairs.len()
+        );
+        return map_cue_flac_to_tracks(cue_flac_pairs, tracks);
+    }
+
+    // Fallback to individual audio files
+    let audio_files = find_audio_files(source_folder)?;
+
+    if audio_files.is_empty() {
+        return Err("No audio files found in source folder".to_string());
+    }
+
+    // Simple mapping strategy: sort files by name and match to track order
+    // TODO: Replace with AI-powered matching
+    let mut mappings = Vec::new();
+
+    for (index, track) in tracks.iter().enumerate() {
+        if let Some(audio_file) = audio_files.get(index) {
+            mappings.push(FileMapping {
+                track_id: track.id.clone(),
+                source_path: audio_file.clone(),
+            });
+        } else {
+            println!(
+                "ImportService: Warning - no file found for track: {}",
+                track.title
+            );
+        }
+    }
+
+    println!("ImportService: Mapped {} files to tracks", mappings.len());
+    Ok(mappings)
+}
+
+/// Map CUE/FLAC pairs to tracks using CUE sheet parsing
+fn map_cue_flac_to_tracks(
+    cue_flac_pairs: Vec<crate::cue_flac::CueFlacPair>,
+    tracks: &[crate::database::DbTrack],
+) -> Result<Vec<FileMapping>, String> {
+    use crate::cue_flac::CueFlacProcessor;
+
+    let mut mappings = Vec::new();
+
+    for pair in cue_flac_pairs {
+        println!(
+            "ImportService: Processing CUE/FLAC pair: {} + {}",
+            pair.flac_path.display(),
+            pair.cue_path.display()
+        );
+
+        // Parse the CUE sheet
+        let cue_sheet = CueFlacProcessor::parse_cue_sheet(&pair.cue_path)
+            .map_err(|e| format!("Failed to parse CUE sheet: {}", e))?;
+
+        println!(
+            "ImportService: CUE sheet contains {} tracks",
+            cue_sheet.tracks.len()
+        );
+
+        // For CUE/FLAC, all tracks map to the same FLAC file
+        for (index, cue_track) in cue_sheet.tracks.iter().enumerate() {
+            if let Some(db_track) = tracks.get(index) {
+                mappings.push(FileMapping {
+                    track_id: db_track.id.clone(),
+                    source_path: pair.flac_path.clone(),
+                });
+
+                println!(
+                    "ImportService: Mapped CUE track '{}' to DB track '{}'",
+                    cue_track.title, db_track.title
+                );
+            } else {
+                println!(
+                    "ImportService: Warning - CUE track '{}' has no corresponding DB track",
+                    cue_track.title
+                );
+            }
+        }
+    }
+
+    println!(
+        "ImportService: Created {} CUE/FLAC mappings",
+        mappings.len()
+    );
+    Ok(mappings)
+}
+
+/// Find all audio files in a directory
+fn find_audio_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut audio_files = Vec::new();
+    let audio_extensions = ["mp3", "flac", "wav", "m4a", "aac", "ogg"];
+
+    for entry in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+
+        if path.is_file() {
+            if let Some(extension) = path.extension() {
+                if let Some(ext_str) = extension.to_str() {
+                    if audio_extensions.contains(&ext_str.to_lowercase().as_str()) {
+                        audio_files.push(path);
+                    }
+                }
+            }
+        }
+    }
+
+    // Sort files by name for consistent ordering
+    audio_files.sort();
+
+    println!("ImportService: Found {} audio files", audio_files.len());
+    Ok(audio_files)
+}
+
 /// Import service that runs on a dedicated thread
 pub struct ImportService {
     request_tx: Sender<ImportRequest>,
@@ -152,6 +293,7 @@ impl ImportService {
             Some(folder.to_string_lossy().to_string()),
         )
         .map_err(|e| format!("Failed to create album record: {}", e))?;
+
         let album_id = album.id.clone();
         let album_title = album.title.clone();
 
@@ -176,10 +318,7 @@ impl ImportService {
         );
 
         // Map files to tracks
-        let file_mappings = library_manager
-            .map_files_to_tracks(folder, &tracks)
-            .await
-            .map_err(|e| format!("File mapping error: {}", e))?;
+        let file_mappings = map_files_to_tracks(folder, &tracks).await?;
 
         // Process and upload files with progress reporting
         let progress_tx_clone = progress_tx.clone();
