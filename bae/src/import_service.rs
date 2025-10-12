@@ -173,6 +173,65 @@ fn map_cue_flac_to_tracks(
     Ok(mappings)
 }
 
+/// Create album database record from Discogs data
+fn create_album_record(
+    import_item: &ImportItem,
+    artist_name: &str,
+    source_folder_path: Option<String>,
+) -> Result<crate::database::DbAlbum, String> {
+    let album = match import_item {
+        ImportItem::Master(master) => {
+            crate::database::DbAlbum::from_discogs_master(master, artist_name, source_folder_path)
+        }
+        ImportItem::Release(release) => {
+            crate::database::DbAlbum::from_discogs_release(release, artist_name, source_folder_path)
+        }
+    };
+    Ok(album)
+}
+
+/// Create track database records from Discogs tracklist
+fn create_track_records(
+    import_item: &ImportItem,
+    album_id: &str,
+) -> Result<Vec<crate::database::DbTrack>, String> {
+    let discogs_tracks = import_item.tracklist();
+    let mut tracks = Vec::new();
+
+    for (index, discogs_track) in discogs_tracks.iter().enumerate() {
+        let track_number = parse_track_number(&discogs_track.position, index);
+        let track =
+            crate::database::DbTrack::from_discogs_track(discogs_track, album_id, track_number);
+        tracks.push(track);
+    }
+
+    Ok(tracks)
+}
+
+/// Parse track number from Discogs position string
+/// Discogs positions can be like "1", "A1", "1-1", etc.
+fn parse_track_number(position: &str, fallback_index: usize) -> Option<i32> {
+    // Try to extract number from position string
+    let numbers: String = position.chars().filter(|c| c.is_numeric()).collect();
+
+    if let Ok(num) = numbers.parse::<i32>() {
+        Some(num)
+    } else {
+        // Fallback to index + 1
+        Some((fallback_index + 1) as i32)
+    }
+}
+
+/// Extract artist name from import item
+fn extract_artist_name(import_item: &ImportItem) -> String {
+    let title = import_item.title();
+    if let Some(dash_pos) = title.find(" - ") {
+        title[..dash_pos].to_string()
+    } else {
+        "Unknown Artist".to_string()
+    }
+}
+
 /// Find all audio files in a directory
 fn find_audio_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
     let mut audio_files = Vec::new();
@@ -286,19 +345,17 @@ impl ImportService {
         );
 
         // Extract artist and create records
-        let artist_name = Self::extract_artist_name(item);
-        let album = crate::library::create_album_record(
+        let artist_name = extract_artist_name(item);
+        let album = create_album_record(
             item,
             &artist_name,
             Some(folder.to_string_lossy().to_string()),
-        )
-        .map_err(|e| format!("Failed to create album record: {}", e))?;
+        )?;
 
         let album_id = album.id.clone();
         let album_title = album.title.clone();
 
-        let tracks = crate::library::create_track_records(item, &album_id)
-            .map_err(|e| format!("Failed to create track records: {}", e))?;
+        let tracks = create_track_records(item, &album_id)?;
 
         // Send started progress
         let _ = progress_tx.send(ImportProgress::Started {
@@ -382,15 +439,5 @@ impl ImportService {
             album_title
         );
         Ok(())
-    }
-
-    /// Extract artist name from import item
-    fn extract_artist_name(import_item: &ImportItem) -> String {
-        let title = import_item.title();
-        if let Some(dash_pos) = title.find(" - ") {
-            title[..dash_pos].to_string()
-        } else {
-            "Unknown Artist".to_string()
-        }
     }
 }

@@ -2,7 +2,6 @@ use crate::chunking::{ChunkingError, ChunkingService, FileChunkMapping};
 use crate::cloud_storage::{CloudStorageError, CloudStorageManager};
 use crate::database::{Database, DbAlbum, DbChunk, DbFile, DbTrack};
 use crate::import_service::FileMapping;
-use crate::models::ImportItem;
 use std::fs;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -31,54 +30,6 @@ pub enum ProcessingPhase {
 
 /// Progress callback for import operations
 pub type ProgressCallback = Box<dyn Fn(usize, usize, ProcessingPhase) + Send + Sync>;
-
-/// Create album database record from Discogs data
-pub fn create_album_record(
-    import_item: &ImportItem,
-    artist_name: &str,
-    source_folder_path: Option<String>,
-) -> Result<DbAlbum, LibraryError> {
-    let album = match import_item {
-        ImportItem::Master(master) => {
-            DbAlbum::from_discogs_master(master, artist_name, source_folder_path)
-        }
-        ImportItem::Release(release) => {
-            DbAlbum::from_discogs_release(release, artist_name, source_folder_path)
-        }
-    };
-    Ok(album)
-}
-
-/// Create track database records from Discogs tracklist
-pub fn create_track_records(
-    import_item: &ImportItem,
-    album_id: &str,
-) -> Result<Vec<DbTrack>, LibraryError> {
-    let discogs_tracks = import_item.tracklist();
-    let mut tracks = Vec::new();
-
-    for (index, discogs_track) in discogs_tracks.iter().enumerate() {
-        let track_number = parse_track_number(&discogs_track.position, index);
-        let track = DbTrack::from_discogs_track(discogs_track, album_id, track_number);
-        tracks.push(track);
-    }
-
-    Ok(tracks)
-}
-
-/// Parse track number from Discogs position string
-/// Discogs positions can be like "1", "A1", "1-1", etc.
-fn parse_track_number(position: &str, fallback_index: usize) -> Option<i32> {
-    // Try to extract number from position string
-    let numbers: String = position.chars().filter(|c| c.is_numeric()).collect();
-
-    if let Ok(num) = numbers.parse::<i32>() {
-        Some(num)
-    } else {
-        // Fallback to index + 1
-        Some((fallback_index + 1) as i32)
-    }
-}
 
 /// The main library manager that coordinates all import operations
 ///
