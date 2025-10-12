@@ -186,30 +186,37 @@ impl ImportService {
         // Process and upload files with progress reporting
         let progress_tx_clone = progress_tx.clone();
         let album_id_clone = album_id.clone();
-        let progress_callback = Box::new(move |current, total, phase: String| {
-            let percent = ((current as f64 / total as f64) * 100.0) as u8;
-            let progress_update = match phase.as_str() {
-                "processing" => ImportProgress::ProcessingProgress {
-                    album_id: album_id_clone.clone(),
-                    current,
-                    total,
-                    percent,
-                },
-                _ => return,
-            };
-            let _ = progress_tx_clone.send(progress_update);
-        });
+        let progress_callback = Box::new(
+            move |current, total, phase: crate::library::ProcessingPhase| {
+                let percent = ((current as f64 / total as f64) * 100.0) as u8;
+                let progress_update = match phase {
+                    crate::library::ProcessingPhase::Processing => {
+                        ImportProgress::ProcessingProgress {
+                            album_id: album_id_clone.clone(),
+                            current,
+                            total,
+                            percent,
+                        }
+                    }
+                };
+                let _ = progress_tx_clone.send(progress_update);
+            },
+        );
 
         library_manager
             .process_audio_files_with_progress(&file_mappings, &album_id, Some(progress_callback))
             .await
             .map_err(|e| {
                 // Mark as failed
-                let _ = tokio::runtime::Handle::current()
-                    .block_on(library_manager.update_album_status(&album_id, "failed"));
+                let _ = tokio::runtime::Handle::current().block_on(
+                    library_manager
+                        .update_album_status(&album_id, crate::database::ImportStatus::Failed),
+                );
                 for track in &tracks {
-                    let _ = tokio::runtime::Handle::current()
-                        .block_on(library_manager.update_track_status(&track.id, "failed"));
+                    let _ = tokio::runtime::Handle::current().block_on(
+                        library_manager
+                            .update_track_status(&track.id, crate::database::ImportStatus::Failed),
+                    );
                 }
                 format!("Import failed: {}", e)
             })?;
@@ -217,7 +224,7 @@ impl ImportService {
         // Mark all tracks as complete
         for track in &tracks {
             library_manager
-                .update_track_status(&track.id, "complete")
+                .update_track_status(&track.id, crate::database::ImportStatus::Complete)
                 .await
                 .map_err(|e| format!("Failed to update track status: {}", e))?;
 
@@ -229,7 +236,7 @@ impl ImportService {
 
         // Mark album as complete
         library_manager
-            .update_album_status(&album_id, "complete")
+            .update_album_status(&album_id, crate::database::ImportStatus::Complete)
             .await
             .map_err(|e| format!("Failed to update album status: {}", e))?;
 

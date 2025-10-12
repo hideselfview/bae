@@ -22,8 +22,14 @@ pub enum LibraryError {
     CloudStorage(#[from] CloudStorageError),
 }
 
+/// Phase of the import processing pipeline
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessingPhase {
+    Processing,
+}
+
 /// Progress callback for import operations
-pub type ProgressCallback = Box<dyn Fn(usize, usize, String) + Send + Sync>;
+pub type ProgressCallback = Box<dyn Fn(usize, usize, ProcessingPhase) + Send + Sync>;
 
 /// The main library manager that coordinates all import operations
 ///
@@ -154,7 +160,7 @@ impl LibraryManager {
     pub async fn update_track_status(
         &self,
         track_id: &str,
-        status: &str,
+        status: crate::database::ImportStatus,
     ) -> Result<(), LibraryError> {
         self.database.update_track_status(track_id, status).await?;
         Ok(())
@@ -164,7 +170,7 @@ impl LibraryManager {
     pub async fn update_album_status(
         &self,
         album_id: &str,
-        status: &str,
+        status: crate::database::ImportStatus,
     ) -> Result<(), LibraryError> {
         self.database.update_album_status(album_id, status).await?;
         Ok(())
@@ -458,7 +464,7 @@ impl LibraryManager {
                             );
 
                             if let Some(ref callback) = progress_callback.as_ref() {
-                                callback(completed, total, "processing".to_string());
+                                callback(completed, total, ProcessingPhase::Processing);
                             }
                         }
 

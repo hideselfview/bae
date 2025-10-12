@@ -226,6 +226,9 @@
   .relative {
     position: relative;
   }
+  .static {
+    position: static;
+  }
   .top-2\.5 {
     top: calc(var(--spacing) * 2.5);
   }
@@ -664,6 +667,9 @@
   }
   .text-white {
     color: var(--color-white);
+  }
+  .lowercase {
+    text-transform: lowercase;
   }
   .uppercase {
     text-transform: uppercase;

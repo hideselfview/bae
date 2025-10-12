@@ -10,6 +10,25 @@ use uuid::Uuid;
 /// - Files split into encrypted chunks
 /// - Chunks uploaded to cloud storage
 /// - Local cache management for recently used chunks
+///
+/// Import status for albums and tracks
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "TEXT", rename_all = "lowercase")]
+pub enum ImportStatus {
+    Importing,
+    Complete,
+    Failed,
+}
+
+impl ImportStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ImportStatus::Importing => "importing",
+            ImportStatus::Complete => "complete",
+            ImportStatus::Failed => "failed",
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DbAlbum {
@@ -21,7 +40,7 @@ pub struct DbAlbum {
     pub discogs_release_id: Option<String>,
     pub cover_art_url: Option<String>,
     pub source_folder_path: Option<String>, // Path to original folder for checkout
-    pub import_status: String,              // "importing", "complete", "failed"
+    pub import_status: ImportStatus,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -36,7 +55,7 @@ pub struct DbTrack {
 
     pub artist_name: Option<String>, // Can differ from album artist
     pub discogs_position: Option<String>, // e.g., "A1", "1", "1-1"
-    pub import_status: String,       // "importing", "complete", "failed"
+    pub import_status: ImportStatus,
     pub created_at: DateTime<Utc>,
 }
 
@@ -313,7 +332,7 @@ impl Database {
         .bind(&album.discogs_release_id)
         .bind(&album.cover_art_url)
         .bind(&album.source_folder_path)
-        .bind(&album.import_status)
+        .bind(album.import_status)
         .bind(album.created_at.to_rfc3339())
         .bind(album.updated_at.to_rfc3339())
         .execute(&self.pool)
@@ -339,7 +358,7 @@ impl Database {
         .bind(track.duration_ms)
         .bind(&track.artist_name)
         .bind(&track.discogs_position)
-        .bind(&track.import_status)
+        .bind(track.import_status)
         .bind(track.created_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
@@ -372,7 +391,7 @@ impl Database {
         .bind(&album.discogs_release_id)
         .bind(&album.cover_art_url)
         .bind(&album.source_folder_path)
-        .bind(&album.import_status)
+        .bind(album.import_status)
         .bind(album.created_at.to_rfc3339())
         .bind(album.updated_at.to_rfc3339())
         .execute(&mut *tx)
@@ -395,7 +414,7 @@ impl Database {
             .bind(track.duration_ms)
             .bind(&track.artist_name)
             .bind(&track.discogs_position)
-            .bind(&track.import_status)
+            .bind(track.import_status)
             .bind(track.created_at.to_rfc3339())
             .execute(&mut *tx)
             .await?;
@@ -409,7 +428,7 @@ impl Database {
     pub async fn update_track_status(
         &self,
         track_id: &str,
-        status: &str,
+        status: ImportStatus,
     ) -> Result<(), sqlx::Error> {
         sqlx::query("UPDATE tracks SET import_status = ? WHERE id = ?")
             .bind(status)
@@ -423,7 +442,7 @@ impl Database {
     pub async fn update_album_status(
         &self,
         album_id: &str,
-        status: &str,
+        status: ImportStatus,
     ) -> Result<(), sqlx::Error> {
         sqlx::query("UPDATE albums SET import_status = ?, updated_at = ? WHERE id = ?")
             .bind(status)
@@ -436,11 +455,11 @@ impl Database {
 
     /// Get all albums (only completed imports)
     pub async fn get_albums(&self) -> Result<Vec<DbAlbum>, sqlx::Error> {
-        let rows = sqlx::query(
-            "SELECT * FROM albums WHERE import_status = 'complete' ORDER BY artist_name, title",
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        let rows =
+            sqlx::query("SELECT * FROM albums WHERE import_status = ? ORDER BY artist_name, title")
+                .bind(ImportStatus::Complete)
+                .fetch_all(&self.pool)
+                .await?;
 
         let mut albums = Vec::new();
         for row in rows {
@@ -768,7 +787,7 @@ impl DbAlbum {
             discogs_release_id: None,
             cover_art_url: master.thumb.clone(),
             source_folder_path,
-            import_status: "importing".to_string(),
+            import_status: ImportStatus::Importing,
             created_at: now,
             updated_at: now,
         }
@@ -789,7 +808,7 @@ impl DbAlbum {
             discogs_release_id: Some(release.id.clone()),
             cover_art_url: release.thumb.clone(),
             source_folder_path,
-            import_status: "importing".to_string(),
+            import_status: ImportStatus::Importing,
             created_at: now,
             updated_at: now,
         }
@@ -810,7 +829,7 @@ impl DbTrack {
             duration_ms: None, // Will be filled in during track mapping
             artist_name: None, // Will be filled in during track mapping
             discogs_position: Some(discogs_track.position.clone()),
-            import_status: "importing".to_string(),
+            import_status: ImportStatus::Importing,
             created_at: Utc::now(),
         }
     }
