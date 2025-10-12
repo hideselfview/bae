@@ -1,3 +1,4 @@
+pub mod album_card;
 pub mod album_detail;
 pub mod album_import;
 pub mod app;
