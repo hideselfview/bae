@@ -116,8 +116,16 @@ fn main() {
         )
         .init();
 
-    // Create tokio runtime for async operations
+    // Architecture: Shared tokio runtime
+    //
+    // All services share a single runtime via Handle clones. The runtime's thread pool
+    // uses work stealing for efficient resource utilization across all async tasks.
+    //
+    // Services using this runtime:
+    // - ImportService: File processing, uploads, database writes
+    // - Subsonic: HTTP streaming, decryption, database reads
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+    let runtime_handle = rt.handle().clone();
 
     println!("Main: Building dependencies...");
 
@@ -125,14 +133,14 @@ fn main() {
     let config = config::Config::load();
 
     // Initialize cache manager
-    let cache_manager = rt.block_on(create_cache_manager());
+    let cache_manager = runtime_handle.block_on(create_cache_manager());
 
     // Try to initialize cloud storage from config (optional, lazy loading)
     // This will only prompt for keyring if cloud storage is actually configured
-    let cloud_storage = rt.block_on(create_cloud_storage(&config));
+    let cloud_storage = runtime_handle.block_on(create_cloud_storage(&config));
 
     // Initialize database
-    let database = rt.block_on(create_database(&config));
+    let database = runtime_handle.block_on(create_database(&config));
 
     // Create encryption service
     let encryption_service = encryption::EncryptionService::new(&config).expect(
@@ -148,11 +156,12 @@ fn main() {
     // Build library manager
     let library_manager = create_library_manager(database.clone());
 
-    // Create import service on dedicated thread
+    // Create import service with shared runtime handle
     let import_service = import::ImportService::new(
         library_manager.clone(),
         chunking_service.clone(),
         cloud_storage.clone(),
+        runtime_handle.clone(),
     );
     let import_service_handle = import_service.start();
 
@@ -163,17 +172,19 @@ fn main() {
         import_service_handle,
     };
 
-    // Start Subsonic API server in background thread
-    std::thread::spawn(move || {
-        rt.block_on(start_subsonic_server(
+    // Start Subsonic API server as async task on shared runtime
+    runtime_handle.spawn(async move {
+        start_subsonic_server(
             cache_manager,
             library_manager,
             encryption_service,
             cloud_storage,
-        ));
+        )
+        .await
     });
 
     // Start the desktop app (this will run in the main thread)
+    // The runtime stays alive for the app's lifetime (Dioxus launch() blocks main thread)
     println!("Main: Starting Dioxus desktop app...");
 
     LaunchBuilder::desktop()

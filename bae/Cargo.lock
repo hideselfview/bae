@@ -832,6 +832,7 @@ dependencies = [
  "dioxus",
  "dirs 5.0.1",
  "dotenvy",
+ "futures",
  "hex",
  "hyper 1.7.0",
  "keyring",

@@ -16,20 +16,15 @@ use crate::import::progress_service::ProgressService;
 use crate::import::track_file_mapper::TrackFileMapper;
 use crate::import::types::{ImportProgress, ImportRequest};
 use crate::import::upload_pipeline::UploadPipeline;
-use crate::library::LibraryManager;
 use crate::library_context::SharedLibraryManager;
 use crate::models::ImportItem;
 use std::path::Path;
-use std::sync::{
-    mpsc::{self, Receiver, Sender},
-    Arc, Mutex,
-};
-use std::thread;
+use tokio::sync::mpsc;
 
 /// Handle for sending import requests and subscribing to progress updates
 #[derive(Clone)]
 pub struct ImportServiceHandle {
-    request_tx: Sender<ImportRequest>,
+    request_tx: mpsc::UnboundedSender<ImportRequest>,
     progress_service: ProgressService,
 }
 
@@ -61,11 +56,12 @@ impl ImportServiceHandle {
     }
 }
 
-/// Import service that runs on a dedicated thread
+/// Import service that orchestrates the import workflow on the shared runtime
 pub struct ImportService {
     library_manager: SharedLibraryManager,
     chunking_service: ChunkingService,
     cloud_storage: CloudStorageManager,
+    runtime_handle: tokio::runtime::Handle,
 }
 
 impl ImportService {
@@ -74,26 +70,30 @@ impl ImportService {
         library_manager: SharedLibraryManager,
         chunking_service: ChunkingService,
         cloud_storage: CloudStorageManager,
+        runtime_handle: tokio::runtime::Handle,
     ) -> Self {
         ImportService {
             library_manager,
             chunking_service,
             cloud_storage,
+            runtime_handle,
         }
     }
 
-    /// Start the import service thread and return handle
+    /// Start the import service worker and return handle
     pub fn start(self) -> ImportServiceHandle {
-        let (request_tx, request_rx) = mpsc::channel();
-        let (progress_tx, progress_rx) = mpsc::channel();
-        let progress_rx = Arc::new(Mutex::new(progress_rx));
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (progress_tx, progress_rx) = mpsc::unbounded_channel();
 
         // Create ProgressService that will process progress updates
-        let progress_service = ProgressService::new(progress_rx.clone());
+        let progress_service = ProgressService::new(progress_rx, self.runtime_handle.clone());
 
-        // Spawn thread and let it run detached (no graceful shutdown yet - see TASKS.md)
-        let _ = thread::spawn(move || {
-            self.run_import_worker(request_rx, progress_tx);
+        // Clone runtime handle before moving self into the async task
+        let runtime_handle = self.runtime_handle.clone();
+
+        // Spawn async task on shared runtime (no graceful shutdown yet - see TASKS.md)
+        runtime_handle.spawn(async move {
+            self.run_import_worker(request_rx, progress_tx).await;
         });
 
         ImportServiceHandle {
@@ -102,182 +102,175 @@ impl ImportService {
         }
     }
 
-    /// Run the import worker thread loop
-    fn run_import_worker(
+    /// Run the import worker async loop
+    async fn run_import_worker(
         self,
-        request_rx: Receiver<ImportRequest>,
-        progress_tx: Sender<ImportProgress>,
+        mut request_rx: mpsc::UnboundedReceiver<ImportRequest>,
+        progress_tx: mpsc::UnboundedSender<ImportProgress>,
     ) {
-        println!("ImportService: Thread started");
+        println!("ImportService: Worker started");
 
-        // Create a tokio runtime for async operations (S3 uploads)
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("Failed to create tokio runtime");
-
-        // Get library manager reference (bound for this thread's lifetime)
-        let library_manager = self.library_manager.get();
+        // Already in async context on shared runtime - no runtime creation needed!
 
         // Process import requests
         loop {
-            match request_rx.recv() {
-                Ok(ImportRequest::ImportAlbum { item, folder }) => {
+            match request_rx.recv().await {
+                Some(ImportRequest::ImportAlbum { item, folder }) => {
                     println!(
                         "ImportService: Received import request for {}",
                         item.title()
                     );
 
-                    let result = runtime.block_on(handle_import(
-                        library_manager,
-                        &self.chunking_service,
-                        &self.cloud_storage,
-                        &item,
-                        &folder,
-                        &progress_tx,
-                    ));
-
-                    if let Err(e) = result {
+                    // Just await directly - no block_on needed!
+                    if let Err(e) = self.handle_import(&item, &folder, &progress_tx).await {
                         println!("ImportService: Import failed: {}", e);
                     }
                 }
-                Ok(ImportRequest::Shutdown) => {
+                Some(ImportRequest::Shutdown) => {
                     println!("ImportService: Shutdown requested");
                     break;
                 }
-                Err(e) => {
-                    println!("ImportService: Channel error: {}", e);
+                None => {
+                    println!("ImportService: Channel closed");
                     break;
                 }
             }
         }
 
-        println!("ImportService: Thread exiting");
+        println!("ImportService: Worker exiting");
     }
-}
 
-/// Handle a single import request - orchestrates the import workflow
-async fn handle_import(
-    library_manager: &LibraryManager,
-    chunking_service: &ChunkingService,
-    cloud_storage: &CloudStorageManager,
-    item: &ImportItem,
-    folder: &Path,
-    progress_tx: &Sender<ImportProgress>,
-) -> Result<(), String> {
-    println!(
-        "ImportService: Starting import for {} from {}",
-        item.title(),
-        folder.display()
-    );
+    /// Handle a single import request - orchestrates the import workflow
+    async fn handle_import(
+        &self,
+        item: &ImportItem,
+        folder: &Path,
+        progress_tx: &mpsc::UnboundedSender<ImportProgress>,
+    ) -> Result<(), String> {
+        let library_manager = self.library_manager.get();
+        println!(
+            "ImportService: Starting import for {} from {}",
+            item.title(),
+            folder.display()
+        );
 
-    // 1. Create album + track records (in memory only)
-    let artist_name = extract_artist_name(item);
-    let album = create_album_record(
-        item,
-        &artist_name,
-        Some(folder.to_string_lossy().to_string()),
-    )?;
-    let album_id = album.id.clone();
-    let album_title = album.title.clone();
-    let tracks = create_track_records(item, &album_id)?;
+        // 1. Create album + track records (in memory only)
+        let artist_name = extract_artist_name(item);
+        let album = create_album_record(
+            item,
+            &artist_name,
+            Some(folder.to_string_lossy().to_string()),
+        )?;
+        let album_id = album.id.clone();
+        let album_title = album.title.clone();
+        let tracks = create_track_records(item, &album_id)?;
 
-    println!(
-        "ImportService: Created album record with {} tracks (not inserted yet)",
-        tracks.len()
-    );
+        println!(
+            "ImportService: Created album record with {} tracks (not inserted yet)",
+            tracks.len()
+        );
 
-    // 2. Validate track-to-file mapping
-    let track_files = TrackFileMapper::map_tracks_to_files(folder, &tracks).await?;
+        // 2. Validate track-to-file mapping
+        let track_files = TrackFileMapper::map_tracks_to_files(folder, &tracks).await?;
 
-    println!(
-        "ImportService: Successfully mapped {} tracks to source files",
-        track_files.len()
-    );
+        println!(
+            "ImportService: Successfully mapped {} tracks to source files",
+            track_files.len()
+        );
 
-    // 3. Insert album + tracks into database (status='importing')
-    library_manager
-        .insert_album_with_tracks(&album, &tracks)
-        .await
-        .map_err(|e| format!("Database error: {}", e))?;
-
-    println!(
-        "ImportService: Inserted album and {} tracks into database with status='importing'",
-        tracks.len()
-    );
-
-    // Send started progress
-    let _ = progress_tx.send(ImportProgress::Started {
-        album_id: album_id.clone(),
-        album_title: album_title.clone(),
-    });
-
-    // 4. Chunk and upload album files
-    let progress_tx_clone = progress_tx.clone();
-    let album_id_clone = album_id.clone();
-    let progress_callback = Box::new(move |current, total| {
-        let percent = ((current as f64 / total as f64) * 100.0) as u8;
-        let _ = progress_tx_clone.send(ImportProgress::ProcessingProgress {
-            album_id: album_id_clone.clone(),
-            current,
-            total,
-            percent,
-        });
-    });
-
-    let upload_pipeline = UploadPipeline::new(chunking_service.clone(), cloud_storage.clone());
-    let album_result = upload_pipeline
-        .chunk_and_upload_album(
-            library_manager,
-            &track_files,
-            &album_id,
-            Some(progress_callback),
-        )
-        .await
-        .map_err(|e| {
-            // Mark as failed
-            let _ = tokio::runtime::Handle::current()
-                .block_on(library_manager.mark_album_failed(&album_id));
-            for track in &tracks {
-                let _ = tokio::runtime::Handle::current()
-                    .block_on(library_manager.mark_track_failed(&track.id));
-            }
-            format!("Import failed: {}", e)
-        })?;
-
-    // 5. Persist file metadata
-    let persister = MetadataPersister::new(library_manager);
-    persister
-        .persist_album_metadata(&track_files, &album_result.file_mappings)
-        .await?;
-
-    // 6. Mark tracks and album as complete
-    for track in &tracks {
+        // 3. Insert album + tracks into database (status='importing')
         library_manager
-            .mark_track_complete(&track.id)
+            .insert_album_with_tracks(&album, &tracks)
             .await
-            .map_err(|e| format!("Failed to mark track complete: {}", e))?;
+            .map_err(|e| format!("Database error: {}", e))?;
 
-        let _ = progress_tx.send(ImportProgress::TrackComplete {
+        println!(
+            "ImportService: Inserted album and {} tracks into database with status='importing'",
+            tracks.len()
+        );
+
+        // Send started progress
+        let _ = progress_tx.send(ImportProgress::Started {
             album_id: album_id.clone(),
-            track_id: track.id.clone(),
+            album_title: album_title.clone(),
         });
+
+        // 4. Chunk and upload album files
+        let progress_tx_clone = progress_tx.clone();
+        let album_id_clone = album_id.clone();
+        let progress_callback = Box::new(move |current, total| {
+            let percent = ((current as f64 / total as f64) * 100.0) as u8;
+            let _ = progress_tx_clone.send(ImportProgress::ProcessingProgress {
+                album_id: album_id_clone.clone(),
+                current,
+                total,
+                percent,
+            });
+        });
+
+        // Configure worker pool sizes
+        let max_encrypt_workers = std::thread::available_parallelism()
+            .map(|n| n.get() * 2)
+            .unwrap_or(4);
+        let max_upload_workers = 20;
+
+        let upload_pipeline =
+            UploadPipeline::new(self.chunking_service.clone(), self.cloud_storage.clone());
+        let album_result = upload_pipeline
+            .chunk_and_upload_album(
+                library_manager,
+                &track_files,
+                &album_id,
+                max_encrypt_workers,
+                max_upload_workers,
+                Some(progress_callback),
+            )
+            .await
+            .map_err(|e| {
+                // Mark as failed
+                let _ = tokio::runtime::Handle::current()
+                    .block_on(library_manager.mark_album_failed(&album_id));
+                for track in &tracks {
+                    let _ = tokio::runtime::Handle::current()
+                        .block_on(library_manager.mark_track_failed(&track.id));
+                }
+                format!("Import failed: {}", e)
+            })?;
+
+        // 5. Persist file metadata
+        let persister = MetadataPersister::new(library_manager);
+        persister
+            .persist_album_metadata(&track_files, &album_result.file_mappings)
+            .await?;
+
+        // 6. Mark tracks and album as complete
+        for track in &tracks {
+            library_manager
+                .mark_track_complete(&track.id)
+                .await
+                .map_err(|e| format!("Failed to mark track complete: {}", e))?;
+
+            let _ = progress_tx.send(ImportProgress::TrackComplete {
+                album_id: album_id.clone(),
+                track_id: track.id.clone(),
+            });
+        }
+
+        library_manager
+            .mark_album_complete(&album_id)
+            .await
+            .map_err(|e| format!("Failed to mark album complete: {}", e))?;
+
+        let _ = progress_tx.send(ImportProgress::Complete {
+            album_id: album_id.clone(),
+        });
+
+        println!(
+            "ImportService: Import completed successfully for {}",
+            album_title
+        );
+        Ok(())
     }
-
-    library_manager
-        .mark_album_complete(&album_id)
-        .await
-        .map_err(|e| format!("Failed to mark album complete: {}", e))?;
-
-    let _ = progress_tx.send(ImportProgress::Complete {
-        album_id: album_id.clone(),
-    });
-
-    println!(
-        "ImportService: Import completed successfully for {}",
-        album_title
-    );
-    Ok(())
 }
 
 /// Create album database record from Discogs data

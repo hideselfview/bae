@@ -89,21 +89,33 @@ bae uses a dedicated `ImportService` running on a separate thread to prevent UI 
 3. **File scanning** identifies audio files and matches them to Discogs tracklist
 4. **Format detection** handles both individual tracks and CUE/FLAC albums
 5. **FLAC header extraction** stores headers in database (CUE/FLAC only)
-6. **Streaming pipeline** (runs on ImportService thread):
-   - Reads files sequentially in 8KB increments
-   - Fills 1MB chunk buffers as data streams in
-   - When buffer full → encrypts via `tokio::task::spawn_blocking` (parallel CPU-bound work on blocking thread pool)
-   - Spawns upload task with semaphore (limits to 20 concurrent uploads)
-   - Continues reading next file while encryption and uploads run in background
-   - No temporary files created, all processing happens in memory
-7. **Parallel processing**: Encryption runs on Tokio's blocking thread pool (CPU-bound), uploads limited to 20 concurrent connections via `Semaphore`, prevents resource exhaustion
-8. **Real-time progress** updates after each chunk completes (not phased), showing actual chunks_done/total_chunks
-9. **Status update** marks album and tracks as `import_status='complete'` (or `'failed'` on error)
-10. **Database sync** uploads SQLite database to S3 after successful import
-11. **Source folder** remains untouched on disk
+6. **Three-stage streaming pipeline** (runs on ImportService thread):
+   
+   **Stage 1 - Sequential Reader:**
+   - Reads files sequentially using `BufReader`
+   - Accumulates data into 5MB chunk buffers
+   - Sends raw chunks to encryption stage via async channel
+   
+   **Stage 2 - Bounded Parallel Encryption:**
+   - Pool of N workers (CPU cores × 2) consuming raw chunks from channel
+   - Each worker encrypts via `tokio::task::spawn_blocking` (CPU-bound work on blocking thread pool)
+   - Sends encrypted chunks to upload stage via async channel
+   - Bounded by `FuturesUnordered` for controlled parallelism
+   
+   **Stage 3 - Bounded Parallel Upload:**
+   - Pool of M workers (20) consuming encrypted chunks from channel
+   - Each worker uploads to S3 and writes metadata to database
+   - Bounded by `FuturesUnordered` for controlled parallelism
+   
+   All three stages run concurrently. Chunks flow through immediately as each stage completes. No temporary files created, all processing happens in memory.
+
+7. **Real-time progress** updates after each chunk uploads, showing actual chunks_done/total_chunks
+8. **Status update** marks album and tracks as `import_status='complete'` (or `'failed'` on error)
+9. **Database sync** uploads SQLite database to S3 after successful import
+10. **Source folder** remains untouched on disk
 
 **Progress Updates:**
-- UI polls `ImportService` via channel for real-time progress
+- UI subscribes to `ImportService` progress channel for real-time updates
 - Single progress metric: chunks completed / total chunks (0-100%)
 - Progress updates as each chunk finishes uploading
 - Shows per-track completion status
@@ -124,9 +136,10 @@ bae uses a dedicated `ImportService` running on a separate thread to prevent UI 
 - `get_release()` → `DiscogsRelease`
 
 **Storage Components:**
-- `ImportService` runs on dedicated thread with own tokio runtime, orchestrates import workflow (file mapping, processing), handles all imports without blocking UI
-- `ChunkingService` splits files into encrypted chunks (CPU work runs on Tokio's blocking thread pool via `spawn_blocking`)
-- `CloudStorageManager` handles S3 upload/download with hash-based partitioning and database sync, uploads limited to 20 concurrent via `Semaphore`
+- `ImportService` orchestrates import workflow on shared tokio runtime, handles file mapping and coordinates pipeline stages without blocking UI
+- `ChunkingService` manages Stages 1 & 2 (read + encrypt), returns channel of encrypted chunks, spawns reader task and encryption coordinator with bounded worker pool
+- `UploadPipeline` manages Stage 3 (upload), consumes encrypted chunks from channel using bounded worker pool (`FuturesUnordered`)
+- `CloudStorageManager` handles S3 upload/download with hash-based partitioning and database sync
 - `CacheManager` manages local chunk cache with LRU eviction
 - `LibraryManager` manages entity lifecycle and state transitions (mark_album_complete, mark_track_failed, etc), provides storage operations with progress callbacks
 - `CueFlacProcessor` handles CUE sheet parsing and FLAC header extraction (see `BAE_CUE_FLAC_SPEC.md`)

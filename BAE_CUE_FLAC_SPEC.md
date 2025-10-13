@@ -15,6 +15,22 @@ This document specifies how bae handles CUE sheet + FLAC albums. For overall imp
 
 bae uses album-level chunking where all files (audio + artwork + notes) are concatenated and split into uniform encrypted chunks.
 
+### Streaming Pipeline Architecture
+
+The chunking, encryption, and upload process uses a three-stage streaming pipeline connected by async channels:
+
+```
+[Stage 1: Reader]    →    [Stage 2: Encryption]    →    [Stage 3: Upload]
+  Sequential Read          Bounded Parallel           Bounded Parallel
+  (BufReader)              (CPU cores * 2)            (20 workers)
+```
+
+**Benefits:**
+- All stages run concurrently for maximum throughput
+- Bounded parallelism prevents resource exhaustion
+- True streaming: chunks flow through immediately as each stage completes
+- Natural backpressure between stages
+
 ### Individual Tracks vs. CUE/FLAC Model
 
 **Individual Tracks (bae chunking):**

@@ -1,7 +1,10 @@
 use crate::encryption::{EncryptedChunk, EncryptionError, EncryptionService};
+use futures::stream::{FuturesUnordered, StreamExt};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 use thiserror::Error;
+use tokio::io::{AsyncReadExt, BufReader};
+use tokio::sync::mpsc;
 
 #[derive(Error, Debug)]
 pub enum ChunkingError {
@@ -56,17 +59,20 @@ pub struct AlbumChunkingResult {
     pub file_mappings: Vec<FileChunkMapping>,
 }
 
-/// Callback type for streaming chunks as they're created
-pub type ChunkCallback = Box<
-    dyn Fn(
-            AlbumChunk,
-        )
-            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>>
-        + Send
-        + Sync,
->;
-
 /// Main chunking service that handles file splitting and encryption
+///
+/// # Concurrency Architecture
+///
+/// Files are read through `BufReader` and accumulated into buffers. When a full
+/// chunk is ready (default 5MB), it's queued for encryption.
+///
+/// Encryption parallelism is bounded to `max_concurrent` tasks (CPU cores * 2) using
+/// `FuturesUnordered`. When at capacity, file reading pauses until an encryption
+/// completes. This creates backpressure - slow encryption pauses reading, slow I/O
+/// leaves encryption slots idle.
+///
+/// Encryption runs on tokio's blocking thread pool (`spawn_blocking`) to prevent
+/// CPU-intensive crypto from blocking async I/O tasks.
 #[derive(Debug, Clone)]
 pub struct ChunkingService {
     config: ChunkingConfig,
@@ -108,22 +114,22 @@ impl ChunkingService {
     }
 
     /// Chunk an entire album folder into uniform chunks (BitTorrent-style)
-    /// Streams chunks via callback as they're created for immediate upload
+    /// Returns a channel of encrypted chunks for streaming upload pipeline
     pub async fn chunk_album_streaming(
         &self,
         album_folder: &Path,
         file_paths: &[std::path::PathBuf],
-        chunk_callback: ChunkCallback,
-    ) -> Result<AlbumChunkingResult, ChunkingError> {
+        max_encrypt_workers: usize,
+    ) -> Result<(AlbumChunkingResult, mpsc::UnboundedReceiver<AlbumChunk>), ChunkingError> {
         println!(
-            "ChunkingService: Starting streaming chunking for folder: {}",
+            "ChunkingService: Starting streaming pipeline for folder: {}",
             album_folder.display()
         );
 
+        // Calculate file mappings and total size upfront
         let mut file_mappings = Vec::new();
         let mut total_bytes_processed = 0u64;
 
-        // First pass: calculate file positions and total size
         for file_path in file_paths {
             let file_size = tokio::fs::metadata(file_path).await?.len();
             let start_byte = total_bytes_processed;
@@ -146,66 +152,89 @@ impl ChunkingService {
         let total_chunks = total_bytes_processed.div_ceil(self.config.chunk_size as u64) as usize;
 
         println!(
-            "ChunkingService: Total size: {} bytes ({:.2} MB), {} chunks",
+            "ChunkingService: Total size: {} bytes ({:.2} MB), {} chunks expected",
             total_bytes_processed,
             total_bytes_processed as f64 / 1024.0 / 1024.0,
             total_chunks
         );
 
-        // Second pass: stream through files, encrypt in parallel, upload via callback
-        let mut chunk_buffer = Vec::with_capacity(self.config.chunk_size);
+        // Create channels for pipeline stages
+        let (raw_chunk_tx, raw_chunk_rx) = mpsc::unbounded_channel();
+        let (encrypted_chunk_tx, encrypted_chunk_rx) = mpsc::unbounded_channel();
+
+        // Stage 1: Spawn reader task (sequential file reading)
+        let file_paths_clone = file_paths.to_vec();
+        let chunk_size = self.config.chunk_size;
+        tokio::spawn(async move {
+            Self::reader_task(file_paths_clone, chunk_size, raw_chunk_tx).await;
+        });
+
+        // Stage 2: Spawn encryption coordinator (bounded parallel encryption)
+        let chunking_service = self.clone();
+        tokio::spawn(async move {
+            chunking_service
+                .encryption_coordinator_task(raw_chunk_rx, encrypted_chunk_tx, max_encrypt_workers)
+                .await;
+        });
+
+        println!(
+            "ChunkingService: Pipeline started with {} encryption workers",
+            max_encrypt_workers
+        );
+
+        Ok((AlbumChunkingResult { file_mappings }, encrypted_chunk_rx))
+    }
+
+    /// Reader task: sequentially reads files and sends raw chunks to encryption stage
+    async fn reader_task(
+        file_paths: Vec<std::path::PathBuf>,
+        chunk_size: usize,
+        raw_chunk_tx: mpsc::UnboundedSender<(i32, Vec<u8>)>,
+    ) {
+        let mut chunk_buffer = Vec::with_capacity(chunk_size);
         let mut current_chunk_index = 0i32;
-
-        // Limit concurrent encryptions (CPU cores * 2 is a good heuristic)
-        let num_cpus = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(4);
-        let encryption_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(num_cpus * 2));
-
-        // Store encryption task handles
-        let mut encryption_tasks = Vec::new();
+        let file_count = file_paths.len();
 
         for file_path in file_paths {
-            let mut file = tokio::fs::File::open(file_path).await?;
-            let mut file_buffer = vec![0u8; 8192]; // Read in 8KB increments
+            let file = match tokio::fs::File::open(&file_path).await {
+                Ok(f) => f,
+                Err(e) => {
+                    eprintln!("Reader task: Failed to open file {:?}: {}", file_path, e);
+                    return;
+                }
+            };
+
+            let mut reader = BufReader::new(file);
+            let mut read_buffer = vec![0u8; 8192];
 
             loop {
-                let bytes_read = tokio::io::AsyncReadExt::read(&mut file, &mut file_buffer).await?;
+                let bytes_read = match reader.read(&mut read_buffer).await {
+                    Ok(n) => n,
+                    Err(e) => {
+                        eprintln!("Reader task: Failed to read file {:?}: {}", file_path, e);
+                        return;
+                    }
+                };
+
                 if bytes_read == 0 {
                     break; // End of file
                 }
 
                 // Add to chunk buffer
-                chunk_buffer.extend_from_slice(&file_buffer[..bytes_read]);
+                chunk_buffer.extend_from_slice(&read_buffer[..bytes_read]);
 
                 // Process complete chunks
-                while chunk_buffer.len() >= self.config.chunk_size {
-                    let chunk_data: Vec<u8> =
-                        chunk_buffer.drain(..self.config.chunk_size).collect();
+                while chunk_buffer.len() >= chunk_size {
+                    let chunk_data: Vec<u8> = chunk_buffer.drain(..chunk_size).collect();
 
-                    // Spawn parallel encryption task (semaphore limits concurrency)
-                    let chunking_service = self.clone();
-                    let chunk_index = current_chunk_index;
-                    let semaphore = encryption_semaphore.clone();
+                    if raw_chunk_tx
+                        .send((current_chunk_index, chunk_data))
+                        .is_err()
+                    {
+                        eprintln!("Reader task: Channel closed, stopping");
+                        return;
+                    }
 
-                    let task = tokio::spawn(async move {
-                        // Acquire semaphore permit
-                        let _permit = semaphore.acquire().await.unwrap();
-
-                        // Encrypt chunk on blocking thread pool (CPU-bound work)
-                        tokio::task::spawn_blocking(move || {
-                            chunking_service.create_encrypted_chunk(chunk_index, &chunk_data)
-                        })
-                        .await
-                        .map_err(|e| {
-                            ChunkingError::Io(std::io::Error::other(format!(
-                                "Encryption task failed: {}",
-                                e
-                            )))
-                        })?
-                    });
-
-                    encryption_tasks.push(task);
                     current_chunk_index += 1;
                 }
             }
@@ -213,60 +242,113 @@ impl ChunkingService {
 
         // Process final partial chunk if any data remains
         if !chunk_buffer.is_empty() {
-            let chunking_service = self.clone();
-            let chunk_index = current_chunk_index;
-            let chunk_data = chunk_buffer;
-            let semaphore = encryption_semaphore.clone();
-
-            let task = tokio::spawn(async move {
-                let _permit = semaphore.acquire().await.unwrap();
-
-                tokio::task::spawn_blocking(move || {
-                    chunking_service.create_encrypted_chunk(chunk_index, &chunk_data)
-                })
-                .await
-                .map_err(|e| {
-                    ChunkingError::Io(std::io::Error::other(format!(
-                        "Encryption task failed: {}",
-                        e
-                    )))
-                })?
-            });
-
-            encryption_tasks.push(task);
+            if raw_chunk_tx
+                .send((current_chunk_index, chunk_buffer))
+                .is_err()
+            {
+                eprintln!("Reader task: Channel closed on final chunk");
+                return;
+            }
             current_chunk_index += 1;
         }
 
         println!(
-            "ChunkingService: Spawned {} parallel encryption tasks, awaiting completion...",
-            encryption_tasks.len()
+            "Reader task: Completed reading {} chunks from {} files",
+            current_chunk_index, file_count
         );
+        // Channel sender is dropped here, closing the channel
+    }
 
-        // Wait for all encryptions to complete, then call callback for each
-        for task in encryption_tasks {
-            let chunk = task.await.map_err(|e| {
-                ChunkingError::Io(std::io::Error::other(format!(
-                    "Encryption task join failed: {}",
-                    e
-                )))
-            })??;
+    /// Encryption coordinator task: maintains bounded pool of encryption workers
+    async fn encryption_coordinator_task(
+        self,
+        mut raw_chunk_rx: mpsc::UnboundedReceiver<(i32, Vec<u8>)>,
+        encrypted_chunk_tx: mpsc::UnboundedSender<AlbumChunk>,
+        max_workers: usize,
+    ) {
+        let mut encryption_tasks = FuturesUnordered::new();
+        let mut chunks_processed = 0usize;
 
-            // Call callback for upload (already spawns parallel tasks internally)
-            chunk_callback(chunk).await.map_err(|e| {
-                ChunkingError::Io(std::io::Error::other(format!(
-                    "Chunk callback failed: {}",
-                    e
-                )))
-            })?;
+        loop {
+            // If we have room for more tasks and there are chunks to process
+            if encryption_tasks.len() < max_workers {
+                match raw_chunk_rx.recv().await {
+                    Some((chunk_index, chunk_data)) => {
+                        // Spawn encryption task
+                        let chunking_service = self.clone();
+                        let task = tokio::spawn(async move {
+                            // CPU-bound work isolation: Encryption runs on tokio's blocking thread pool
+                            // to prevent CPU-intensive crypto from starving async I/O tasks on the main runtime.
+                            tokio::task::spawn_blocking(move || {
+                                chunking_service.create_encrypted_chunk(chunk_index, &chunk_data)
+                            })
+                            .await
+                            .map_err(|e| format!("Encryption task panicked: {}", e))?
+                            .map_err(|e| format!("Encryption failed: {}", e))
+                        });
+
+                        encryption_tasks.push(task);
+                    }
+                    None => {
+                        // No more raw chunks, drain remaining tasks
+                        break;
+                    }
+                }
+            } else {
+                // At capacity, wait for one to complete
+                match encryption_tasks.next().await {
+                    Some(Ok(Ok(encrypted_chunk))) => {
+                        if encrypted_chunk_tx.send(encrypted_chunk).is_err() {
+                            eprintln!("Encryption coordinator: Output channel closed, stopping");
+                            return;
+                        }
+                        chunks_processed += 1;
+                    }
+                    Some(Ok(Err(e))) => {
+                        eprintln!("Encryption coordinator: Encryption error: {}", e);
+                        return;
+                    }
+                    Some(Err(e)) => {
+                        eprintln!("Encryption coordinator: Task join error: {}", e);
+                        return;
+                    }
+                    None => break,
+                }
+            }
+        }
+
+        // Drain remaining encryption tasks
+        while let Some(result) = encryption_tasks.next().await {
+            match result {
+                Ok(Ok(encrypted_chunk)) => {
+                    if encrypted_chunk_tx.send(encrypted_chunk).is_err() {
+                        eprintln!("Encryption coordinator: Output channel closed during drain");
+                        return;
+                    }
+                    chunks_processed += 1;
+                }
+                Ok(Err(e)) => {
+                    eprintln!(
+                        "Encryption coordinator: Encryption error during drain: {}",
+                        e
+                    );
+                    return;
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Encryption coordinator: Task join error during drain: {}",
+                        e
+                    );
+                    return;
+                }
+            }
         }
 
         println!(
-            "ChunkingService: Completed {} chunks from {} files",
-            current_chunk_index,
-            file_paths.len()
+            "Encryption coordinator: Completed {} encrypted chunks",
+            chunks_processed
         );
-
-        Ok(AlbumChunkingResult { file_mappings })
+        // Channel sender is dropped here, closing the channel
     }
 
     /// Create a single encrypted album chunk from data (in-memory, no disk write)

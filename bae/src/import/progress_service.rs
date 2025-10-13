@@ -2,7 +2,6 @@ use super::types::ImportProgress;
 use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    mpsc::Receiver,
     Arc, Mutex,
 };
 use tokio::sync::mpsc as tokio_mpsc;
@@ -55,41 +54,41 @@ pub struct ProgressService {
 
 impl ProgressService {
     /// Create a new progress service and spawn background task to process progress updates
-    pub fn new(progress_rx: Arc<Mutex<Receiver<ImportProgress>>>) -> Self {
+    pub fn new(
+        mut progress_rx: tokio_mpsc::UnboundedReceiver<ImportProgress>,
+        runtime_handle: tokio::runtime::Handle,
+    ) -> Self {
         let subscriptions: Arc<Mutex<HashMap<SubscriptionId, Subscription>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let subscriptions_clone = subscriptions.clone();
 
-        // Spawn std::thread to block on channel recv and dispatch to subscribers
-        std::thread::spawn(move || loop {
-            let progress = {
-                let rx = progress_rx.lock().unwrap();
-                rx.recv()
-            };
+        // Spawn async task to receive progress updates and dispatch to subscribers
+        runtime_handle.spawn(async move {
+            loop {
+                match progress_rx.recv().await {
+                    Some(progress) => {
+                        // Dispatch to all matching subscribers
+                        let mut subs = subscriptions_clone.lock().unwrap();
+                        let mut to_remove = Vec::new();
 
-            match progress {
-                Ok(progress) => {
-                    // Dispatch to all matching subscribers
-                    let mut subs = subscriptions_clone.lock().unwrap();
-                    let mut to_remove = Vec::new();
-
-                    for (id, subscription) in subs.iter() {
-                        if subscription.filter.matches(&progress) {
-                            // If send fails, receiver was dropped - mark for removal
-                            if subscription.tx.send(progress.clone()).is_err() {
-                                to_remove.push(*id);
+                        for (id, subscription) in subs.iter() {
+                            if subscription.filter.matches(&progress) {
+                                // If send fails, receiver was dropped - mark for removal
+                                if subscription.tx.send(progress.clone()).is_err() {
+                                    to_remove.push(*id);
+                                }
                             }
                         }
-                    }
 
-                    // Clean up dropped subscriptions
-                    for id in to_remove {
-                        subs.remove(&id);
+                        // Clean up dropped subscriptions
+                        for id in to_remove {
+                            subs.remove(&id);
+                        }
                     }
-                }
-                Err(_) => {
-                    println!("ProgressService: Channel closed, exiting");
-                    break;
+                    None => {
+                        println!("ProgressService: Channel closed, exiting");
+                        break;
+                    }
                 }
             }
         });
