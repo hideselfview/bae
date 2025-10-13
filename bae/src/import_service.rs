@@ -1,3 +1,51 @@
+// # Import Service
+//
+// ## Overview
+// The import service orchestrates the complete album import workflow, from initial file
+// discovery through encryption and upload to cloud storage. It runs on a dedicated background
+// thread to avoid blocking the UI.
+//
+// ## Import Flow
+//
+// 1. **Album & Track Creation** (DB records with status='importing')
+//    - Parse Discogs metadata to create DbAlbum and DbTrack records
+//    - Insert into database immediately with 'importing' status
+//    - Generate UUIDs for all entities (album_id, track_id)
+//    - User can immediately see the album in the library (greyed out)
+//
+// 2. **File-to-Track Mapping** (TrackSourceFile)
+//    - Scan source folder for audio files (FLAC, MP3, etc.)
+//    - Match audio files to database tracks (by position or CUE sheet)
+//    - Create TrackSourceFile entries linking db_track_id -> file_path
+//    - Handles both individual files and CUE/FLAC (single FLAC, multiple tracks)
+//
+// 3. **Parallel Encryption** (CPU-bound)
+//    - Read all files, split into fixed-size chunks (e.g., 5MB)
+//    - Encrypt chunks in parallel (semaphore-limited by CPU cores)
+//    - Uses AES-256-GCM encryption via spawn_blocking
+//    - Generates chunk IDs, checksums, nonces
+//
+// 4. **Parallel Upload** (I/O-bound)
+//    - Upload encrypted chunks to S3 in parallel (20 concurrent uploads)
+//    - Store chunk metadata in database (DbChunk records)
+//    - Track upload progress via callback-based reporting
+//
+// 5. **Metadata Persistence**
+//    - Create DbFile records (links tracks to files)
+//    - Create DbFileChunk records (maps file byte ranges to chunks)
+//    - For CUE/FLAC: store DbCueSheet and DbTrackPosition records
+//
+// 6. **Completion**
+//    - Mark album status as 'complete' in database
+//    - Send ImportProgress::Complete to UI subscribers
+//    - Album card updates to show full color (no longer greyed out)
+//
+// ## Key Types
+//
+// - `TrackSourceFile`: Links a db_track_id (already inserted) to its source file_path
+// - `ImportProgress`: Real-time progress updates (Started, ProcessingProgress, Complete, Failed)
+// - `ImportServiceHandle`: Clone-able handle for sending requests and subscribing to progress
+
 use crate::models::ImportItem;
 use crate::progress_service::ProgressService;
 use std::path::{Path, PathBuf};
@@ -77,18 +125,22 @@ impl ImportServiceHandle {
     }
 }
 
-/// File mapping for import workflow
+/// Links a database track (already inserted with status='importing') to its source audio file.
+/// Used during import to know which file contains the audio data for each track.
+/// Tracks can share files (CUE/FLAC) or have dedicated files (one file per track).
 #[derive(Debug, Clone)]
-pub struct FileMapping {
-    pub track_id: String,
-    pub source_path: PathBuf,
+pub struct TrackSourceFile {
+    /// Database track ID (UUID) - track already exists in DB with status='importing'
+    pub db_track_id: String,
+    /// Path to the source audio file on disk (FLAC, MP3, etc.)
+    pub file_path: PathBuf,
 }
 
 /// Map audio files in source folder to tracks
 async fn map_files_to_tracks(
     source_folder: &Path,
     tracks: &[crate::database::DbTrack],
-) -> Result<Vec<FileMapping>, String> {
+) -> Result<Vec<TrackSourceFile>, String> {
     use crate::cue_flac::CueFlacProcessor;
 
     println!(
@@ -122,9 +174,9 @@ async fn map_files_to_tracks(
 
     for (index, track) in tracks.iter().enumerate() {
         if let Some(audio_file) = audio_files.get(index) {
-            mappings.push(FileMapping {
-                track_id: track.id.clone(),
-                source_path: audio_file.clone(),
+            mappings.push(TrackSourceFile {
+                db_track_id: track.id.clone(),
+                file_path: audio_file.clone(),
             });
         } else {
             println!(
@@ -142,7 +194,7 @@ async fn map_files_to_tracks(
 fn map_cue_flac_to_tracks(
     cue_flac_pairs: Vec<crate::cue_flac::CueFlacPair>,
     tracks: &[crate::database::DbTrack],
-) -> Result<Vec<FileMapping>, String> {
+) -> Result<Vec<TrackSourceFile>, String> {
     use crate::cue_flac::CueFlacProcessor;
 
     let mut mappings = Vec::new();
@@ -166,9 +218,9 @@ fn map_cue_flac_to_tracks(
         // For CUE/FLAC, all tracks map to the same FLAC file
         for (index, cue_track) in cue_sheet.tracks.iter().enumerate() {
             if let Some(db_track) = tracks.get(index) {
-                mappings.push(FileMapping {
-                    track_id: db_track.id.clone(),
-                    source_path: pair.flac_path.clone(),
+                mappings.push(TrackSourceFile {
+                    db_track_id: db_track.id.clone(),
+                    file_path: pair.flac_path.clone(),
                 });
 
                 println!(
@@ -305,7 +357,7 @@ async fn process_album_files(
     library_manager: &crate::library::LibraryManager,
     chunking_service: &crate::chunking::ChunkingService,
     cloud_storage: &crate::cloud_storage::CloudStorageManager,
-    mappings: &[FileMapping],
+    mappings: &[TrackSourceFile],
     album_id: &str,
     progress_callback: Option<Box<dyn Fn(usize, usize) + Send + Sync>>,
 ) -> Result<(), String> {
@@ -315,7 +367,7 @@ async fn process_album_files(
 
     // Get the album folder from the first mapping
     let album_folder = mappings[0]
-        .source_path
+        .file_path
         .parent()
         .ok_or_else(|| "Invalid source path".to_string())?;
 
@@ -450,7 +502,7 @@ async fn process_album_files(
     );
 
     // Process each audio file mapping and store file records + chunk mappings
-    process_file_mappings(library_manager, mappings, &album_result.file_mappings).await?;
+    persist_file_mappings_to_db(library_manager, mappings, &album_result.file_mappings).await?;
 
     println!(
         "ImportService: Successfully processed album with {} chunks",
@@ -461,9 +513,9 @@ async fn process_album_files(
 }
 
 /// Process file mappings - create file records and chunk mappings
-async fn process_file_mappings(
+async fn persist_file_mappings_to_db(
     library_manager: &crate::library::LibraryManager,
-    file_mappings: &[FileMapping],
+    file_mappings: &[TrackSourceFile],
     chunk_mappings: &[crate::chunking::FileChunkMapping],
 ) -> Result<(), String> {
     use std::collections::HashMap;
@@ -475,10 +527,10 @@ async fn process_file_mappings(
         .collect();
 
     // Group track mappings by source file to handle CUE/FLAC
-    let mut file_groups: HashMap<&Path, Vec<&FileMapping>> = HashMap::new();
+    let mut file_groups: HashMap<&Path, Vec<&TrackSourceFile>> = HashMap::new();
     for mapping in file_mappings {
         file_groups
-            .entry(mapping.source_path.as_path())
+            .entry(mapping.file_path.as_path())
             .or_default()
             .push(mapping);
     }
@@ -506,7 +558,7 @@ async fn process_file_mappings(
                 "  Processing CUE/FLAC file with {} tracks",
                 file_mappings.len()
             );
-            process_cue_flac_mapping(
+            persist_cue_flac_metadata(
                 library_manager,
                 source_path,
                 file_mappings,
@@ -517,7 +569,7 @@ async fn process_file_mappings(
         } else {
             // Process as individual file
             for mapping in file_mappings {
-                process_individual_mapping(
+                persist_individual_file(
                     library_manager,
                     mapping,
                     chunk_mapping,
@@ -533,10 +585,10 @@ async fn process_file_mappings(
 }
 
 /// Process CUE/FLAC file mapping - create file record, CUE sheet, and track positions
-async fn process_cue_flac_mapping(
+async fn persist_cue_flac_metadata(
     library_manager: &crate::library::LibraryManager,
     source_path: &Path,
-    file_mappings: Vec<&FileMapping>,
+    file_mappings: Vec<&TrackSourceFile>,
     chunk_mapping: &crate::chunking::FileChunkMapping,
     file_size: i64,
 ) -> Result<(), String> {
@@ -548,7 +600,7 @@ async fn process_cue_flac_mapping(
         .map_err(|e| format!("Failed to extract FLAC headers: {}", e))?;
 
     // Create file record with FLAC headers (use first track's ID as primary)
-    let primary_track_id = &file_mappings[0].track_id;
+    let primary_track_id = &file_mappings[0].db_track_id;
     let filename = source_path.file_name().unwrap().to_str().unwrap();
 
     let db_file = crate::database::DbFile::new_cue_flac(
@@ -622,7 +674,7 @@ async fn process_cue_flac_mapping(
             let end_chunk_index = ((absolute_end_byte - 1) / CHUNK_SIZE) as i32;
 
             let track_position = DbTrackPosition::new(
-                &mapping.track_id,
+                &mapping.db_track_id,
                 &file_id,
                 cue_track.start_time_ms as i64,
                 cue_track.end_time_ms.unwrap_or(0) as i64,
@@ -640,19 +692,19 @@ async fn process_cue_flac_mapping(
 }
 
 /// Process individual file mapping - create file record and chunk mapping
-async fn process_individual_mapping(
+async fn persist_individual_file(
     library_manager: &crate::library::LibraryManager,
-    mapping: &FileMapping,
+    mapping: &TrackSourceFile,
     chunk_mapping: &crate::chunking::FileChunkMapping,
     file_size: i64,
     format: &str,
 ) -> Result<(), String> {
     use crate::database::DbFileChunk;
 
-    let filename = mapping.source_path.file_name().unwrap().to_str().unwrap();
+    let filename = mapping.file_path.file_name().unwrap().to_str().unwrap();
 
     // Create file record
-    let db_file = crate::database::DbFile::new(&mapping.track_id, filename, file_size, format);
+    let db_file = crate::database::DbFile::new(&mapping.db_track_id, filename, file_size, format);
     let file_id = db_file.id.clone();
 
     // Save file record to database
