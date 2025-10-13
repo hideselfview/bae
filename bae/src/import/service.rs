@@ -82,7 +82,7 @@ impl ImportService {
 
     /// Start the import service worker and return handle
     pub fn start(self) -> ImportServiceHandle {
-        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (request_tx, mut request_rx) = mpsc::unbounded_channel();
         let (progress_tx, progress_rx) = mpsc::unbounded_channel();
 
         // Create ProgressService that will process progress updates
@@ -91,53 +91,41 @@ impl ImportService {
         // Clone runtime handle before moving self into the async task
         let runtime_handle = self.runtime_handle.clone();
 
-        // Spawn async task on shared runtime (no graceful shutdown yet - see TASKS.md)
+        // Spawn import worker task on shared runtime
         runtime_handle.spawn(async move {
-            self.run_import_worker(request_rx, progress_tx).await;
+            println!("ImportService: Worker started");
+
+            // Process import requests
+            loop {
+                match request_rx.recv().await {
+                    Some(ImportRequest::ImportAlbum { item, folder }) => {
+                        println!(
+                            "ImportService: Received import request for {}",
+                            item.title()
+                        );
+
+                        if let Err(e) = self.handle_import(&item, &folder, &progress_tx).await {
+                            println!("ImportService: Import failed: {}", e);
+                        }
+                    }
+                    Some(ImportRequest::Shutdown) => {
+                        println!("ImportService: Shutdown requested");
+                        break;
+                    }
+                    None => {
+                        println!("ImportService: Channel closed");
+                        break;
+                    }
+                }
+            }
+
+            println!("ImportService: Worker exiting");
         });
 
         ImportServiceHandle {
             request_tx,
             progress_service,
         }
-    }
-
-    /// Run the import worker async loop
-    async fn run_import_worker(
-        self,
-        mut request_rx: mpsc::UnboundedReceiver<ImportRequest>,
-        progress_tx: mpsc::UnboundedSender<ImportProgress>,
-    ) {
-        println!("ImportService: Worker started");
-
-        // Already in async context on shared runtime - no runtime creation needed!
-
-        // Process import requests
-        loop {
-            match request_rx.recv().await {
-                Some(ImportRequest::ImportAlbum { item, folder }) => {
-                    println!(
-                        "ImportService: Received import request for {}",
-                        item.title()
-                    );
-
-                    // Just await directly - no block_on needed!
-                    if let Err(e) = self.handle_import(&item, &folder, &progress_tx).await {
-                        println!("ImportService: Import failed: {}", e);
-                    }
-                }
-                Some(ImportRequest::Shutdown) => {
-                    println!("ImportService: Shutdown requested");
-                    break;
-                }
-                None => {
-                    println!("ImportService: Channel closed");
-                    break;
-                }
-            }
-        }
-
-        println!("ImportService: Worker exiting");
     }
 
     /// Handle a single import request - orchestrates the import workflow
