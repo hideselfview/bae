@@ -153,9 +153,18 @@ impl ChunkingService {
             total_chunks
         );
 
-        // Second pass: stream through files, encrypt and upload chunks as we go
+        // Second pass: stream through files, encrypt in parallel, upload via callback
         let mut chunk_buffer = Vec::with_capacity(self.config.chunk_size);
         let mut current_chunk_index = 0i32;
+
+        // Limit concurrent encryptions (CPU cores * 2 is a good heuristic)
+        let num_cpus = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4);
+        let encryption_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(num_cpus * 2));
+
+        // Store encryption task handles
+        let mut encryption_tasks = Vec::new();
 
         for file_path in file_paths {
             let mut file = tokio::fs::File::open(file_path).await?;
@@ -175,28 +184,29 @@ impl ChunkingService {
                     let chunk_data: Vec<u8> =
                         chunk_buffer.drain(..self.config.chunk_size).collect();
 
-                    // Encrypt chunk on blocking thread pool (CPU-bound work)
+                    // Spawn parallel encryption task (semaphore limits concurrency)
                     let chunking_service = self.clone();
                     let chunk_index = current_chunk_index;
-                    let chunk = tokio::task::spawn_blocking(move || {
-                        chunking_service.create_encrypted_chunk(chunk_index, &chunk_data)
-                    })
-                    .await
-                    .map_err(|e| {
-                        ChunkingError::Io(std::io::Error::other(format!(
-                            "Encryption task failed: {}",
-                            e
-                        )))
-                    })??;
+                    let semaphore = encryption_semaphore.clone();
 
-                    // Call callback for immediate upload
-                    chunk_callback(chunk).await.map_err(|e| {
-                        ChunkingError::Io(std::io::Error::other(format!(
-                            "Chunk callback failed: {}",
-                            e
-                        )))
-                    })?;
+                    let task = tokio::spawn(async move {
+                        // Acquire semaphore permit
+                        let _permit = semaphore.acquire().await.unwrap();
 
+                        // Encrypt chunk on blocking thread pool (CPU-bound work)
+                        tokio::task::spawn_blocking(move || {
+                            chunking_service.create_encrypted_chunk(chunk_index, &chunk_data)
+                        })
+                        .await
+                        .map_err(|e| {
+                            ChunkingError::Io(std::io::Error::other(format!(
+                                "Encryption task failed: {}",
+                                e
+                            )))
+                        })?
+                    });
+
+                    encryption_tasks.push(task);
                     current_chunk_index += 1;
                 }
             }
@@ -207,24 +217,48 @@ impl ChunkingService {
             let chunking_service = self.clone();
             let chunk_index = current_chunk_index;
             let chunk_data = chunk_buffer;
-            let chunk = tokio::task::spawn_blocking(move || {
-                chunking_service.create_encrypted_chunk(chunk_index, &chunk_data)
-            })
-            .await
-            .map_err(|e| {
+            let semaphore = encryption_semaphore.clone();
+
+            let task = tokio::spawn(async move {
+                let _permit = semaphore.acquire().await.unwrap();
+
+                tokio::task::spawn_blocking(move || {
+                    chunking_service.create_encrypted_chunk(chunk_index, &chunk_data)
+                })
+                .await
+                .map_err(|e| {
+                    ChunkingError::Io(std::io::Error::other(format!(
+                        "Encryption task failed: {}",
+                        e
+                    )))
+                })?
+            });
+
+            encryption_tasks.push(task);
+            current_chunk_index += 1;
+        }
+
+        println!(
+            "ChunkingService: Spawned {} parallel encryption tasks, awaiting completion...",
+            encryption_tasks.len()
+        );
+
+        // Wait for all encryptions to complete, then call callback for each
+        for task in encryption_tasks {
+            let chunk = task.await.map_err(|e| {
                 ChunkingError::Io(std::io::Error::other(format!(
-                    "Encryption task failed: {}",
+                    "Encryption task join failed: {}",
                     e
                 )))
             })??;
 
+            // Call callback for upload (already spawns parallel tasks internally)
             chunk_callback(chunk).await.map_err(|e| {
                 ChunkingError::Io(std::io::Error::other(format!(
                     "Chunk callback failed: {}",
                     e
                 )))
             })?;
-            current_chunk_index += 1;
         }
 
         println!(

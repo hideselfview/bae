@@ -1,6 +1,8 @@
 use crate::models::ImportItem;
+use crate::progress_service::ProgressService;
 use std::path::{Path, PathBuf};
 use std::sync::{
+    atomic::{AtomicUsize, Ordering},
     mpsc::{self, Receiver, Sender},
     Arc, Mutex,
 };
@@ -44,7 +46,7 @@ pub enum ImportProgress {
 #[derive(Clone)]
 pub struct ImportServiceHandle {
     request_tx: Sender<ImportRequest>,
-    progress_service: crate::progress_service::ProgressService,
+    progress_service: ProgressService,
 }
 
 impl ImportServiceHandle {
@@ -329,13 +331,13 @@ async fn process_album_files(
     let cloud_storage = cloud_storage.clone();
     let library_manager_clone = library_manager.clone();
     let album_id = album_id.to_string();
-    let chunks_completed = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let total_chunks_ref = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let progress_callback = std::sync::Arc::new(progress_callback);
-    let upload_handles = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let chunks_completed = Arc::new(AtomicUsize::new(0));
+    let total_chunks_ref = Arc::new(AtomicUsize::new(0));
+    let progress_callback = Arc::new(progress_callback);
+    let upload_handles = Arc::new(tokio::sync::Mutex::new(Vec::new()));
 
     // Limit concurrent uploads to prevent resource exhaustion
-    let upload_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(20));
+    let upload_semaphore = Arc::new(tokio::sync::Semaphore::new(20));
 
     // Create chunk callback for streaming pipeline with parallel uploads
     let chunk_callback: crate::chunking::ChunkCallback = {
@@ -384,9 +386,8 @@ async fn process_album_files(
                         .map_err(|e| format!("Database insert failed: {}", e))?;
 
                     // Update progress
-                    let completed =
-                        chunks_completed.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-                    let total = total_chunks_ref.load(std::sync::atomic::Ordering::SeqCst);
+                    let completed = chunks_completed.fetch_add(1, Ordering::SeqCst) + 1;
+                    let total = total_chunks_ref.load(Ordering::SeqCst);
 
                     if total > 0 {
                         let progress = ((completed as f64 / total as f64) * 100.0) as u8;
@@ -416,7 +417,7 @@ async fn process_album_files(
         .calculate_total_chunks(&all_files)
         .await
         .map_err(|e| format!("Failed to calculate chunks: {}", e))?;
-    total_chunks_ref.store(expected_total_chunks, std::sync::atomic::Ordering::SeqCst);
+    total_chunks_ref.store(expected_total_chunks, Ordering::SeqCst);
 
     println!(
         "ImportService: Expecting {} total chunks, starting parallel upload pipeline",
@@ -441,7 +442,7 @@ async fn process_album_files(
             .map_err(|e| format!("Task join failed: {}", e))??;
     }
 
-    let final_completed = chunks_completed.load(std::sync::atomic::Ordering::SeqCst);
+    let final_completed = chunks_completed.load(Ordering::SeqCst);
     println!(
         "ImportService: Completed {} chunks from {} files",
         final_completed,
@@ -704,7 +705,7 @@ impl ImportService {
         let progress_rx = Arc::new(Mutex::new(progress_rx));
 
         // Create ProgressService that will process progress updates
-        let progress_service = crate::progress_service::ProgressService::new(progress_rx.clone());
+        let progress_service = ProgressService::new(progress_rx.clone());
 
         // Spawn thread and let it run detached (no graceful shutdown yet - see TASKS.md)
         let _ = thread::spawn(move || {
