@@ -157,13 +157,12 @@ fn main() {
     let library_manager = create_library_manager(database.clone());
 
     // Create import service with shared runtime handle
-    let import_service = import::ImportService::new(
+    let import_service_handle = import::ImportService::start(
         library_manager.clone(),
         chunking_service.clone(),
         cloud_storage.clone(),
         runtime_handle.clone(),
     );
-    let import_service_handle = import_service.start();
 
     // Create root application context
     let app_context = AppContext {

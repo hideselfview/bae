@@ -61,35 +61,30 @@ pub struct ImportService {
     library_manager: SharedLibraryManager,
     chunking_service: ChunkingService,
     cloud_storage: CloudStorageManager,
-    runtime_handle: tokio::runtime::Handle,
+    progress_tx: mpsc::UnboundedSender<ImportProgress>,
 }
 
 impl ImportService {
-    /// Create a new import service
-    pub fn new(
+    /// Start import service worker, returning handle for sending requests
+    pub fn start(
         library_manager: SharedLibraryManager,
         chunking_service: ChunkingService,
         cloud_storage: CloudStorageManager,
         runtime_handle: tokio::runtime::Handle,
-    ) -> Self {
-        ImportService {
-            library_manager,
-            chunking_service,
-            cloud_storage,
-            runtime_handle,
-        }
-    }
-
-    /// Start the import service worker and return handle
-    pub fn start(self) -> ImportServiceHandle {
+    ) -> ImportServiceHandle {
         let (request_tx, mut request_rx) = mpsc::unbounded_channel();
         let (progress_tx, progress_rx) = mpsc::unbounded_channel();
 
-        // Create ProgressService that will process progress updates
-        let progress_service = ProgressService::new(progress_rx, self.runtime_handle.clone());
+        // Create ProgressService
+        let progress_service = ProgressService::new(progress_rx, runtime_handle.clone());
 
-        // Clone runtime handle before moving self into the async task
-        let runtime_handle = self.runtime_handle.clone();
+        // Create service instance for worker task
+        let service = ImportService {
+            library_manager,
+            chunking_service,
+            cloud_storage,
+            progress_tx,
+        };
 
         // Spawn import worker task on shared runtime
         runtime_handle.spawn(async move {
@@ -104,7 +99,7 @@ impl ImportService {
                             item.title()
                         );
 
-                        if let Err(e) = self.handle_import(&item, &folder, &progress_tx).await {
+                        if let Err(e) = service.handle_import(&item, &folder).await {
                             println!("ImportService: Import failed: {}", e);
                         }
                     }
@@ -129,12 +124,7 @@ impl ImportService {
     }
 
     /// Handle a single import request - orchestrates the import workflow
-    async fn handle_import(
-        &self,
-        item: &ImportItem,
-        folder: &Path,
-        progress_tx: &mpsc::UnboundedSender<ImportProgress>,
-    ) -> Result<(), String> {
+    async fn handle_import(&self, item: &ImportItem, folder: &Path) -> Result<(), String> {
         let library_manager = self.library_manager.get();
         println!(
             "ImportService: Starting import for {} from {}",
@@ -178,13 +168,13 @@ impl ImportService {
         );
 
         // Send started progress
-        let _ = progress_tx.send(ImportProgress::Started {
+        let _ = self.progress_tx.send(ImportProgress::Started {
             album_id: album_id.clone(),
             album_title: album_title.clone(),
         });
 
         // 4. Chunk and upload album files
-        let progress_tx_clone = progress_tx.clone();
+        let progress_tx_clone = self.progress_tx.clone();
         let album_id_clone = album_id.clone();
         let progress_callback = Box::new(move |current, total| {
             let percent = ((current as f64 / total as f64) * 100.0) as u8;
@@ -238,7 +228,7 @@ impl ImportService {
                 .await
                 .map_err(|e| format!("Failed to mark track complete: {}", e))?;
 
-            let _ = progress_tx.send(ImportProgress::TrackComplete {
+            let _ = self.progress_tx.send(ImportProgress::TrackComplete {
                 album_id: album_id.clone(),
                 track_id: track.id.clone(),
             });
@@ -249,7 +239,7 @@ impl ImportService {
             .await
             .map_err(|e| format!("Failed to mark album complete: {}", e))?;
 
-        let _ = progress_tx.send(ImportProgress::Complete {
+        let _ = self.progress_tx.send(ImportProgress::Complete {
             album_id: album_id.clone(),
         });
 
