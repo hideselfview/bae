@@ -14,13 +14,21 @@ Your music is encrypted and stored in S3-compatible cloud storage with a local c
 
 ## How it works
 
-**[Setup](BAE_LIBRARY_CONFIGURATION.md):** On first launch, configure S3 storage and Discogs API key. The system detects existing libraries or initializes a new one. Configuration is stored in `~/.bae/config.yaml` with credentials in the system keyring.
+### Setup 
 
-**[Import](BAE_IMPORT_WORKFLOW.md):** Search Discogs for your album, select the specific release (or master if you just know the album title), then point to your source folder. bae scans the folder, matches files to the Discogs tracklist, chunks and encrypts everything, then uploads to S3. The local SQLite database syncs to S3 after each import.
+On first launch, configure S3 storage and Discogs API key. The system detects existing libraries or initializes a new one. Configuration is stored in `~/.bae/config.yaml` with credentials in the system keyring.
 
-**[Streaming](BAE_STREAMING_ARCHITECTURE.md):** bae runs a Subsonic 1.16.1 API server on localhost:4533. The streaming system downloads chunks from S3 (or local cache), decrypts them, and reassembles audio in real-time. Works with any Subsonic client.
+### Import
 
-**[Format support](BAE_CUE_FLAC_SPEC.md):** Handles traditional file-per-track albums and CUE/FLAC releases (single FLAC file with CUE sheet for track boundaries). For CUE/FLAC albums, bae parses timing information and streams individual tracks without extraction.
+Search Discogs for your album, select the specific release (or master if you just know the album title), then point to your source folder. bae scans the folder, matches files to the Discogs tracklist, chunks and encrypts everything, then uploads to S3. The local SQLite database syncs to S3 after each import.
+
+### Streaming
+
+bae runs a Subsonic 1.16.1 API server on localhost:4533. The streaming system downloads chunks from S3 (or local cache), decrypts them, and reassembles audio in real-time. Works with any Subsonic client.
+
+### Format support
+
+Handles traditional file-per-track albums and CUE/FLAC releases (single FLAC file with CUE sheet for track boundaries). For CUE/FLAC albums, bae parses timing information and streams individual tracks without extraction.
 
 ## Development setup
 
