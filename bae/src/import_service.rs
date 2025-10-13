@@ -55,9 +55,23 @@ impl ImportServiceHandle {
             .map_err(|e| format!("Failed to send import request: {}", e))
     }
 
-    /// Get the progress service for reading import progress
-    pub fn progress_service(&self) -> &crate::progress_service::ProgressService {
-        &self.progress_service
+    /// Subscribe to progress updates for a specific album
+    /// Returns a filtered receiver that yields only updates for the specified album
+    pub fn subscribe_album(
+        &self,
+        album_id: String,
+    ) -> tokio::sync::mpsc::UnboundedReceiver<ImportProgress> {
+        self.progress_service.subscribe_album(album_id)
+    }
+
+    /// Subscribe to progress updates for a specific track
+    /// Returns a filtered receiver that yields only updates for the specified track
+    pub fn subscribe_track(
+        &self,
+        album_id: String,
+        track_id: String,
+    ) -> tokio::sync::mpsc::UnboundedReceiver<ImportProgress> {
+        self.progress_service.subscribe_track(album_id, track_id)
     }
 }
 

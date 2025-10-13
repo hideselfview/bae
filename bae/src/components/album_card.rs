@@ -7,43 +7,36 @@ use dioxus::prelude::*;
 #[component]
 pub fn AlbumCard(album: DbAlbum) -> Element {
     let import_service = use_import_service();
-    let progress_service = import_service.progress_service();
     let mut progress_percent = use_signal(|| 0u8);
     let mut import_complete = use_signal(|| false);
 
     use_effect({
         let album_id = album.id.clone();
-        let progress_service = progress_service.clone();
+        let import_service = import_service.clone();
         let is_importing = album.import_status == ImportStatus::Importing;
 
         move || {
             if is_importing {
-                let progress_service = progress_service.clone();
+                let import_service = import_service.clone();
                 let album_id = album_id.clone();
                 spawn(async move {
-                    let mut rx = progress_service.subscribe_album(album_id.clone());
+                    let mut rx = import_service.subscribe_album(album_id);
 
-                    // Await progress updates - this blocks until messages arrive!
-                    while let Ok(progress) = rx.recv().await {
+                    // Await progress updates - filtered to this album only!
+                    while let Some(progress) = rx.recv().await {
                         match progress {
                             crate::import_service::ImportProgress::ProcessingProgress {
-                                album_id: prog_album_id,
                                 percent,
                                 ..
-                            } if prog_album_id == album_id => {
+                            } => {
                                 progress_percent.set(percent);
                             }
-                            crate::import_service::ImportProgress::Complete {
-                                album_id: prog_album_id,
-                            } if prog_album_id == album_id => {
+                            crate::import_service::ImportProgress::Complete { .. } => {
                                 progress_percent.set(100);
                                 import_complete.set(true);
                                 break;
                             }
-                            crate::import_service::ImportProgress::Failed {
-                                album_id: prog_album_id,
-                                ..
-                            } if prog_album_id == album_id => {
+                            crate::import_service::ImportProgress::Failed { .. } => {
                                 import_complete.set(true);
                                 break;
                             }
