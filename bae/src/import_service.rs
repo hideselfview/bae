@@ -363,8 +363,10 @@ fn find_all_files_in_folder(dir: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(all_files)
 }
 
-/// Process album files: chunk, encrypt, and upload in parallel
-async fn process_album_files(
+/// Chunk, encrypt, and upload all album files in parallel.
+/// Reads source files, splits into chunks, encrypts each chunk in parallel,
+/// then uploads to cloud storage with parallel uploads (semaphore-limited).
+async fn chunk_encrypt_and_upload_album(
     library_manager: &crate::library::LibraryManager,
     chunking_service: &crate::chunking::ChunkingService,
     cloud_storage: &crate::cloud_storage::CloudStorageManager,
@@ -915,7 +917,7 @@ async fn handle_import(
         });
     });
 
-    process_album_files(
+    chunk_encrypt_and_upload_album(
         library_manager,
         chunking_service,
         cloud_storage,
