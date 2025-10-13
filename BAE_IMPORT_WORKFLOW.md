@@ -94,20 +94,22 @@ bae uses a dedicated `ImportService` running on a separate thread to prevent UI 
    **Stage 1 - Sequential Reader:**
    - Reads files sequentially using `BufReader`
    - Accumulates data into 5MB chunk buffers
-   - Sends raw chunks to encryption stage via async channel
+   - Sends raw chunks to encryption stage via bounded async channel (capacity: N)
+   - Blocks when channel is full (backpressure from encryption)
    
    **Stage 2 - Bounded Parallel Encryption:**
-   - Pool of N workers (CPU cores × 2) consuming raw chunks from channel
+   - Pool of N workers (CPU cores × 2) consuming raw chunks from bounded channel
    - Each worker encrypts via `tokio::task::spawn_blocking` (CPU-bound work on blocking thread pool)
-   - Sends encrypted chunks to upload stage via async channel
+   - Sends encrypted chunks to upload stage via bounded async channel (capacity: N)
+   - Blocks when channel is full (backpressure from upload)
    - Bounded by `FuturesUnordered` for controlled parallelism
    
    **Stage 3 - Bounded Parallel Upload:**
-   - Pool of M workers (20) consuming encrypted chunks from channel
+   - Pool of M workers (20) consuming encrypted chunks from bounded channel
    - Each worker uploads to S3 and writes metadata to database
    - Bounded by `FuturesUnordered` for controlled parallelism
    
-   All three stages run concurrently. Chunks flow through immediately as each stage completes. No temporary files created, all processing happens in memory.
+   All three stages run concurrently. Bounded channels provide backpressure to prevent unbounded memory growth. Memory usage bounded to ~80MB regardless of album size. No temporary files created, all processing happens in memory.
 
 7. **Real-time progress** updates after each chunk uploads, showing actual chunks_done/total_chunks
 8. **Status update** marks album and tracks as `import_status='complete'` (or `'failed'` on error)

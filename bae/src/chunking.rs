@@ -120,7 +120,7 @@ impl ChunkingService {
         album_folder: &Path,
         file_paths: &[std::path::PathBuf],
         max_encrypt_workers: usize,
-    ) -> Result<(AlbumChunkingResult, mpsc::UnboundedReceiver<AlbumChunk>), ChunkingError> {
+    ) -> Result<(AlbumChunkingResult, mpsc::Receiver<AlbumChunk>), ChunkingError> {
         println!(
             "ChunkingService: Starting streaming pipeline for folder: {}",
             album_folder.display()
@@ -158,9 +158,10 @@ impl ChunkingService {
             total_chunks
         );
 
-        // Create channels for pipeline stages
-        let (raw_chunk_tx, raw_chunk_rx) = mpsc::unbounded_channel();
-        let (encrypted_chunk_tx, encrypted_chunk_rx) = mpsc::unbounded_channel();
+        // Create bounded channels for pipeline stages (provides backpressure)
+        // Capacity matches worker pool size to prevent unbounded memory growth
+        let (raw_chunk_tx, raw_chunk_rx) = mpsc::channel(max_encrypt_workers);
+        let (encrypted_chunk_tx, encrypted_chunk_rx) = mpsc::channel(max_encrypt_workers);
 
         // Stage 1: Spawn reader task (sequential file reading)
         let file_paths_clone = file_paths.to_vec();
@@ -189,7 +190,7 @@ impl ChunkingService {
     async fn reader_task(
         file_paths: Vec<std::path::PathBuf>,
         chunk_size: usize,
-        raw_chunk_tx: mpsc::UnboundedSender<(i32, Vec<u8>)>,
+        raw_chunk_tx: mpsc::Sender<(i32, Vec<u8>)>,
     ) {
         let mut chunk_buffer = Vec::with_capacity(chunk_size);
         let mut current_chunk_index = 0i32;
@@ -227,8 +228,10 @@ impl ChunkingService {
                 while chunk_buffer.len() >= chunk_size {
                     let chunk_data: Vec<u8> = chunk_buffer.drain(..chunk_size).collect();
 
+                    // Bounded channel: blocks here if encryption is behind (backpressure)
                     if raw_chunk_tx
                         .send((current_chunk_index, chunk_data))
+                        .await
                         .is_err()
                     {
                         eprintln!("Reader task: Channel closed, stopping");
@@ -244,6 +247,7 @@ impl ChunkingService {
         if !chunk_buffer.is_empty() {
             if raw_chunk_tx
                 .send((current_chunk_index, chunk_buffer))
+                .await
                 .is_err()
             {
                 eprintln!("Reader task: Channel closed on final chunk");
@@ -262,8 +266,8 @@ impl ChunkingService {
     /// Encryption coordinator task: maintains bounded pool of encryption workers
     async fn encryption_coordinator_task(
         self,
-        mut raw_chunk_rx: mpsc::UnboundedReceiver<(i32, Vec<u8>)>,
-        encrypted_chunk_tx: mpsc::UnboundedSender<AlbumChunk>,
+        mut raw_chunk_rx: mpsc::Receiver<(i32, Vec<u8>)>,
+        encrypted_chunk_tx: mpsc::Sender<AlbumChunk>,
         max_workers: usize,
     ) {
         let mut encryption_tasks = FuturesUnordered::new();
@@ -298,7 +302,8 @@ impl ChunkingService {
                 // At capacity, wait for one to complete
                 match encryption_tasks.next().await {
                     Some(Ok(Ok(encrypted_chunk))) => {
-                        if encrypted_chunk_tx.send(encrypted_chunk).is_err() {
+                        // Bounded channel: blocks here if upload is behind (backpressure)
+                        if encrypted_chunk_tx.send(encrypted_chunk).await.is_err() {
                             eprintln!("Encryption coordinator: Output channel closed, stopping");
                             return;
                         }
@@ -321,7 +326,7 @@ impl ChunkingService {
         while let Some(result) = encryption_tasks.next().await {
             match result {
                 Ok(Ok(encrypted_chunk)) => {
-                    if encrypted_chunk_tx.send(encrypted_chunk).is_err() {
+                    if encrypted_chunk_tx.send(encrypted_chunk).await.is_err() {
                         eprintln!("Encryption coordinator: Output channel closed during drain");
                         return;
                     }
