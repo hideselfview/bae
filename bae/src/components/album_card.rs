@@ -25,18 +25,17 @@ pub fn AlbumCard(album: DbAlbum) -> Element {
                     // Await progress updates - filtered to this album only!
                     while let Some(progress) = rx.recv().await {
                         match progress {
-                            crate::import_service::ImportProgress::ProcessingProgress {
-                                percent,
-                                ..
+                            crate::import::ImportProgress::ProcessingProgress {
+                                percent, ..
                             } => {
                                 progress_percent.set(percent);
                             }
-                            crate::import_service::ImportProgress::Complete { .. } => {
+                            crate::import::ImportProgress::Complete { .. } => {
                                 progress_percent.set(100);
                                 import_complete.set(true);
                                 break;
                             }
-                            crate::import_service::ImportProgress::Failed { .. } => {
+                            crate::import::ImportProgress::Failed { .. } => {
                                 import_complete.set(true);
                                 break;
                             }

@@ -54,7 +54,6 @@ pub struct FileChunkMapping {
 #[derive(Debug)]
 pub struct AlbumChunkingResult {
     pub file_mappings: Vec<FileChunkMapping>,
-    pub total_chunks: usize,
 }
 
 /// Callback type for streaming chunks as they're created
@@ -267,10 +266,7 @@ impl ChunkingService {
             file_paths.len()
         );
 
-        Ok(AlbumChunkingResult {
-            file_mappings,
-            total_chunks: current_chunk_index as usize,
-        })
+        Ok(AlbumChunkingResult { file_mappings })
     }
 
     /// Create a single encrypted album chunk from data (in-memory, no disk write)

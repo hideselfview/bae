@@ -12,11 +12,10 @@ mod cue_flac;
 mod database;
 mod discogs;
 mod encryption;
-mod import_service;
+mod import;
 mod library;
 mod library_context;
 mod models;
-mod progress_service; // Used internally by import_service
 mod subsonic;
 
 use components::album_import::ImportWorkflowManager;
@@ -29,7 +28,7 @@ use subsonic::create_router;
 pub struct AppContext {
     pub library_manager: SharedLibraryManager,
     pub config: config::Config,
-    pub import_service_handle: import_service::ImportServiceHandle,
+    pub import_service_handle: import::ImportServiceHandle,
 }
 
 #[derive(Debug, Clone, Routable, PartialEq)]
@@ -150,7 +149,7 @@ fn main() {
     let library_manager = create_library_manager(database.clone());
 
     // Create import service on dedicated thread
-    let import_service = import_service::ImportService::new(
+    let import_service = import::ImportService::new(
         library_manager.clone(),
         chunking_service.clone(),
         cloud_storage.clone(),
