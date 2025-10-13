@@ -223,7 +223,7 @@ impl ImportService {
                 &album_id,
                 max_encrypt_workers,
                 max_upload_workers,
-                Some(progress_callback),
+                progress_callback,
             )
             .await
             .map_err(|e| {

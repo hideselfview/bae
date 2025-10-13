@@ -42,7 +42,7 @@ impl UploadPipeline {
         album_id: &str,
         max_encrypt_workers: usize,
         max_upload_workers: usize,
-        progress_callback: Option<Box<dyn Fn(usize, usize) + Send + Sync>>,
+        progress_callback: Box<dyn Fn(usize, usize) + Send + Sync>,
     ) -> Result<AlbumChunkingResult, String> {
         if track_files.is_empty() {
             return Err("No track files to upload".to_string());
@@ -136,9 +136,7 @@ impl UploadPipeline {
                                     completed, total, progress
                                 );
 
-                                if let Some(ref callback) = progress_callback.as_ref() {
-                                    callback(completed, total);
-                                }
+                                progress_callback(completed, total);
                             }
 
                             Ok::<(), String>(())
