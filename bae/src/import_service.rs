@@ -7,42 +7,48 @@
 //
 // ## Import Flow
 //
-// 1. **Album & Track Creation** (DB records with status='importing')
+// 1. **Album & Track Creation** (in-memory, not yet inserted)
 //    - Parse Discogs metadata to create DbAlbum and DbTrack records
-//    - Insert into database immediately with 'importing' status
 //    - Generate UUIDs for all entities (album_id, track_id)
-//    - User can immediately see the album in the library (greyed out)
+//    - Records exist only in memory at this point
 //
-// 2. **File-to-Track Mapping** (TrackSourceFile)
+// 2. **Track-to-File Mapping & Validation** (TrackSourceFile)
 //    - Scan source folder for audio files (FLAC, MP3, etc.)
-//    - Match audio files to database tracks (by position or CUE sheet)
+//    - Map each track to its source file (by position or CUE sheet)
 //    - Create TrackSourceFile entries linking db_track_id -> file_path
 //    - Handles both individual files and CUE/FLAC (single FLAC, multiple tracks)
+//    - **CRITICAL: If mapping fails, import is rejected - no DB records created**
 //
-// 3. **Parallel Encryption** (CPU-bound)
+// 3. **Database Insertion** (status='importing')
+//    - Only after successful validation, insert album + tracks into DB
+//    - All records created with status='importing'
+//    - User can now see the album in the library (greyed out)
+//    - Send ImportProgress::Started to UI subscribers
+//
+// 4. **Parallel Encryption** (CPU-bound)
 //    - Read all files, split into fixed-size chunks (e.g., 5MB)
 //    - Encrypt chunks in parallel (semaphore-limited by CPU cores)
 //    - Uses AES-256-GCM encryption via spawn_blocking
 //    - Generates chunk IDs, checksums, nonces
 //
-// 4. **Parallel Upload** (I/O-bound)
+// 5. **Parallel Upload** (I/O-bound)
 //    - Upload encrypted chunks to S3 in parallel (20 concurrent uploads)
 //    - Store chunk metadata in database (DbChunk records)
 //    - Track upload progress via callback-based reporting
 //
-// 5. **Metadata Persistence**
+// 6. **Metadata Persistence**
 //    - Create DbFile records (links tracks to files)
 //    - Create DbFileChunk records (maps file byte ranges to chunks)
 //    - For CUE/FLAC: store DbCueSheet and DbTrackPosition records
 //
-// 6. **Completion**
+// 7. **Completion**
 //    - Mark album status as 'complete' in database
 //    - Send ImportProgress::Complete to UI subscribers
 //    - Album card updates to show full color (no longer greyed out)
 //
 // ## Key Types
 //
-// - `TrackSourceFile`: Links a db_track_id (already inserted) to its source file_path
+// - `TrackSourceFile`: Links a db_track_id (validated, then inserted) to its source file_path
 // - `ImportProgress`: Real-time progress updates (Started, ProcessingProgress, Complete, Failed)
 // - `ImportServiceHandle`: Clone-able handle for sending requests and subscribing to progress
 
@@ -136,17 +142,19 @@ pub struct TrackSourceFile {
     pub file_path: PathBuf,
 }
 
-/// Map audio files in source folder to tracks
-async fn map_files_to_tracks(
+/// Map database tracks to their source audio files in the folder.
+/// This is a validation step - runs BEFORE inserting tracks into database.
+/// If we can't find files for all tracks, the import is rejected.
+async fn map_tracks_to_source_files(
     source_folder: &Path,
     tracks: &[crate::database::DbTrack],
 ) -> Result<Vec<TrackSourceFile>, String> {
     use crate::cue_flac::CueFlacProcessor;
 
     println!(
-        "ImportService: Mapping files in {} to {} tracks",
-        source_folder.display(),
-        tracks.len()
+        "ImportService: Mapping {} tracks to source files in {}",
+        tracks.len(),
+        source_folder.display()
     );
 
     // First, check for CUE/FLAC pairs
@@ -158,7 +166,7 @@ async fn map_files_to_tracks(
             "ImportService: Found {} CUE/FLAC pairs",
             cue_flac_pairs.len()
         );
-        return map_cue_flac_to_tracks(cue_flac_pairs, tracks);
+        return map_tracks_to_cue_flac(cue_flac_pairs, tracks);
     }
 
     // Fallback to individual audio files
@@ -186,12 +194,15 @@ async fn map_files_to_tracks(
         }
     }
 
-    println!("ImportService: Mapped {} files to tracks", mappings.len());
+    println!(
+        "ImportService: Mapped {} tracks to source files",
+        mappings.len()
+    );
     Ok(mappings)
 }
 
-/// Map CUE/FLAC pairs to tracks using CUE sheet parsing
-fn map_cue_flac_to_tracks(
+/// Map tracks to CUE/FLAC source files using CUE sheet parsing
+fn map_tracks_to_cue_flac(
     cue_flac_pairs: Vec<crate::cue_flac::CueFlacPair>,
     tracks: &[crate::database::DbTrack],
 ) -> Result<Vec<TrackSourceFile>, String> {
@@ -847,7 +858,7 @@ async fn handle_import(
         folder.display()
     );
 
-    // Extract artist and create records
+    // Extract artist and create records (in memory only, not inserted yet)
     let artist_name = extract_artist_name(item);
     let album = create_album_record(
         item,
@@ -860,25 +871,36 @@ async fn handle_import(
 
     let tracks = create_track_records(item, &album_id)?;
 
-    // Send started progress
-    let _ = progress_tx.send(ImportProgress::Started {
-        album_id: album_id.clone(),
-        album_title: album_title.clone(),
-    });
+    println!(
+        "ImportService: Created album record with {} tracks (not inserted yet)",
+        tracks.len()
+    );
 
-    // Insert album + tracks in transaction (with status = 'importing')
+    // VALIDATION: Map tracks to files BEFORE inserting into DB
+    // If this fails, we don't want orphaned DB records
+    let file_mappings = map_tracks_to_source_files(folder, &tracks).await?;
+
+    println!(
+        "ImportService: Successfully mapped {} tracks to source files",
+        file_mappings.len()
+    );
+
+    // Validation succeeded - now insert album + tracks into database
     library_manager
         .insert_album_with_tracks(&album, &tracks)
         .await
         .map_err(|e| format!("Database error: {}", e))?;
 
     println!(
-        "ImportService: Inserted album and {} tracks into database",
+        "ImportService: Inserted album and {} tracks into database with status='importing'",
         tracks.len()
     );
 
-    // Map files to tracks
-    let file_mappings = map_files_to_tracks(folder, &tracks).await?;
+    // Send started progress (after successful DB insert)
+    let _ = progress_tx.send(ImportProgress::Started {
+        album_id: album_id.clone(),
+        album_title: album_title.clone(),
+    });
 
     // Process and upload files with progress reporting
     let progress_tx_clone = progress_tx.clone();
