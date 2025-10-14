@@ -60,7 +60,9 @@ async fn create_cache_manager() -> cache::CacheManager {
 }
 
 /// Initialize cloud storage from config
-async fn create_cloud_storage(config: &config::Config) -> cloud_storage::CloudStorageManager {
+async fn create_cloud_storage_manager(
+    config: &config::Config,
+) -> cloud_storage::CloudStorageManager {
     println!("Main: Initializing cloud storage...");
 
     cloud_storage::CloudStorageManager::new(config.s3_config.clone())
@@ -88,6 +90,7 @@ async fn create_database(config: &config::Config) -> database::Database {
         .expect("Failed to create database");
 
     println!("Main: Database created");
+
     database
 }
 
@@ -104,8 +107,7 @@ fn create_library_manager(database: database::Database) -> SharedLibraryManager 
     shared_library
 }
 
-fn main() {
-    // Initialize logging with filters to suppress verbose debug logs
+fn configure_logging() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::builder()
@@ -115,17 +117,15 @@ fn main() {
                 ),
         )
         .init();
+}
 
-    // Architecture: Shared tokio runtime
-    //
-    // All services share a single runtime via Handle clones. The runtime's thread pool
-    // uses work stealing for efficient resource utilization across all async tasks.
-    //
-    // Services using this runtime:
-    // - ImportService: File processing, uploads, database writes
-    // - Subsonic: HTTP streaming, decryption, database reads
-    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-    let runtime_handle = rt.handle().clone();
+fn main() {
+    // Initialize logging with filters to suppress verbose debug logs
+    configure_logging();
+
+    // Shared tokio runtime
+    let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+    let runtime_handle = runtime.handle().clone();
 
     println!("Main: Building dependencies...");
 
@@ -137,7 +137,7 @@ fn main() {
 
     // Try to initialize cloud storage from config (optional, lazy loading)
     // This will only prompt for keyring if cloud storage is actually configured
-    let cloud_storage = runtime_handle.block_on(create_cloud_storage(&config));
+    let cloud_storage = runtime_handle.block_on(create_cloud_storage_manager(&config));
 
     // Initialize database
     let database = runtime_handle.block_on(create_database(&config));
@@ -156,12 +156,12 @@ fn main() {
     // Build library manager
     let library_manager = create_library_manager(database.clone());
 
-    // Create import service with shared runtime handle
     let import_worker_config = import::ImportWorkerConfig {
         max_encrypt_workers: config.max_encrypt_workers,
         max_upload_workers: config.max_upload_workers,
     };
 
+    // Create import service with shared runtime handle
     let import_service_handle = import::ImportService::start(
         runtime_handle.clone(),
         library_manager.clone(),
