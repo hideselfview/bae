@@ -47,12 +47,12 @@ struct Subscription {
 
 /// Progress service that broadcasts import progress updates
 #[derive(Clone)]
-pub struct ProgressService {
+pub struct ImportProgressService {
     subscriptions: Arc<Mutex<HashMap<SubscriptionId, Subscription>>>,
     next_id: Arc<AtomicU64>,
 }
 
-impl ProgressService {
+impl ImportProgressService {
     /// Create a new progress service and spawn background task to process progress updates
     pub fn new(
         mut progress_rx: tokio_mpsc::UnboundedReceiver<ImportProgress>,

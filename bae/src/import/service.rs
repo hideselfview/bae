@@ -12,7 +12,7 @@ use crate::chunking::ChunkingService;
 use crate::cloud_storage::CloudStorageManager;
 use crate::database::{DbAlbum, DbTrack};
 use crate::import::metadata_persister::MetadataPersister;
-use crate::import::progress_service::ProgressService;
+use crate::import::progress_service::ImportProgressService;
 use crate::import::track_file_mapper::TrackFileMapper;
 use crate::import::types::{ImportProgress, ImportRequest};
 use crate::import::upload_pipeline::UploadPipeline;
@@ -25,7 +25,7 @@ use tokio::sync::mpsc;
 #[derive(Clone)]
 pub struct ImportServiceHandle {
     request_tx: mpsc::UnboundedSender<ImportRequest>,
-    progress_service: ProgressService,
+    progress_service: ImportProgressService,
 }
 
 impl ImportServiceHandle {
@@ -59,9 +59,10 @@ impl ImportServiceHandle {
 /// Import service that orchestrates the import workflow on the shared runtime
 pub struct ImportService {
     library_manager: SharedLibraryManager,
-    chunking_service: ChunkingService,
-    cloud_storage: CloudStorageManager,
+    upload_pipeline: UploadPipeline,
     progress_tx: mpsc::UnboundedSender<ImportProgress>,
+    max_encrypt_workers: usize,
+    max_upload_workers: usize,
 }
 
 impl ImportService {
@@ -75,15 +76,23 @@ impl ImportService {
         let (request_tx, mut request_rx) = mpsc::unbounded_channel();
         let (progress_tx, progress_rx) = mpsc::unbounded_channel();
 
-        // Create ProgressService
-        let progress_service = ProgressService::new(progress_rx, runtime_handle.clone());
-
         // Create service instance for worker task
+        let upload_pipeline = UploadPipeline::new(chunking_service, cloud_storage);
+
+        // Configure worker pool sizes
+        // Encryption is CPU-bound, so we use 2x the number of CPU cores
+        let max_encrypt_workers = std::thread::available_parallelism()
+            .map(|n| n.get() * 2)
+            .unwrap_or(4);
+        // Upload is I/O-bound, so we use a fixed number of workers
+        let max_upload_workers = 20;
+
         let service = ImportService {
             library_manager,
-            chunking_service,
-            cloud_storage,
+            upload_pipeline,
             progress_tx,
+            max_encrypt_workers,
+            max_upload_workers,
         };
 
         // Spawn import worker task on shared runtime
@@ -116,6 +125,9 @@ impl ImportService {
 
             println!("ImportService: Worker exiting");
         });
+
+        // Create ProgressService, used
+        let progress_service = ImportProgressService::new(progress_rx, runtime_handle.clone());
 
         ImportServiceHandle {
             request_tx,
@@ -173,67 +185,106 @@ impl ImportService {
             album_title: album_title.clone(),
         });
 
-        // 4. Chunk and upload album files
-        let progress_tx_clone = self.progress_tx.clone();
-        let album_id_clone = album_id.clone();
-        let progress_callback = Box::new(move |current, total| {
-            let percent = ((current as f64 / total as f64) * 100.0) as u8;
-            let _ = progress_tx_clone.send(ImportProgress::ProcessingProgress {
-                album_id: album_id_clone.clone(),
-                current,
-                total,
-                percent,
-            });
-        });
+        // 4. Start upload pipeline (returns event channel)
+        let upload_config = crate::import::UploadConfig {
+            max_encrypt_workers: self.max_encrypt_workers,
+            max_upload_workers: self.max_upload_workers,
+        };
 
-        // Configure worker pool sizes
-        let max_encrypt_workers = std::thread::available_parallelism()
-            .map(|n| n.get() * 2)
-            .unwrap_or(4);
-        let max_upload_workers = 20;
+        let mut upload_events = self
+            .upload_pipeline
+            .chunk_and_upload_album(track_files.clone(), upload_config);
 
-        let upload_pipeline =
-            UploadPipeline::new(self.chunking_service.clone(), self.cloud_storage.clone());
-        let album_result = upload_pipeline
-            .chunk_and_upload_album(
-                library_manager,
-                &track_files,
-                &album_id,
-                max_encrypt_workers,
-                max_upload_workers,
-                progress_callback,
-            )
-            .await
-            .map_err(|e| {
-                // Mark as failed
-                let _ = tokio::runtime::Handle::current()
-                    .block_on(library_manager.mark_album_failed(&album_id));
-                for track in &tracks {
-                    let _ = tokio::runtime::Handle::current()
-                        .block_on(library_manager.mark_track_failed(&track.id));
+        // 5. Process upload events and handle database persistence
+        let mut file_mappings = None;
+        let mut total_chunks = 0;
+        let mut chunks_completed = 0;
+
+        while let Some(event) = upload_events.recv().await {
+            match event {
+                crate::import::UploadEvent::Started {
+                    total_chunks: total,
+                } => {
+                    total_chunks = total;
                 }
-                format!("Import failed: {}", e)
-            })?;
+                crate::import::UploadEvent::ChunkUploaded {
+                    chunk_id,
+                    chunk_index,
+                    original_size,
+                    encrypted_size,
+                    checksum,
+                    cloud_location,
+                } => {
+                    // Persist chunk to database
+                    let db_chunk = crate::database::DbChunk::from_album_chunk(
+                        &chunk_id,
+                        &album_id,
+                        chunk_index,
+                        original_size,
+                        encrypted_size,
+                        &checksum,
+                        &cloud_location,
+                        false,
+                    );
+                    library_manager
+                        .add_chunk(&db_chunk)
+                        .await
+                        .map_err(|e| format!("Failed to add chunk: {}", e))?;
 
-        // 5. Persist file metadata
-        let persister = MetadataPersister::new(library_manager);
-        persister
-            .persist_album_metadata(&track_files, &album_result.file_mappings)
-            .await?;
+                    // Send progress update
+                    chunks_completed += 1;
+                    if total_chunks > 0 {
+                        let percent =
+                            ((chunks_completed as f64 / total_chunks as f64) * 100.0) as u8;
+                        let _ = self.progress_tx.send(ImportProgress::ProcessingProgress {
+                            album_id: album_id.clone(),
+                            percent,
+                            current: chunks_completed,
+                            total: total_chunks,
+                        });
+                    }
+                }
+                crate::import::UploadEvent::TrackCompleted { track_id } => {
+                    // Mark track complete in database
+                    library_manager
+                        .mark_track_complete(&track_id)
+                        .await
+                        .map_err(|e| format!("Failed to mark track complete: {}", e))?;
 
-        // 6. Mark tracks and album as complete
-        for track in &tracks {
-            library_manager
-                .mark_track_complete(&track.id)
-                .await
-                .map_err(|e| format!("Failed to mark track complete: {}", e))?;
-
-            let _ = self.progress_tx.send(ImportProgress::TrackComplete {
-                album_id: album_id.clone(),
-                track_id: track.id.clone(),
-            });
+                    // Send track completion progress event
+                    let _ = self.progress_tx.send(ImportProgress::TrackComplete {
+                        album_id: album_id.clone(),
+                        track_id,
+                    });
+                }
+                crate::import::UploadEvent::Completed {
+                    file_mappings: mappings,
+                } => {
+                    // Store file mappings for metadata persistence
+                    file_mappings = Some(mappings);
+                    break;
+                }
+                crate::import::UploadEvent::Failed { error } => {
+                    // Mark as failed
+                    let _ = library_manager.mark_album_failed(&album_id).await;
+                    for track in &tracks {
+                        let _ = library_manager.mark_track_failed(&track.id).await;
+                    }
+                    return Err(format!("Upload failed: {}", error));
+                }
+            }
         }
 
+        let file_mappings =
+            file_mappings.ok_or_else(|| "Upload completed without file mappings".to_string())?;
+
+        // 6. Persist file metadata
+        let persister = MetadataPersister::new(library_manager);
+        persister
+            .persist_album_metadata(&track_files, &file_mappings)
+            .await?;
+
+        // 7. Mark album as complete
         library_manager
             .mark_album_complete(&album_id)
             .await
