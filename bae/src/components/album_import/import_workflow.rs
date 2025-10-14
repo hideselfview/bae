@@ -84,8 +84,8 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                 println!("Import started for {} from {}", item.title(), folder);
 
                 // Send import request to service
-                let request = ImportRequest::ImportAlbum {
-                    item: item.clone(),
+                let request = ImportRequest::FromFolder {
+                    album: item.clone(),
                     folder: PathBuf::from(folder),
                 };
 

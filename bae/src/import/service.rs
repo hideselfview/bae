@@ -103,19 +103,15 @@ impl ImportService {
             // Process import requests
             loop {
                 match request_rx.recv().await {
-                    Some(ImportRequest::ImportAlbum { folder, item }) => {
+                    Some(ImportRequest::FromFolder { album, folder }) => {
                         println!(
                             "ImportService: Received import request for {}",
-                            item.title()
+                            album.title()
                         );
 
-                        if let Err(e) = service.handle_import(&folder, &item).await {
+                        if let Err(e) = service.import_from_folder(&album, &folder).await {
                             println!("ImportService: Import failed: {}", e);
                         }
-                    }
-                    Some(ImportRequest::Shutdown) => {
-                        println!("ImportService: Shutdown requested");
-                        break;
                     }
                     None => {
                         println!("ImportService: Channel closed");
@@ -137,24 +133,22 @@ impl ImportService {
     }
 
     /// Handle a single import request - orchestrates the import workflow
-    async fn handle_import(&self, folder: &Path, item: &DiscogsAlbum) -> Result<(), String> {
+    async fn import_from_folder(
+        &self,
+        discogs_album: &DiscogsAlbum,
+        folder: &Path,
+    ) -> Result<(), String> {
         let library_manager = self.library_manager.get();
+
         println!(
             "ImportService: Starting import for {} from {}",
-            item.title(),
+            discogs_album.title(),
             folder.display()
         );
 
         // 1. Create album + track records (in memory only)
-        let artist_name = extract_artist_name(item);
-        let album = create_album_record(
-            item,
-            &artist_name,
-            Some(folder.to_string_lossy().to_string()),
-        )?;
-        let album_id = album.id.clone();
-        let album_title = album.title.clone();
-        let tracks = create_track_records(item, &album_id)?;
+        let album = create_album_record(discogs_album)?;
+        let tracks = create_track_records(discogs_album, &album.id)?;
 
         println!(
             "ImportService: Created album record with {} tracks (not inserted yet)",
@@ -182,8 +176,7 @@ impl ImportService {
 
         // Send started progress
         let _ = self.progress_tx.send(ImportProgress::Started {
-            album_id: album_id.clone(),
-            album_title: album_title.clone(),
+            album_id: album.id.clone(),
         });
 
         // 4. Start upload pipeline (returns event channel)
@@ -219,7 +212,7 @@ impl ImportService {
                     // Persist chunk to database
                     let db_chunk = crate::database::DbChunk::from_album_chunk(
                         &chunk_id,
-                        &album_id,
+                        &album.id.clone(),
                         chunk_index,
                         original_size,
                         encrypted_size,
@@ -238,7 +231,7 @@ impl ImportService {
                         let percent =
                             ((chunks_completed as f64 / total_chunks as f64) * 100.0) as u8;
                         let _ = self.progress_tx.send(ImportProgress::ProcessingProgress {
-                            album_id: album_id.clone(),
+                            album_id: album.id.clone(),
                             percent,
                             current: chunks_completed,
                             total: total_chunks,
@@ -254,7 +247,7 @@ impl ImportService {
 
                     // Send track completion progress event
                     let _ = self.progress_tx.send(ImportProgress::TrackComplete {
-                        album_id: album_id.clone(),
+                        album_id: album.id.clone(),
                         track_id,
                     });
                 }
@@ -267,7 +260,7 @@ impl ImportService {
                 }
                 crate::import::UploadEvent::Failed { error } => {
                     // Mark as failed
-                    let _ = library_manager.mark_album_failed(&album_id).await;
+                    let _ = library_manager.mark_album_failed(&album.id).await;
                     for track in &tracks {
                         let _ = library_manager.mark_track_failed(&track.id).await;
                     }
@@ -287,35 +280,29 @@ impl ImportService {
 
         // 7. Mark album as complete
         library_manager
-            .mark_album_complete(&album_id)
+            .mark_album_complete(&album.id)
             .await
             .map_err(|e| format!("Failed to mark album complete: {}", e))?;
 
-        let _ = self.progress_tx.send(ImportProgress::Complete {
-            album_id: album_id.clone(),
-        });
+        let _ = self
+            .progress_tx
+            .send(ImportProgress::Complete { album_id: album.id });
 
         println!(
             "ImportService: Import completed successfully for {}",
-            album_title
+            album.title
         );
         Ok(())
     }
 }
 
 /// Create album database record from Discogs data
-fn create_album_record(
-    import_item: &DiscogsAlbum,
-    artist_name: &str,
-    source_folder_path: Option<String>,
-) -> Result<DbAlbum, String> {
+fn create_album_record(import_item: &DiscogsAlbum) -> Result<DbAlbum, String> {
+    let artist_name = extract_artist_name(import_item);
+
     let album = match import_item {
-        DiscogsAlbum::Master(master) => {
-            DbAlbum::from_discogs_master(master, artist_name, source_folder_path)
-        }
-        DiscogsAlbum::Release(release) => {
-            DbAlbum::from_discogs_release(release, artist_name, source_folder_path)
-        }
+        DiscogsAlbum::Master(master) => DbAlbum::from_discogs_master(master, &artist_name),
+        DiscogsAlbum::Release(release) => DbAlbum::from_discogs_release(release, &artist_name),
     };
     Ok(album)
 }

@@ -39,7 +39,6 @@ pub struct DbAlbum {
     pub discogs_master_id: Option<String>,
     pub discogs_release_id: Option<String>,
     pub cover_art_url: Option<String>,
-    pub source_folder_path: Option<String>, // Path to original folder for checkout
     pub import_status: ImportStatus,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -148,7 +147,6 @@ impl Database {
                 discogs_master_id TEXT,
                 discogs_release_id TEXT,
                 cover_art_url TEXT,
-                source_folder_path TEXT,
                 import_status TEXT NOT NULL DEFAULT 'importing',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -320,7 +318,7 @@ impl Database {
             r#"
             INSERT INTO albums (
                 id, title, artist_name, year, discogs_master_id, 
-                discogs_release_id, cover_art_url, source_folder_path, import_status, created_at, updated_at
+                discogs_release_id, cover_art_url, import_status, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
@@ -331,7 +329,6 @@ impl Database {
         .bind(&album.discogs_master_id)
         .bind(&album.discogs_release_id)
         .bind(&album.cover_art_url)
-        .bind(&album.source_folder_path)
         .bind(album.import_status)
         .bind(album.created_at.to_rfc3339())
         .bind(album.updated_at.to_rfc3339())
@@ -379,7 +376,7 @@ impl Database {
             r#"
             INSERT INTO albums (
                 id, title, artist_name, year, discogs_master_id, 
-                discogs_release_id, cover_art_url, source_folder_path, import_status, created_at, updated_at
+                discogs_release_id, cover_art_url, import_status, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
@@ -390,7 +387,6 @@ impl Database {
         .bind(&album.discogs_master_id)
         .bind(&album.discogs_release_id)
         .bind(&album.cover_art_url)
-        .bind(&album.source_folder_path)
         .bind(album.import_status)
         .bind(album.created_at.to_rfc3339())
         .bind(album.updated_at.to_rfc3339())
@@ -469,7 +465,6 @@ impl Database {
                 discogs_master_id: row.get("discogs_master_id"),
                 discogs_release_id: row.get("discogs_release_id"),
                 cover_art_url: row.get("cover_art_url"),
-                source_folder_path: row.get("source_folder_path"),
                 import_status: row.get("import_status"),
                 created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
                     .unwrap()
@@ -770,11 +765,7 @@ impl Database {
 
 /// Helper functions for creating database records from Discogs data
 impl DbAlbum {
-    pub fn from_discogs_master(
-        master: &crate::models::DiscogsMaster,
-        artist_name: &str,
-        source_folder_path: Option<String>,
-    ) -> Self {
+    pub fn from_discogs_master(master: &crate::models::DiscogsMaster, artist_name: &str) -> Self {
         let now = Utc::now();
         DbAlbum {
             id: Uuid::new_v4().to_string(),
@@ -784,7 +775,6 @@ impl DbAlbum {
             discogs_master_id: Some(master.id.clone()),
             discogs_release_id: None,
             cover_art_url: master.thumb.clone(),
-            source_folder_path,
             import_status: ImportStatus::Importing,
             created_at: now,
             updated_at: now,
@@ -794,7 +784,6 @@ impl DbAlbum {
     pub fn from_discogs_release(
         release: &crate::models::DiscogsRelease,
         artist_name: &str,
-        source_folder_path: Option<String>,
     ) -> Self {
         let now = Utc::now();
         DbAlbum {
@@ -805,7 +794,6 @@ impl DbAlbum {
             discogs_master_id: release.master_id.clone(),
             discogs_release_id: Some(release.id.clone()),
             cover_art_url: release.thumb.clone(),
-            source_folder_path,
             import_status: ImportStatus::Importing,
             created_at: now,
             updated_at: now,

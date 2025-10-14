@@ -3,10 +3,11 @@ use std::path::PathBuf;
 
 /// Request to import an album
 #[derive(Debug)]
-#[allow(clippy::large_enum_variant)] // ImportAlbum is the common case, Shutdown is rare
 pub enum ImportRequest {
-    ImportAlbum { folder: PathBuf, item: DiscogsAlbum },
-    Shutdown,
+    FromFolder {
+        album: DiscogsAlbum,
+        folder: PathBuf,
+    },
 }
 
 /// Progress updates during import
@@ -14,7 +15,6 @@ pub enum ImportRequest {
 pub enum ImportProgress {
     Started {
         album_id: String,
-        album_title: String,
     },
     ProcessingProgress {
         album_id: String,
