@@ -56,6 +56,14 @@ impl ImportServiceHandle {
     }
 }
 
+/// Configuration for import service worker pools
+pub struct ImportWorkerConfig {
+    /// Number of parallel encryption workers (CPU-bound, typically 2x CPU cores)
+    pub max_encrypt_workers: usize,
+    /// Number of parallel upload workers (I/O-bound)
+    pub max_upload_workers: usize,
+}
+
 /// Import service that orchestrates the import workflow on the shared runtime
 pub struct ImportService {
     library_manager: SharedLibraryManager,
@@ -72,6 +80,7 @@ impl ImportService {
         chunking_service: ChunkingService,
         cloud_storage: CloudStorageManager,
         runtime_handle: tokio::runtime::Handle,
+        worker_config: ImportWorkerConfig,
     ) -> ImportServiceHandle {
         let (request_tx, mut request_rx) = mpsc::unbounded_channel();
         let (progress_tx, progress_rx) = mpsc::unbounded_channel();
@@ -79,20 +88,12 @@ impl ImportService {
         // Create service instance for worker task
         let upload_pipeline = UploadPipeline::new(chunking_service, cloud_storage);
 
-        // Configure worker pool sizes
-        // Encryption is CPU-bound, so we use 2x the number of CPU cores
-        let max_encrypt_workers = std::thread::available_parallelism()
-            .map(|n| n.get() * 2)
-            .unwrap_or(4);
-        // Upload is I/O-bound, so we use a fixed number of workers
-        let max_upload_workers = 20;
-
         let service = ImportService {
             library_manager,
             upload_pipeline,
             progress_tx,
-            max_encrypt_workers,
-            max_upload_workers,
+            max_encrypt_workers: worker_config.max_encrypt_workers,
+            max_upload_workers: worker_config.max_upload_workers,
         };
 
         // Spawn import worker task on shared runtime

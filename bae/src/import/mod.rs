@@ -22,6 +22,6 @@ mod types;
 mod upload_pipeline;
 
 // Public API exports
-pub use service::{ImportService, ImportServiceHandle};
+pub use service::{ImportService, ImportServiceHandle, ImportWorkerConfig};
 pub use types::{ImportProgress, ImportRequest};
 pub use upload_pipeline::{UploadConfig, UploadEvent};

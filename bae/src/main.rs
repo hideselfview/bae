@@ -157,11 +157,17 @@ fn main() {
     let library_manager = create_library_manager(database.clone());
 
     // Create import service with shared runtime handle
+    let import_worker_config = import::ImportWorkerConfig {
+        max_encrypt_workers: config.max_encrypt_workers,
+        max_upload_workers: config.max_upload_workers,
+    };
+
     let import_service_handle = import::ImportService::start(
         library_manager.clone(),
         chunking_service.clone(),
         cloud_storage.clone(),
         runtime_handle.clone(),
+        import_worker_config,
     );
 
     // Create root application context

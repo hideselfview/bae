@@ -28,6 +28,10 @@ pub struct Config {
     pub s3_config: crate::cloud_storage::S3Config,
     /// Encryption key (hex-encoded 256-bit key)
     pub encryption_key: String,
+    /// Number of parallel encryption workers (CPU-bound)
+    pub max_encrypt_workers: usize,
+    /// Number of parallel upload workers (I/O-bound)
+    pub max_upload_workers: usize,
 }
 
 /// Credential data loaded from keyring (production mode only)
@@ -113,17 +117,38 @@ impl Config {
             hex::encode(key.as_slice())
         });
 
+        // Worker pool configuration
+        let max_encrypt_workers = std::env::var("BAE_MAX_ENCRYPT_WORKERS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_else(|| {
+                std::thread::available_parallelism()
+                    .map(|n| n.get() * 2)
+                    .unwrap_or(4)
+            });
+
+        let max_upload_workers = std::env::var("BAE_MAX_UPLOAD_WORKERS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(20);
+
         println!("Config: Dev mode with S3 storage");
         println!("Config: S3 bucket: {}", bucket_name);
         if let Some(endpoint) = &endpoint_url {
             println!("Config: S3 endpoint: {}", endpoint);
         }
+        println!(
+            "Config: Worker pools - encrypt: {}, upload: {}",
+            max_encrypt_workers, max_upload_workers
+        );
 
         Self {
             library_id,
             discogs_api_key,
             s3_config,
             encryption_key,
+            max_encrypt_workers,
+            max_upload_workers,
         }
     }
 
@@ -147,11 +172,19 @@ impl Config {
             id
         };
 
+        // Worker pool configuration (TODO: load from config.yaml)
+        let max_encrypt_workers = std::thread::available_parallelism()
+            .map(|n| n.get() * 2)
+            .unwrap_or(4);
+        let max_upload_workers = 20;
+
         Self {
             library_id,
             discogs_api_key: credentials.discogs_api_key,
             s3_config: credentials.s3_config,
             encryption_key: credentials.encryption_key,
+            max_encrypt_workers,
+            max_upload_workers,
         }
     }
 
