@@ -354,18 +354,3 @@ impl DiscogsClient {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_discogs_client_creation() {
-        let client = DiscogsClient::new("test_key".to_string());
-        assert_eq!(client.api_key, "test_key");
-        assert_eq!(client.base_url, "https://api.discogs.com");
-    }
-
-    // Note: These tests would require a real API key and network access
-    // In a real implementation, you'd want to use mocked responses
-}

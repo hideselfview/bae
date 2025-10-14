@@ -1,11 +1,11 @@
-use crate::models::ImportItem;
+use crate::models::DiscogsAlbum;
 use std::path::PathBuf;
 
 /// Request to import an album
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)] // ImportAlbum is the common case, Shutdown is rare
 pub enum ImportRequest {
-    ImportAlbum { item: ImportItem, folder: PathBuf },
+    ImportAlbum { folder: PathBuf, item: DiscogsAlbum },
     Shutdown,
 }
 

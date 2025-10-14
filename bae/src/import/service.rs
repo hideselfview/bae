@@ -17,7 +17,7 @@ use crate::import::track_file_mapper::TrackFileMapper;
 use crate::import::types::{ImportProgress, ImportRequest};
 use crate::import::upload_pipeline::UploadPipeline;
 use crate::library_context::SharedLibraryManager;
-use crate::models::ImportItem;
+use crate::models::DiscogsAlbum;
 use std::path::Path;
 use tokio::sync::mpsc;
 
@@ -76,10 +76,10 @@ pub struct ImportService {
 impl ImportService {
     /// Start import service worker, returning handle for sending requests
     pub fn start(
+        runtime_handle: tokio::runtime::Handle,
         library_manager: SharedLibraryManager,
         chunking_service: ChunkingService,
         cloud_storage: CloudStorageManager,
-        runtime_handle: tokio::runtime::Handle,
         worker_config: ImportWorkerConfig,
     ) -> ImportServiceHandle {
         let (request_tx, mut request_rx) = mpsc::unbounded_channel();
@@ -103,13 +103,13 @@ impl ImportService {
             // Process import requests
             loop {
                 match request_rx.recv().await {
-                    Some(ImportRequest::ImportAlbum { item, folder }) => {
+                    Some(ImportRequest::ImportAlbum { folder, item }) => {
                         println!(
                             "ImportService: Received import request for {}",
                             item.title()
                         );
 
-                        if let Err(e) = service.handle_import(&item, &folder).await {
+                        if let Err(e) = service.handle_import(&folder, &item).await {
                             println!("ImportService: Import failed: {}", e);
                         }
                     }
@@ -127,7 +127,7 @@ impl ImportService {
             println!("ImportService: Worker exiting");
         });
 
-        // Create ProgressService, used
+        // Create ProgressService, used to broadcast progress updates to external subscribers
         let progress_service = ImportProgressService::new(progress_rx, runtime_handle.clone());
 
         ImportServiceHandle {
@@ -137,7 +137,7 @@ impl ImportService {
     }
 
     /// Handle a single import request - orchestrates the import workflow
-    async fn handle_import(&self, item: &ImportItem, folder: &Path) -> Result<(), String> {
+    async fn handle_import(&self, folder: &Path, item: &DiscogsAlbum) -> Result<(), String> {
         let library_manager = self.library_manager.get();
         println!(
             "ImportService: Starting import for {} from {}",
@@ -305,15 +305,15 @@ impl ImportService {
 
 /// Create album database record from Discogs data
 fn create_album_record(
-    import_item: &ImportItem,
+    import_item: &DiscogsAlbum,
     artist_name: &str,
     source_folder_path: Option<String>,
 ) -> Result<DbAlbum, String> {
     let album = match import_item {
-        ImportItem::Master(master) => {
+        DiscogsAlbum::Master(master) => {
             DbAlbum::from_discogs_master(master, artist_name, source_folder_path)
         }
-        ImportItem::Release(release) => {
+        DiscogsAlbum::Release(release) => {
             DbAlbum::from_discogs_release(release, artist_name, source_folder_path)
         }
     };
@@ -321,7 +321,10 @@ fn create_album_record(
 }
 
 /// Create track database records from Discogs tracklist
-fn create_track_records(import_item: &ImportItem, album_id: &str) -> Result<Vec<DbTrack>, String> {
+fn create_track_records(
+    import_item: &DiscogsAlbum,
+    album_id: &str,
+) -> Result<Vec<DbTrack>, String> {
     let discogs_tracks = import_item.tracklist();
     let mut tracks = Vec::new();
 
@@ -349,7 +352,7 @@ fn parse_track_number(position: &str, fallback_index: usize) -> Option<i32> {
 }
 
 /// Extract artist name from import item
-fn extract_artist_name(import_item: &ImportItem) -> String {
+fn extract_artist_name(import_item: &DiscogsAlbum) -> String {
     let title = import_item.title();
     if let Some(dash_pos) = title.find(" - ") {
         title[..dash_pos].to_string()

@@ -223,6 +223,8 @@ mod tests {
                 endpoint_url: None,
             },
             encryption_key: test_key_hex,
+            max_encrypt_workers: 4,
+            max_upload_workers: 20,
         };
 
         EncryptionService::new(&test_config).expect("Failed to create test encryption service")

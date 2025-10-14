@@ -1,11 +1,11 @@
 use super::{super::import_workflow::ImportWorkflow, item::SearchMastersItem};
-use crate::{album_import_context::AlbumImportContext, models::ImportItem};
+use crate::{album_import_context::AlbumImportContext, models::DiscogsAlbum};
 use dioxus::prelude::*;
 
 #[component]
 pub fn SearchMastersList() -> Element {
     let album_import_ctx = use_context::<AlbumImportContext>();
-    let mut selected_import_item = use_signal(|| None::<ImportItem>);
+    let mut selected_import_item = use_signal(|| None::<DiscogsAlbum>);
 
     let on_import_item = {
         let album_import_ctx = album_import_ctx.clone();

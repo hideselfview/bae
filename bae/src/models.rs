@@ -49,75 +49,6 @@ pub struct DiscogsMaster {
     pub tracklist: Vec<DiscogsTrack>,
 }
 
-/// Represents an item that can be imported (either a master or specific release)
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ImportItem {
-    Master(DiscogsMaster),
-    Release(DiscogsRelease),
-}
-
-impl ImportItem {
-    pub fn title(&self) -> &str {
-        match self {
-            ImportItem::Master(master) => &master.title,
-            ImportItem::Release(release) => &release.title,
-        }
-    }
-
-    pub fn year(&self) -> Option<u32> {
-        match self {
-            ImportItem::Master(master) => master.year,
-            ImportItem::Release(release) => release.year,
-        }
-    }
-
-    pub fn thumb(&self) -> Option<&String> {
-        match self {
-            ImportItem::Master(master) => master.thumb.as_ref(),
-            ImportItem::Release(release) => release.thumb.as_ref(),
-        }
-    }
-
-    pub fn label(&self) -> &[String] {
-        match self {
-            ImportItem::Master(master) => &master.label,
-            ImportItem::Release(release) => &release.label,
-        }
-    }
-
-    pub fn format(&self) -> &[String] {
-        match self {
-            ImportItem::Master(_) => &[],
-            ImportItem::Release(release) => &release.format,
-        }
-    }
-
-    pub fn is_master(&self) -> bool {
-        matches!(self, ImportItem::Master(_))
-    }
-
-    /// Get the tracklist for AI matching
-    pub fn tracklist(&self) -> &[DiscogsTrack] {
-        match self {
-            ImportItem::Master(master) => &master.tracklist,
-            ImportItem::Release(release) => &release.tracklist,
-        }
-    }
-}
-
-/// Represents a release version from master versions API
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct DiscogsMasterReleaseVersion {
-    pub id: u64,
-    pub title: String,
-    pub format: String, // Fixed: format is a string in the API response
-    pub label: String,  // Fixed: label is a string in the API response
-    pub catno: String,
-    pub country: String,
-    pub released: Option<String>,
-    pub thumb: Option<String>,
-}
-
 /// Represents a Discogs release search result
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DiscogsRelease {
@@ -133,6 +64,75 @@ pub struct DiscogsRelease {
     pub thumb: Option<String>,
     pub tracklist: Vec<DiscogsTrack>,
     pub master_id: Option<String>, // Reference to the master release
+}
+
+/// Represents an item that can be imported (either a master or specific release)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum DiscogsAlbum {
+    Master(DiscogsMaster),
+    Release(DiscogsRelease),
+}
+
+impl DiscogsAlbum {
+    pub fn title(&self) -> &str {
+        match self {
+            DiscogsAlbum::Master(master) => &master.title,
+            DiscogsAlbum::Release(release) => &release.title,
+        }
+    }
+
+    pub fn year(&self) -> Option<u32> {
+        match self {
+            DiscogsAlbum::Master(master) => master.year,
+            DiscogsAlbum::Release(release) => release.year,
+        }
+    }
+
+    pub fn thumb(&self) -> Option<&String> {
+        match self {
+            DiscogsAlbum::Master(master) => master.thumb.as_ref(),
+            DiscogsAlbum::Release(release) => release.thumb.as_ref(),
+        }
+    }
+
+    pub fn label(&self) -> &[String] {
+        match self {
+            DiscogsAlbum::Master(master) => &master.label,
+            DiscogsAlbum::Release(release) => &release.label,
+        }
+    }
+
+    pub fn format(&self) -> &[String] {
+        match self {
+            DiscogsAlbum::Master(_) => &[],
+            DiscogsAlbum::Release(release) => &release.format,
+        }
+    }
+
+    pub fn is_master(&self) -> bool {
+        matches!(self, DiscogsAlbum::Master(_))
+    }
+
+    /// Get the tracklist for AI matching
+    pub fn tracklist(&self) -> &[DiscogsTrack] {
+        match self {
+            DiscogsAlbum::Master(master) => &master.tracklist,
+            DiscogsAlbum::Release(release) => &release.tracklist,
+        }
+    }
+}
+
+/// Represents a release version from master versions API
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DiscogsMasterReleaseVersion {
+    pub id: u64,
+    pub title: String,
+    pub format: String, // Fixed: format is a string in the API response
+    pub label: String,  // Fixed: label is a string in the API response
+    pub catno: String,
+    pub country: String,
+    pub released: Option<String>,
+    pub thumb: Option<String>,
 }
 
 /// Represents a track from Discogs

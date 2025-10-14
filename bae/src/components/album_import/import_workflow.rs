@@ -1,6 +1,6 @@
 use crate::import::ImportRequest;
 use crate::library_context::use_import_service;
-use crate::models::ImportItem;
+use crate::models::DiscogsAlbum;
 use crate::Route;
 use dioxus::prelude::*;
 use rfd::AsyncFileDialog;
@@ -47,7 +47,7 @@ pub fn on_folder_selected(folder_path: String) -> Result<(), String> {
 
 #[derive(Props, PartialEq, Clone)]
 pub struct ImportWorkflowProps {
-    pub item: ImportItem,
+    pub item: DiscogsAlbum,
     pub on_back: EventHandler<()>,
 }
 

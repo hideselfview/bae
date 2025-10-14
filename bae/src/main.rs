@@ -10,7 +10,7 @@ mod components;
 mod config;
 mod cue_flac;
 mod database;
-mod discogs;
+mod discogs_client;
 mod encryption;
 mod import;
 mod library;
@@ -163,10 +163,10 @@ fn main() {
     };
 
     let import_service_handle = import::ImportService::start(
+        runtime_handle.clone(),
         library_manager.clone(),
         chunking_service.clone(),
         cloud_storage.clone(),
-        runtime_handle.clone(),
         import_worker_config,
     );
 

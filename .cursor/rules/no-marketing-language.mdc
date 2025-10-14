@@ -1,0 +1,4 @@
+---
+alwaysApply: true
+---
+When writing commit messages, or anything really, but especially commit messages, you don't need to state the benefits of something. Just state what happened. We don't need marketing language.

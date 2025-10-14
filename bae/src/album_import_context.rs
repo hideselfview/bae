@@ -1,6 +1,6 @@
-use crate::discogs::DiscogsSearchResult;
-use crate::models::{DiscogsMasterReleaseVersion, ImportItem};
-use crate::{config::use_config, discogs};
+use crate::discogs_client::DiscogsSearchResult;
+use crate::models::{DiscogsAlbum, DiscogsMasterReleaseVersion};
+use crate::{config::use_config, discogs_client};
 use dioxus::prelude::*;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -22,7 +22,7 @@ pub struct AlbumImportContext {
     pub is_importing_release: Signal<bool>,
     pub error_message: Signal<Option<String>>,
     pub current_view: Signal<SearchView>,
-    client: discogs::DiscogsClient,
+    client: discogs_client::DiscogsClient,
 }
 
 impl AlbumImportContext {
@@ -36,7 +36,7 @@ impl AlbumImportContext {
             is_importing_release: use_signal(|| false),
             error_message: use_signal(|| None),
             current_view: use_signal(|| SearchView::SearchResults),
-            client: discogs::DiscogsClient::new(config.discogs_api_key.clone()),
+            client: discogs_client::DiscogsClient::new(config.discogs_api_key.clone()),
         }
     }
 
@@ -82,7 +82,7 @@ impl AlbumImportContext {
         self.current_view.set(SearchView::SearchResults);
     }
 
-    pub async fn import_master(&mut self, master_id: String) -> Result<ImportItem, String> {
+    pub async fn import_master(&mut self, master_id: String) -> Result<DiscogsAlbum, String> {
         self.is_importing_master.set(true);
         self.error_message.set(None);
 
@@ -104,7 +104,7 @@ impl AlbumImportContext {
                         master.title
                     );
                 }
-                let import_item = ImportItem::Master(master);
+                let import_item = DiscogsAlbum::Master(master);
                 Ok(import_item)
             }
             Err(e) => {
@@ -142,14 +142,14 @@ impl AlbumImportContext {
         &mut self,
         release_id: String,
         master_id: String,
-    ) -> Result<ImportItem, String> {
+    ) -> Result<DiscogsAlbum, String> {
         self.is_importing_release.set(true);
         self.error_message.set(None);
 
         let result = match self.client.get_release(&release_id).await {
             Ok(mut release) => {
                 release.master_id = Some(master_id);
-                let import_item = ImportItem::Release(release);
+                let import_item = DiscogsAlbum::Release(release);
                 Ok(import_item)
             }
             Err(e) => {
