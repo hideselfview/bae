@@ -28,7 +28,7 @@ use subsonic::create_router;
 pub struct AppContext {
     pub library_manager: SharedLibraryManager,
     pub config: config::Config,
-    pub import_service_handle: import::ImportServiceHandle,
+    pub import_service_handle: import::ImportHandle,
 }
 
 #[derive(Debug, Clone, Routable, PartialEq)]
@@ -150,9 +150,10 @@ fn main() {
     // Build library manager
     let library_manager = create_library_manager(database.clone());
 
-    let import_worker_config = import::ImportWorkerConfig {
+    let import_config = import::ImportConfig {
         max_encrypt_workers: config.max_encrypt_workers,
         max_upload_workers: config.max_upload_workers,
+        chunk_size_bytes: config.chunk_size_bytes,
     };
 
     // Create import service with shared runtime handle
@@ -161,7 +162,7 @@ fn main() {
         library_manager.clone(),
         encryption_service.clone(),
         cloud_storage.clone(),
-        import_worker_config,
+        import_config,
     );
 
     // Create root application context
@@ -172,12 +173,14 @@ fn main() {
     };
 
     // Start Subsonic API server as async task on shared runtime
+    let chunk_size_bytes = config.chunk_size_bytes;
     runtime_handle.spawn(async move {
         start_subsonic_server(
             cache_manager,
             library_manager,
             encryption_service,
             cloud_storage,
+            chunk_size_bytes,
         )
         .await
     });
@@ -200,6 +203,7 @@ async fn start_subsonic_server(
     library_manager: SharedLibraryManager,
     encryption_service: encryption::EncryptionService,
     cloud_storage: cloud_storage::CloudStorageManager,
+    chunk_size_bytes: usize,
 ) {
     println!("Starting Subsonic API server...");
 
@@ -208,6 +212,7 @@ async fn start_subsonic_server(
         cache_manager,
         encryption_service,
         cloud_storage,
+        chunk_size_bytes,
     );
 
     let listener = match tokio::net::TcpListener::bind("127.0.0.1:4533").await {

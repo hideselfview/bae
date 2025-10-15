@@ -19,5 +19,5 @@ mod track_file_mapper;
 mod types;
 
 // Public API exports
-pub use service::{ImportService, ImportServiceHandle, ImportWorkerConfig};
+pub use service::{ImportConfig, ImportHandle, ImportService};
 pub use types::{ImportProgress, ImportRequest};

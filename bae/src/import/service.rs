@@ -30,12 +30,12 @@ use uuid::Uuid;
 
 /// Handle for sending import requests and subscribing to progress updates
 #[derive(Clone)]
-pub struct ImportServiceHandle {
+pub struct ImportHandle {
     request_tx: mpsc::UnboundedSender<ImportRequest>,
     progress_service: ImportProgressService,
 }
 
-impl ImportServiceHandle {
+impl ImportHandle {
     /// Send an import request to the import service
     pub fn send_request(&self, request: ImportRequest) -> Result<(), String> {
         self.request_tx
@@ -63,12 +63,14 @@ impl ImportServiceHandle {
     }
 }
 
-/// Configuration for import service worker pools
-pub struct ImportWorkerConfig {
+/// Configuration for import service
+pub struct ImportConfig {
     /// Number of parallel encryption workers (CPU-bound, typically 2x CPU cores)
     pub max_encrypt_workers: usize,
     /// Number of parallel upload workers (I/O-bound)
     pub max_upload_workers: usize,
+    /// Size of each chunk in bytes
+    pub chunk_size_bytes: usize,
 }
 
 /// Import service that orchestrates the import workflow on the shared runtime
@@ -78,8 +80,7 @@ pub struct ImportService {
     cloud_storage: CloudStorageManager,
     progress_tx: mpsc::UnboundedSender<ImportProgress>,
     request_rx: mpsc::UnboundedReceiver<ImportRequest>,
-    max_encrypt_workers: usize,
-    max_upload_workers: usize,
+    config: ImportConfig,
 }
 
 impl ImportService {
@@ -89,8 +90,8 @@ impl ImportService {
         library_manager: SharedLibraryManager,
         encryption_service: EncryptionService,
         cloud_storage: CloudStorageManager,
-        worker_config: ImportWorkerConfig,
-    ) -> ImportServiceHandle {
+        config: ImportConfig,
+    ) -> ImportHandle {
         let (request_tx, request_rx) = mpsc::unbounded_channel();
         let (progress_tx, progress_rx) = mpsc::unbounded_channel();
 
@@ -101,8 +102,7 @@ impl ImportService {
             cloud_storage,
             progress_tx,
             request_rx,
-            max_encrypt_workers: worker_config.max_encrypt_workers,
-            max_upload_workers: worker_config.max_upload_workers,
+            config,
         };
 
         // Spawn import worker task on shared runtime
@@ -111,7 +111,7 @@ impl ImportService {
         // Create ProgressService, used to broadcast progress updates to external subscribers
         let progress_service = ImportProgressService::new(progress_rx, runtime_handle.clone());
 
-        ImportServiceHandle {
+        ImportHandle {
             request_tx,
             progress_service,
         }
@@ -210,9 +210,8 @@ impl ImportService {
         });
 
         // 6. Calculate chunk layout from discovered files (no additional filesystem calls)
-        let chunk_size = 1024 * 1024; // 1MB chunks (default)
         let (file_mappings, total_chunks) =
-            calculate_file_mappings_from_discovered(&folder_files, chunk_size)?;
+            calculate_file_mappings_from_discovered(&folder_files, self.config.chunk_size_bytes)?;
 
         println!(
             "ImportService: Will process {} chunks across {} files",
@@ -231,16 +230,16 @@ impl ImportService {
         let db_album_id = db_album.id.clone();
         let encryption_service = self.encryption_service.clone();
         let cloud_storage = self.cloud_storage.clone();
-        let max_encrypt_workers = self.max_encrypt_workers;
-        let max_upload_workers = self.max_upload_workers;
+        let max_encrypt_workers = self.config.max_encrypt_workers;
+        let max_upload_workers = self.config.max_upload_workers;
         let progress_tx = self.progress_tx.clone();
         let track_chunk_map = Arc::new(track_chunk_map);
 
         // Stage 1: Read chunks from files (each file opened once, chunks read sequentially)
+        let chunk_size_bytes = self.config.chunk_size_bytes;
         let results = stream::iter(file_mappings.clone())
-            .then(move |file_mapping| {
-                let chunk_size = chunk_size;
-                async move { read_chunks_from_file(file_mapping, chunk_size).await }
+            .then(move |file_mapping| async move {
+                read_chunks_from_file(file_mapping, chunk_size_bytes).await
             })
             .flat_map(|chunks_result| {
                 stream::iter(match chunks_result {
@@ -312,7 +311,11 @@ impl ImportService {
         // Persist file metadata to database
         let persister = MetadataPersister::new(library_manager);
         persister
-            .persist_album_metadata(&tracks_to_files, &file_mappings)
+            .persist_album_metadata(
+                &tracks_to_files,
+                &file_mappings,
+                self.config.chunk_size_bytes,
+            )
             .await?;
 
         // Mark album complete

@@ -18,6 +18,7 @@ pub struct SubsonicState {
     pub cache_manager: crate::cache::CacheManager,
     pub encryption_service: crate::encryption::EncryptionService,
     pub cloud_storage: crate::cloud_storage::CloudStorageManager,
+    pub chunk_size_bytes: usize,
 }
 
 /// Common query parameters for Subsonic API
@@ -141,12 +142,14 @@ pub fn create_router(
     cache_manager: crate::cache::CacheManager,
     encryption_service: crate::encryption::EncryptionService,
     cloud_storage: crate::cloud_storage::CloudStorageManager,
+    chunk_size_bytes: usize,
 ) -> Router {
     let state = SubsonicState {
         library_manager,
         cache_manager,
         encryption_service,
         cloud_storage,
+        chunk_size_bytes,
     };
     Router::new()
         .route("/rest/ping", get(ping))
@@ -670,11 +673,12 @@ async fn stream_cue_track_chunks(
         return Err("No chunks found in track range".into());
     }
 
+    let approximate_total_chunks = file.file_size / state.chunk_size_bytes as i64;
     println!(
         "Downloading {} chunks instead of {} total chunks ({}% reduction)",
         chunks.len(),
-        file.file_size / (1024 * 1024), // Approximate total chunks
-        100 - (chunks.len() * 100) / (file.file_size / (1024 * 1024)) as usize
+        approximate_total_chunks,
+        100 - (chunks.len() * 100) / approximate_total_chunks as usize
     );
 
     // Sort chunks by index to ensure correct order

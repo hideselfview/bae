@@ -32,6 +32,8 @@ pub struct Config {
     pub max_encrypt_workers: usize,
     /// Number of parallel upload workers (I/O-bound)
     pub max_upload_workers: usize,
+    /// Size of each chunk in bytes (default: 1MB)
+    pub chunk_size_bytes: usize,
 }
 
 /// Credential data loaded from keyring (production mode only)
@@ -132,6 +134,11 @@ impl Config {
             .and_then(|s| s.parse().ok())
             .unwrap_or(20);
 
+        let chunk_size_bytes = std::env::var("BAE_CHUNK_SIZE_BYTES")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1024 * 1024); // 1MB default
+
         println!("Config: Dev mode with S3 storage");
         println!("Config: S3 bucket: {}", bucket_name);
         if let Some(endpoint) = &endpoint_url {
@@ -141,6 +148,7 @@ impl Config {
             "Config: Worker pools - encrypt: {}, upload: {}",
             max_encrypt_workers, max_upload_workers
         );
+        println!("Config: Chunk size: {} bytes", chunk_size_bytes);
 
         Self {
             library_id,
@@ -149,6 +157,7 @@ impl Config {
             encryption_key,
             max_encrypt_workers,
             max_upload_workers,
+            chunk_size_bytes,
         }
     }
 
@@ -177,6 +186,7 @@ impl Config {
             .map(|n| n.get() * 2)
             .unwrap_or(4);
         let max_upload_workers = 20;
+        let chunk_size_bytes = 1024 * 1024; // 1MB default
 
         Self {
             library_id,
@@ -185,6 +195,7 @@ impl Config {
             encryption_key: credentials.encryption_key,
             max_encrypt_workers,
             max_upload_workers,
+            chunk_size_bytes,
         }
     }
 

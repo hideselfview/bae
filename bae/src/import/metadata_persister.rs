@@ -28,6 +28,7 @@ impl<'a> MetadataPersister<'a> {
         &self,
         track_files: &[TrackSourceFile],
         chunk_mappings: &[FileChunkMapping],
+        chunk_size_bytes: usize,
     ) -> Result<(), String> {
         // Create a lookup map for chunk mappings by file path
         let chunk_lookup: HashMap<&Path, &FileChunkMapping> = chunk_mappings
@@ -72,6 +73,7 @@ impl<'a> MetadataPersister<'a> {
                     file_mappings,
                     chunk_mapping,
                     file_size,
+                    chunk_size_bytes,
                 )
                 .await?;
             } else {
@@ -93,6 +95,7 @@ impl<'a> MetadataPersister<'a> {
         file_mappings: Vec<&TrackSourceFile>,
         chunk_mapping: &FileChunkMapping,
         file_size: i64,
+        chunk_size_bytes: usize,
     ) -> Result<(), String> {
         // Extract FLAC headers
         let flac_headers = CueFlacProcessor::extract_flac_headers(source_path)
@@ -146,7 +149,7 @@ impl<'a> MetadataPersister<'a> {
                 .map_err(|e| format!("Failed to parse CUE sheet: {}", e))?;
 
             // Create track position records for each track
-            const CHUNK_SIZE: i64 = 1024 * 1024; // 1MB chunks
+            let chunk_size = chunk_size_bytes as i64;
 
             for (mapping, cue_track) in file_mappings.iter().zip(cue_sheet.tracks.iter()) {
                 // Calculate track boundaries within the file
@@ -168,12 +171,12 @@ impl<'a> MetadataPersister<'a> {
 
                 // Calculate chunk indices relative to the file's position in the album
                 let file_start_byte = chunk_mapping.start_byte_offset
-                    + (chunk_mapping.start_chunk_index as i64 * CHUNK_SIZE);
+                    + (chunk_mapping.start_chunk_index as i64 * chunk_size);
                 let absolute_start_byte = file_start_byte + start_byte;
                 let absolute_end_byte = file_start_byte + end_byte;
 
-                let start_chunk_index = (absolute_start_byte / CHUNK_SIZE) as i32;
-                let end_chunk_index = ((absolute_end_byte - 1) / CHUNK_SIZE) as i32;
+                let start_chunk_index = (absolute_start_byte / chunk_size) as i32;
+                let end_chunk_index = ((absolute_end_byte - 1) / chunk_size) as i32;
 
                 let track_position = DbTrackPosition::new(
                     &mapping.db_track_id,
