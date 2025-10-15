@@ -1,32 +1,30 @@
 use crate::cue_flac::CueFlacProcessor;
 use crate::database::DbTrack;
+use crate::import::service::DiscoveredFile;
 use crate::import::types::TrackSourceFile;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Service responsible for mapping database tracks to their source audio files.
 /// This is a validation step that runs BEFORE database insertion.
 pub struct TrackFileMapper;
 
 impl TrackFileMapper {
-    /// Map database tracks to their source audio files in the folder.
-    /// Returns a TrackSourceFile for each track, linking track ID to file path.
-    ///
-    /// Validation step: If we can't find files for all tracks, import is rejected.
-    /// Handles both:
-    /// - Individual files (one file per track)
-    /// - CUE/FLAC (multiple tracks in single FLAC file)
+    /// Map tracks using already-discovered files (no filesystem traversal)
     pub async fn map_tracks_to_files(
-        source_folder: &Path,
         tracks: &[DbTrack],
+        discovered_files: &[DiscoveredFile],
     ) -> Result<Vec<TrackSourceFile>, String> {
         println!(
-            "TrackFileMapper: Mapping {} tracks to source files in {}",
+            "TrackFileMapper: Mapping {} tracks using {} pre-discovered files",
             tracks.len(),
-            source_folder.display()
+            discovered_files.len()
         );
 
-        // First, check for CUE/FLAC pairs
-        let cue_flac_pairs = CueFlacProcessor::detect_cue_flac(source_folder)
+        // Extract paths from discovered files
+        let file_paths: Vec<PathBuf> = discovered_files.iter().map(|f| f.path.clone()).collect();
+
+        // Check for CUE/FLAC pairs from discovered files
+        let cue_flac_pairs = CueFlacProcessor::detect_cue_flac_from_paths(&file_paths)
             .map_err(|e| format!("CUE/FLAC detection failed: {}", e))?;
 
         if !cue_flac_pairs.is_empty() {
@@ -38,14 +36,13 @@ impl TrackFileMapper {
         }
 
         // Fallback to individual audio files
-        let audio_files = Self::find_audio_files(source_folder)?;
+        let audio_files = Self::filter_audio_files(&file_paths);
 
         if audio_files.is_empty() {
-            return Err("No audio files found in source folder".to_string());
+            return Err("No audio files found in discovered files".to_string());
         }
 
         // Simple mapping strategy: sort files by name and match to track order
-        // TODO: Replace with AI-powered matching
         let mut mappings = Vec::new();
 
         for (index, track) in tracks.iter().enumerate() {
@@ -120,30 +117,28 @@ impl TrackFileMapper {
         Ok(mappings)
     }
 
-    /// Find audio files in a directory
-    fn find_audio_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
-        let mut audio_files = Vec::new();
+    /// Filter audio files from a list of paths
+    fn filter_audio_files(paths: &[PathBuf]) -> Vec<PathBuf> {
         let audio_extensions = ["mp3", "flac", "wav", "m4a", "aac", "ogg"];
-
-        for entry in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
-            let entry = entry.map_err(|e| e.to_string())?;
-            let path = entry.path();
-
-            if path.is_file() {
+        let mut audio_files: Vec<PathBuf> = paths
+            .iter()
+            .filter(|path| {
                 if let Some(extension) = path.extension() {
                     if let Some(ext_str) = extension.to_str() {
-                        if audio_extensions.contains(&ext_str.to_lowercase().as_str()) {
-                            audio_files.push(path);
-                        }
+                        return audio_extensions.contains(&ext_str.to_lowercase().as_str());
                     }
                 }
-            }
-        }
+                false
+            })
+            .cloned()
+            .collect();
 
-        // Sort files by name for consistent ordering
+        // Already sorted by parent function
         audio_files.sort();
-
-        println!("TrackFileMapper: Found {} audio files", audio_files.len());
-        Ok(audio_files)
+        println!(
+            "TrackFileMapper: Filtered {} audio files",
+            audio_files.len()
+        );
+        audio_files
     }
 }

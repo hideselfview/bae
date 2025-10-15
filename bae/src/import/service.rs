@@ -24,7 +24,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use tokio::io::{AsyncReadExt, AsyncSeekExt, BufReader};
+use tokio::io::{AsyncReadExt, BufReader};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -166,59 +166,69 @@ impl ImportService {
         // ========== SETUP ==========
 
         // 1. Create album + track records (in memory only)
-        let album = create_album_record(discogs_album)?;
-        let tracks = create_track_records(discogs_album, &album.id)?;
+        let db_album = create_album_record(discogs_album)?;
+        let db_tracks = create_track_records(discogs_album, &db_album.id)?;
 
         println!(
             "ImportService: Created album record with {} tracks (not inserted yet)",
-            tracks.len()
+            db_tracks.len()
         );
 
-        // 2. Validate track-to-file mapping
-        let track_files = TrackFileMapper::map_tracks_to_files(folder, &tracks).await?;
+        // 2. Discover all files in folder (single filesystem traversal with metadata)
+        let folder_files = discover_folder_files(folder)?;
+
+        println!(
+            "ImportService: Found {} files in album folder",
+            folder_files.len()
+        );
+
+        // 3. Build track-to-file mapping using already-discovered files.
+        // We compute this early as a validation step to ensure we have
+        // source audio data for all tracks before proceeding.
+        let tracks_to_files =
+            TrackFileMapper::map_tracks_to_files(&db_tracks, &folder_files).await?;
 
         println!(
             "ImportService: Successfully mapped {} tracks to source files",
-            track_files.len()
+            tracks_to_files.len()
         );
 
-        // 3. Insert album + tracks into database (status='importing')
+        // 4. Insert album + tracks into database (status='importing')
         library_manager
-            .insert_album_with_tracks(&album, &tracks)
+            .insert_album_with_tracks(&db_album, &db_tracks)
             .await
             .map_err(|e| format!("Database error: {}", e))?;
 
         println!(
             "ImportService: Inserted album and {} tracks into database with status='importing'",
-            tracks.len()
+            db_tracks.len()
         );
 
-        // 4. Send started progress
+        // 5. Send started progress
         let _ = self.progress_tx.send(ImportProgress::Started {
-            album_id: album.id.clone(),
+            album_id: db_album.id.clone(),
         });
 
-        // 5. Find all files and calculate chunk layout
-        let all_files = find_album_files(folder)?;
+        // 6. Calculate chunk layout from discovered files (no additional filesystem calls)
         let chunk_size = 1024 * 1024; // 1MB chunks (default)
-        let (file_mappings, chunk_specs) = calculate_chunk_layout(&all_files, chunk_size)?;
+        let (file_mappings, total_chunks) =
+            calculate_file_mappings_from_discovered(&folder_files, chunk_size)?;
 
         println!(
-            "ImportService: Calculated {} chunks across {} files",
-            chunk_specs.len(),
+            "ImportService: Will process {} chunks across {} files",
+            total_chunks,
             file_mappings.len()
         );
 
         // 6. Build track mapping for progress tracking
-        let track_chunk_map = build_track_chunk_mapping(&file_mappings, &track_files);
+        let track_chunk_map = build_track_chunk_mapping(&file_mappings, &tracks_to_files);
 
         // ========== PIPELINE ==========
 
         // Shared state for tracking progress
         let completed_chunks = Arc::new(Mutex::new(HashSet::new()));
-        let total_chunks = chunk_specs.len();
 
-        let album_id = album.id.clone();
+        let db_album_id = db_album.id.clone();
         let encryption_service = self.encryption_service.clone();
         let cloud_storage = self.cloud_storage.clone();
         let max_encrypt_workers = self.max_encrypt_workers;
@@ -226,10 +236,18 @@ impl ImportService {
         let progress_tx = self.progress_tx.clone();
         let track_chunk_map = Arc::new(track_chunk_map);
 
-        let results = stream::iter(chunk_specs)
-            // Stage 1: Read chunks (bounded I/O)
-            .map(|spec| async move { read_chunk(spec).await })
-            .buffer_unordered(5)
+        // Stage 1: Read chunks from files (each file opened once, chunks read sequentially)
+        let results = stream::iter(file_mappings.clone())
+            .then(move |file_mapping| {
+                let chunk_size = chunk_size;
+                async move { read_chunks_from_file(file_mapping, chunk_size).await }
+            })
+            .flat_map(|chunks_result| {
+                stream::iter(match chunks_result {
+                    Ok(chunks) => chunks.into_iter().map(Ok).collect(),
+                    Err(e) => vec![Err(e)],
+                })
+            })
             // Stage 2: Encrypt chunks (bounded CPU via spawn_blocking)
             .map(move |chunk_data_result| {
                 let encryption_service = encryption_service.clone();
@@ -255,7 +273,7 @@ impl ImportService {
             .buffer_unordered(max_upload_workers)
             // Stage 4: Persist to DB and handle progress
             .map(move |upload_result| {
-                let album_id = album_id.clone();
+                let album_id = db_album_id.clone();
                 let library_manager = library_manager.clone();
                 let track_chunk_map = track_chunk_map.clone();
                 let completed_chunks = completed_chunks.clone();
@@ -294,23 +312,23 @@ impl ImportService {
         // Persist file metadata to database
         let persister = MetadataPersister::new(library_manager);
         persister
-            .persist_album_metadata(&track_files, &file_mappings)
+            .persist_album_metadata(&tracks_to_files, &file_mappings)
             .await?;
 
         // Mark album complete
         library_manager
-            .mark_album_complete(&album.id)
+            .mark_album_complete(&db_album.id)
             .await
             .map_err(|e| format!("Failed to mark album complete: {}", e))?;
 
         // Send completion event
-        let _ = self
-            .progress_tx
-            .send(ImportProgress::Complete { album_id: album.id });
+        let _ = self.progress_tx.send(ImportProgress::Complete {
+            album_id: db_album.id,
+        });
 
         println!(
             "ImportService: Import completed successfully for {}",
-            album.title
+            db_album.title
         );
         Ok(())
     }
@@ -372,13 +390,10 @@ fn extract_artist_name(import_item: &DiscogsAlbum) -> String {
 // Stream-based Pipeline Data Structures
 // ============================================================================
 
-/// Specification for a single chunk to be read from disk
-struct ChunkSpec {
-    chunk_id: String,
-    chunk_index: i32,
-    file_path: PathBuf,
-    offset: u64,
-    size: usize,
+/// File discovered during initial filesystem scan
+pub struct DiscoveredFile {
+    pub path: PathBuf,
+    pub size: u64,
 }
 
 /// Raw chunk data read from disk with checksum
@@ -418,45 +433,47 @@ struct TrackChunkMap {
 // Pipeline Helper Functions
 // ============================================================================
 
-/// Find all files in an album folder (sorted for consistent ordering)
-fn find_album_files(folder: &Path) -> Result<Vec<PathBuf>, String> {
-    let mut all_files = Vec::new();
+/// Discover all files in folder with metadata (single filesystem traversal)
+fn discover_folder_files(folder: &Path) -> Result<Vec<DiscoveredFile>, String> {
+    let mut files = Vec::new();
 
     for entry in std::fs::read_dir(folder).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
 
         if path.is_file() {
-            all_files.push(path);
+            let size = entry
+                .metadata()
+                .map_err(|e| format!("Failed to read metadata for {:?}: {}", path, e))?
+                .len();
+
+            files.push(DiscoveredFile { path, size });
         }
     }
 
-    all_files.sort();
-    Ok(all_files)
+    // Sort by path for consistent ordering
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+
+    Ok(files)
 }
 
-/// Calculate chunk layout for a list of files
-fn calculate_chunk_layout(
-    files: &[PathBuf],
+/// Calculate file mappings and total chunk count from already-discovered files
+fn calculate_file_mappings_from_discovered(
+    files: &[DiscoveredFile],
     chunk_size: usize,
-) -> Result<(Vec<FileChunkMapping>, Vec<ChunkSpec>), String> {
+) -> Result<(Vec<FileChunkMapping>, usize), String> {
     let mut file_mappings = Vec::new();
-    let mut chunk_specs = Vec::new();
     let mut total_bytes_processed = 0u64;
 
-    for file_path in files {
-        let file_size = std::fs::metadata(file_path)
-            .map_err(|e| format!("Failed to read file metadata: {}", e))?
-            .len();
-
+    for file in files {
         let start_byte = total_bytes_processed;
-        let end_byte = total_bytes_processed + file_size;
+        let end_byte = total_bytes_processed + file.size;
 
         let start_chunk_index = (start_byte / chunk_size as u64) as i32;
         let end_chunk_index = ((end_byte - 1) / chunk_size as u64) as i32;
 
         file_mappings.push(FileChunkMapping {
-            file_path: file_path.clone(),
+            file_path: file.path.clone(),
             start_chunk_index,
             end_chunk_index,
             start_byte_offset: (start_byte % chunk_size as u64) as i64,
@@ -466,51 +483,13 @@ fn calculate_chunk_layout(
         total_bytes_processed = end_byte;
     }
 
-    // Generate chunk specs for all chunks across all files
     let total_chunks = if total_bytes_processed == 0 {
         0
     } else {
-        ((total_bytes_processed - 1) / chunk_size as u64) as i32 + 1
+        ((total_bytes_processed - 1) / chunk_size as u64) as usize + 1
     };
 
-    for chunk_index in 0..total_chunks {
-        let chunk_start_byte = chunk_index as u64 * chunk_size as u64;
-        let chunk_end_byte =
-            ((chunk_index + 1) as u64 * chunk_size as u64).min(total_bytes_processed);
-        let this_chunk_size = (chunk_end_byte - chunk_start_byte) as usize;
-
-        // Find which file this chunk starts in
-        let mut file_start_byte = 0u64;
-        let mut chunk_file_path = None;
-        let mut offset_in_file = 0u64;
-
-        for mapping in &file_mappings {
-            let file_meta = std::fs::metadata(&mapping.file_path)
-                .map_err(|e| format!("Failed to read file metadata: {}", e))?;
-            let file_size = file_meta.len();
-            let file_end_byte = file_start_byte + file_size;
-
-            if chunk_start_byte >= file_start_byte && chunk_start_byte < file_end_byte {
-                chunk_file_path = Some(mapping.file_path.clone());
-                offset_in_file = chunk_start_byte - file_start_byte;
-                break;
-            }
-
-            file_start_byte = file_end_byte;
-        }
-
-        if let Some(file_path) = chunk_file_path {
-            chunk_specs.push(ChunkSpec {
-                chunk_id: Uuid::new_v4().to_string(),
-                chunk_index,
-                file_path,
-                offset: offset_in_file,
-                size: this_chunk_size,
-            });
-        }
-    }
-
-    Ok((file_mappings, chunk_specs))
+    Ok((file_mappings, total_chunks))
 }
 
 /// Build mapping from chunks to tracks for progress tracking
@@ -630,34 +609,40 @@ async fn persist_and_track_progress(
     Ok(())
 }
 
-/// Read a chunk from disk
-async fn read_chunk(spec: ChunkSpec) -> Result<ChunkData, String> {
-    let file = tokio::fs::File::open(&spec.file_path)
+/// Read all chunks from a single file (open once, read sequentially)
+async fn read_chunks_from_file(
+    file_mapping: FileChunkMapping,
+    chunk_size: usize,
+) -> Result<Vec<ChunkData>, String> {
+    let file = tokio::fs::File::open(&file_mapping.file_path)
         .await
-        .map_err(|e| format!("Failed to open file: {}", e))?;
+        .map_err(|e| format!("Failed to open file {:?}: {}", file_mapping.file_path, e))?;
 
     let mut reader = BufReader::new(file);
-    reader
-        .seek(std::io::SeekFrom::Start(spec.offset))
-        .await
-        .map_err(|e| format!("Failed to seek: {}", e))?;
+    let mut chunks = Vec::new();
 
-    let mut buffer = vec![0u8; spec.size];
-    reader
-        .read_exact(&mut buffer)
-        .await
-        .map_err(|e| format!("Failed to read chunk: {}", e))?;
+    for chunk_index in file_mapping.start_chunk_index..=file_mapping.end_chunk_index {
+        let mut buffer = vec![0u8; chunk_size];
+        let bytes_read = reader
+            .read(&mut buffer)
+            .await
+            .map_err(|e| format!("Failed to read chunk: {}", e))?;
 
-    let mut hasher = Sha256::new();
-    hasher.update(&buffer);
-    let checksum = format!("{:x}", hasher.finalize());
+        buffer.truncate(bytes_read);
 
-    Ok(ChunkData {
-        chunk_id: spec.chunk_id,
-        chunk_index: spec.chunk_index,
-        data: buffer,
-        checksum,
-    })
+        let mut hasher = Sha256::new();
+        hasher.update(&buffer);
+        let checksum = format!("{:x}", hasher.finalize());
+
+        chunks.push(ChunkData {
+            chunk_id: Uuid::new_v4().to_string(),
+            chunk_index,
+            data: buffer,
+            checksum,
+        });
+    }
+
+    Ok(chunks)
 }
 
 /// Encrypt a chunk (CPU-bound, should be called from spawn_blocking)

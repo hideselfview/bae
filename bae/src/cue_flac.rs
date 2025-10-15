@@ -64,23 +64,20 @@ pub struct CueFlacPair {
 pub struct CueFlacProcessor;
 
 impl CueFlacProcessor {
-    /// Detect CUE/FLAC pairs in a folder
-    pub fn detect_cue_flac(folder_path: &Path) -> Result<Vec<CueFlacPair>, CueFlacError> {
+    /// Detect CUE/FLAC pairs from a list of file paths (no filesystem traversal)
+    pub fn detect_cue_flac_from_paths(
+        file_paths: &[std::path::PathBuf],
+    ) -> Result<Vec<CueFlacPair>, CueFlacError> {
         let mut pairs = Vec::new();
-
-        // Read directory entries
-        let entries = fs::read_dir(folder_path)?;
         let mut flac_files = Vec::new();
         let mut cue_files = Vec::new();
 
-        for entry in entries {
-            let entry = entry?;
-            let path = entry.path();
-
+        // Separate FLAC and CUE files
+        for path in file_paths {
             if let Some(extension) = path.extension() {
                 match extension.to_str() {
-                    Some("flac") => flac_files.push(path),
-                    Some("cue") => cue_files.push(path),
+                    Some("flac") => flac_files.push(path.clone()),
+                    Some("cue") => cue_files.push(path.clone()),
                     _ => {}
                 }
             }
