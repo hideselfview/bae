@@ -69,6 +69,7 @@ pub struct ImportService {
     library_manager: SharedLibraryManager,
     upload_pipeline: UploadPipeline,
     progress_tx: mpsc::UnboundedSender<ImportProgress>,
+    request_rx: mpsc::UnboundedReceiver<ImportRequest>,
     max_encrypt_workers: usize,
     max_upload_workers: usize,
 }
@@ -82,46 +83,23 @@ impl ImportService {
         cloud_storage: CloudStorageManager,
         worker_config: ImportWorkerConfig,
     ) -> ImportServiceHandle {
-        let (request_tx, mut request_rx) = mpsc::unbounded_channel();
+        let (request_tx, request_rx) = mpsc::unbounded_channel();
         let (progress_tx, progress_rx) = mpsc::unbounded_channel();
 
-        // Create service instance for worker task
         let upload_pipeline = UploadPipeline::new(chunking_service, cloud_storage);
 
+        // Create service instance for worker task
         let service = ImportService {
             library_manager,
             upload_pipeline,
             progress_tx,
+            request_rx,
             max_encrypt_workers: worker_config.max_encrypt_workers,
             max_upload_workers: worker_config.max_upload_workers,
         };
 
         // Spawn import worker task on shared runtime
-        runtime_handle.spawn(async move {
-            println!("ImportService: Worker started");
-
-            // Process import requests
-            loop {
-                match request_rx.recv().await {
-                    Some(ImportRequest::FromFolder { album, folder }) => {
-                        println!(
-                            "ImportService: Received import request for {}",
-                            album.title()
-                        );
-
-                        if let Err(e) = service.import_from_folder(&album, &folder).await {
-                            println!("ImportService: Import failed: {}", e);
-                        }
-                    }
-                    None => {
-                        println!("ImportService: Channel closed");
-                        break;
-                    }
-                }
-            }
-
-            println!("ImportService: Worker exiting");
-        });
+        runtime_handle.spawn(service.listen_for_import_requests());
 
         // Create ProgressService, used to broadcast progress updates to external subscribers
         let progress_service = ImportProgressService::new(progress_rx, runtime_handle.clone());
@@ -132,7 +110,39 @@ impl ImportService {
         }
     }
 
-    /// Handle a single import request - orchestrates the import workflow
+    async fn listen_for_import_requests(mut self) {
+        println!("ImportService: Worker started");
+
+        // Process import requests
+        loop {
+            match self.request_rx.recv().await {
+                Some(request) => {
+                    if let Err(e) = self.handle_import_request(request).await {
+                        println!("ImportService: Import failed: {}", e);
+                        // TODO: Handle error
+                    }
+                }
+                None => {
+                    println!("ImportService: Channel closed");
+                    break;
+                }
+            }
+        }
+    }
+
+    async fn handle_import_request(&self, request: ImportRequest) -> Result<(), String> {
+        match request {
+            ImportRequest::FromFolder { album, folder } => {
+                println!(
+                    "ImportService: Received import request for {}",
+                    album.title()
+                );
+
+                self.import_from_folder(&album, &folder).await
+            }
+        }
+    }
+
     async fn import_from_folder(
         &self,
         discogs_album: &DiscogsAlbum,
