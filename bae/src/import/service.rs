@@ -410,12 +410,11 @@ impl ImportService {
                 let encryption_service = encryption_service.clone();
                 async move {
                     let chunk_data = chunk_data_result?;
-                    let join_result: Result<EncryptedChunkData, String> =
-                        tokio::task::spawn_blocking(move || {
-                            encrypt_chunk_blocking(chunk_data, &encryption_service)
-                        })
-                        .await
-                        .map_err(|e| format!("Encryption task panicked: {}", e))?;
+                    let join_result = tokio::task::spawn_blocking(move || {
+                        encrypt_chunk_blocking(chunk_data, &encryption_service)
+                    })
+                    .await
+                    .map_err(|e| format!("Encryption task panicked: {}", e))?;
                     join_result
                 }
             })
@@ -438,47 +437,16 @@ impl ImportService {
                 let progress_tx = progress_tx.clone();
 
                 async move {
-                    let uploaded_chunk = upload_result?;
-
-                    // Persist chunk to database
-                    persist_chunk(&uploaded_chunk, &album_id, &library_manager).await?;
-
-                    // Track completion
-                    let (track_id_opt, progress_update) = {
-                        let mut completed = completed_chunks.lock().unwrap();
-                        completed.insert(uploaded_chunk.chunk_index);
-
-                        let track_id = check_track_completion(
-                            uploaded_chunk.chunk_index,
-                            &track_chunk_map,
-                            &completed,
-                        );
-
-                        let percent = calculate_progress(completed.len(), total_chunks);
-                        (track_id, (completed.len(), percent))
-                    };
-
-                    // Mark track complete if needed
-                    if let Some(track_id) = track_id_opt {
-                        library_manager
-                            .mark_track_complete(&track_id)
-                            .await
-                            .map_err(|e| format!("Failed to mark track complete: {}", e))?;
-                        let _ = progress_tx.send(ImportProgress::TrackComplete {
-                            album_id: album_id.clone(),
-                            track_id,
-                        });
-                    }
-
-                    // Send progress update
-                    let _ = progress_tx.send(ImportProgress::ProcessingProgress {
-                        album_id,
-                        percent: progress_update.1,
-                        current: progress_update.0,
-                        total: total_chunks,
-                    });
-
-                    Ok::<(), String>(())
+                    persist_and_track_progress(
+                        upload_result,
+                        &album_id,
+                        &library_manager,
+                        &track_chunk_map,
+                        &completed_chunks,
+                        &progress_tx,
+                        total_chunks,
+                    )
+                    .await
                 }
             })
             .buffer_unordered(10) // Allow some parallelism for DB writes
@@ -797,6 +765,57 @@ fn calculate_progress(completed: usize, total: usize) -> u8 {
 // ============================================================================
 // Pipeline Stage Functions
 // ============================================================================
+
+/// Stage 4: Persist chunk to DB and handle progress tracking
+#[allow(dead_code)]
+async fn persist_and_track_progress(
+    upload_result: Result<UploadedChunk, String>,
+    album_id: &str,
+    library_manager: &LibraryManager,
+    track_chunk_map: &TrackChunkMap,
+    completed_chunks: &Arc<Mutex<HashSet<i32>>>,
+    progress_tx: &mpsc::UnboundedSender<ImportProgress>,
+    total_chunks: usize,
+) -> Result<(), String> {
+    let uploaded_chunk = upload_result?;
+
+    // Persist chunk to database
+    persist_chunk(&uploaded_chunk, album_id, library_manager).await?;
+
+    // Track completion
+    let (track_id_opt, progress_update) = {
+        let mut completed = completed_chunks.lock().unwrap();
+        completed.insert(uploaded_chunk.chunk_index);
+
+        let track_id =
+            check_track_completion(uploaded_chunk.chunk_index, track_chunk_map, &completed);
+
+        let percent = calculate_progress(completed.len(), total_chunks);
+        (track_id, (completed.len(), percent))
+    };
+
+    // Mark track complete if needed
+    if let Some(track_id) = track_id_opt {
+        library_manager
+            .mark_track_complete(&track_id)
+            .await
+            .map_err(|e| format!("Failed to mark track complete: {}", e))?;
+        let _ = progress_tx.send(ImportProgress::TrackComplete {
+            album_id: album_id.to_string(),
+            track_id,
+        });
+    }
+
+    // Send progress update
+    let _ = progress_tx.send(ImportProgress::ProcessingProgress {
+        album_id: album_id.to_string(),
+        percent: progress_update.1,
+        current: progress_update.0,
+        total: total_chunks,
+    });
+
+    Ok(())
+}
 
 /// Read a chunk from disk
 #[allow(dead_code)]
