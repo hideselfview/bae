@@ -1,4 +1,3 @@
-use crate::chunking::ChunkingError;
 use crate::cloud_storage::CloudStorageError;
 use crate::database::{Database, DbAlbum, DbChunk, DbCueSheet, DbFile, DbTrack, DbTrackPosition};
 use thiserror::Error;
@@ -13,8 +12,6 @@ pub enum LibraryError {
     Import(String),
     #[error("Track mapping error: {0}")]
     TrackMapping(String),
-    #[error("Chunking error: {0}")]
-    Chunking(#[from] ChunkingError),
     #[error("Cloud storage error: {0}")]
     CloudStorage(#[from] CloudStorageError),
 }

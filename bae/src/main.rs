@@ -147,12 +147,6 @@ fn main() {
         "Failed to initialize encryption service. Check your encryption key configuration.",
     );
 
-    // Create shared chunking service
-    let chunking_service = chunking::ChunkingService::new(encryption_service.clone())
-        .expect("Failed to create chunking service");
-
-    println!("Main: Chunking service created");
-
     // Build library manager
     let library_manager = create_library_manager(database.clone());
 
@@ -165,7 +159,6 @@ fn main() {
     let import_service_handle = import::ImportService::start(
         runtime_handle.clone(),
         library_manager.clone(),
-        chunking_service.clone(),
         encryption_service.clone(),
         cloud_storage.clone(),
         import_worker_config,

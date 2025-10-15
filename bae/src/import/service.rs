@@ -8,7 +8,7 @@
 // The orchestrator's job is to call these services in the right order and handle
 // progress reporting to the UI.
 
-use crate::chunking::{ChunkingService, FileChunkMapping};
+use crate::chunking::FileChunkMapping;
 use crate::cloud_storage::CloudStorageManager;
 use crate::database::{DbAlbum, DbTrack};
 use crate::encryption::EncryptionService;
@@ -16,7 +16,6 @@ use crate::import::metadata_persister::MetadataPersister;
 use crate::import::progress_service::ImportProgressService;
 use crate::import::track_file_mapper::TrackFileMapper;
 use crate::import::types::{ImportProgress, ImportRequest, TrackSourceFile};
-use crate::import::upload_pipeline::UploadPipeline;
 use crate::library::LibraryManager;
 use crate::library_context::SharedLibraryManager;
 use crate::models::DiscogsAlbum;
@@ -75,12 +74,7 @@ pub struct ImportWorkerConfig {
 /// Import service that orchestrates the import workflow on the shared runtime
 pub struct ImportService {
     library_manager: SharedLibraryManager,
-    upload_pipeline: UploadPipeline,
-    #[allow(dead_code)]
-    chunking_service: ChunkingService,
-    #[allow(dead_code)]
     encryption_service: EncryptionService,
-    #[allow(dead_code)]
     cloud_storage: CloudStorageManager,
     progress_tx: mpsc::UnboundedSender<ImportProgress>,
     request_rx: mpsc::UnboundedReceiver<ImportRequest>,
@@ -93,7 +87,6 @@ impl ImportService {
     pub fn start(
         runtime_handle: tokio::runtime::Handle,
         library_manager: SharedLibraryManager,
-        chunking_service: ChunkingService,
         encryption_service: EncryptionService,
         cloud_storage: CloudStorageManager,
         worker_config: ImportWorkerConfig,
@@ -101,13 +94,9 @@ impl ImportService {
         let (request_tx, request_rx) = mpsc::unbounded_channel();
         let (progress_tx, progress_rx) = mpsc::unbounded_channel();
 
-        let upload_pipeline = UploadPipeline::new(chunking_service.clone(), cloud_storage.clone());
-
         // Create service instance for worker task
         let service = ImportService {
             library_manager,
-            upload_pipeline,
-            chunking_service,
             encryption_service,
             cloud_storage,
             progress_tx,
@@ -170,170 +159,6 @@ impl ImportService {
 
         println!(
             "ImportService: Starting import for {} from {}",
-            discogs_album.title(),
-            folder.display()
-        );
-
-        // 1. Create album + track records (in memory only)
-        let album = create_album_record(discogs_album)?;
-        let tracks = create_track_records(discogs_album, &album.id)?;
-
-        println!(
-            "ImportService: Created album record with {} tracks (not inserted yet)",
-            tracks.len()
-        );
-
-        // 2. Validate track-to-file mapping
-        let track_files = TrackFileMapper::map_tracks_to_files(folder, &tracks).await?;
-
-        println!(
-            "ImportService: Successfully mapped {} tracks to source files",
-            track_files.len()
-        );
-
-        // 3. Insert album + tracks into database (status='importing')
-        library_manager
-            .insert_album_with_tracks(&album, &tracks)
-            .await
-            .map_err(|e| format!("Database error: {}", e))?;
-
-        println!(
-            "ImportService: Inserted album and {} tracks into database with status='importing'",
-            tracks.len()
-        );
-
-        // Send started progress
-        let _ = self.progress_tx.send(ImportProgress::Started {
-            album_id: album.id.clone(),
-        });
-
-        // 4. Start upload pipeline (returns event channel)
-        let upload_config = crate::import::UploadConfig {
-            max_encrypt_workers: self.max_encrypt_workers,
-            max_upload_workers: self.max_upload_workers,
-        };
-
-        let mut upload_events = self
-            .upload_pipeline
-            .chunk_and_upload_album(track_files.clone(), upload_config);
-
-        // 5. Process upload events and handle database persistence
-        let mut file_mappings = None;
-        let mut total_chunks = 0;
-        let mut chunks_completed = 0;
-
-        while let Some(event) = upload_events.recv().await {
-            match event {
-                crate::import::UploadEvent::Started {
-                    total_chunks: total,
-                } => {
-                    total_chunks = total;
-                }
-                crate::import::UploadEvent::ChunkUploaded {
-                    chunk_id,
-                    chunk_index,
-                    original_size,
-                    encrypted_size,
-                    checksum,
-                    cloud_location,
-                } => {
-                    // Persist chunk to database
-                    let db_chunk = crate::database::DbChunk::from_album_chunk(
-                        &chunk_id,
-                        &album.id.clone(),
-                        chunk_index,
-                        original_size,
-                        encrypted_size,
-                        &checksum,
-                        &cloud_location,
-                        false,
-                    );
-                    library_manager
-                        .add_chunk(&db_chunk)
-                        .await
-                        .map_err(|e| format!("Failed to add chunk: {}", e))?;
-
-                    // Send progress update
-                    chunks_completed += 1;
-                    if total_chunks > 0 {
-                        let percent =
-                            ((chunks_completed as f64 / total_chunks as f64) * 100.0) as u8;
-                        let _ = self.progress_tx.send(ImportProgress::ProcessingProgress {
-                            album_id: album.id.clone(),
-                            percent,
-                            current: chunks_completed,
-                            total: total_chunks,
-                        });
-                    }
-                }
-                crate::import::UploadEvent::TrackCompleted { track_id } => {
-                    // Mark track complete in database
-                    library_manager
-                        .mark_track_complete(&track_id)
-                        .await
-                        .map_err(|e| format!("Failed to mark track complete: {}", e))?;
-
-                    // Send track completion progress event
-                    let _ = self.progress_tx.send(ImportProgress::TrackComplete {
-                        album_id: album.id.clone(),
-                        track_id,
-                    });
-                }
-                crate::import::UploadEvent::Completed {
-                    file_mappings: mappings,
-                } => {
-                    // Store file mappings for metadata persistence
-                    file_mappings = Some(mappings);
-                    break;
-                }
-                crate::import::UploadEvent::Failed { error } => {
-                    // Mark as failed
-                    let _ = library_manager.mark_album_failed(&album.id).await;
-                    for track in &tracks {
-                        let _ = library_manager.mark_track_failed(&track.id).await;
-                    }
-                    return Err(format!("Upload failed: {}", error));
-                }
-            }
-        }
-
-        let file_mappings =
-            file_mappings.ok_or_else(|| "Upload completed without file mappings".to_string())?;
-
-        // 6. Persist file metadata
-        let persister = MetadataPersister::new(library_manager);
-        persister
-            .persist_album_metadata(&track_files, &file_mappings)
-            .await?;
-
-        // 7. Mark album as complete
-        library_manager
-            .mark_album_complete(&album.id)
-            .await
-            .map_err(|e| format!("Failed to mark album complete: {}", e))?;
-
-        let _ = self
-            .progress_tx
-            .send(ImportProgress::Complete { album_id: album.id });
-
-        println!(
-            "ImportService: Import completed successfully for {}",
-            album.title
-        );
-        Ok(())
-    }
-
-    /// Alternative import implementation using direct stream pipeline
-    #[allow(dead_code)]
-    async fn import_from_folder_2(
-        &self,
-        discogs_album: &DiscogsAlbum,
-        folder: &Path,
-    ) -> Result<(), String> {
-        let library_manager = self.library_manager.get();
-
-        println!(
-            "ImportService: Starting stream-based import for {} from {}",
             discogs_album.title(),
             folder.display()
         );
@@ -484,7 +309,7 @@ impl ImportService {
             .send(ImportProgress::Complete { album_id: album.id });
 
         println!(
-            "ImportService: Stream-based import completed successfully for {}",
+            "ImportService: Import completed successfully for {}",
             album.title
         );
         Ok(())
@@ -545,11 +370,9 @@ fn extract_artist_name(import_item: &DiscogsAlbum) -> String {
 
 // ============================================================================
 // Stream-based Pipeline Data Structures
-// (Used by import_from_folder_2 - new implementation, not yet active)
 // ============================================================================
 
 /// Specification for a single chunk to be read from disk
-#[allow(dead_code)]
 struct ChunkSpec {
     chunk_id: String,
     chunk_index: i32,
@@ -559,7 +382,6 @@ struct ChunkSpec {
 }
 
 /// Raw chunk data read from disk with checksum
-#[allow(dead_code)]
 struct ChunkData {
     chunk_id: String,
     chunk_index: i32,
@@ -568,7 +390,6 @@ struct ChunkData {
 }
 
 /// Encrypted chunk data ready for upload
-#[allow(dead_code)]
 struct EncryptedChunkData {
     chunk_id: String,
     chunk_index: i32,
@@ -578,7 +399,6 @@ struct EncryptedChunkData {
 }
 
 /// Chunk successfully uploaded to cloud storage
-#[allow(dead_code)]
 struct UploadedChunk {
     chunk_id: String,
     chunk_index: i32,
@@ -589,7 +409,6 @@ struct UploadedChunk {
 }
 
 /// Mapping of chunks to tracks for progress tracking
-#[allow(dead_code)]
 struct TrackChunkMap {
     chunk_to_track: HashMap<i32, String>,
     track_chunk_counts: HashMap<String, usize>,
@@ -600,7 +419,6 @@ struct TrackChunkMap {
 // ============================================================================
 
 /// Find all files in an album folder (sorted for consistent ordering)
-#[allow(dead_code)]
 fn find_album_files(folder: &Path) -> Result<Vec<PathBuf>, String> {
     let mut all_files = Vec::new();
 
@@ -618,7 +436,6 @@ fn find_album_files(folder: &Path) -> Result<Vec<PathBuf>, String> {
 }
 
 /// Calculate chunk layout for a list of files
-#[allow(dead_code)]
 fn calculate_chunk_layout(
     files: &[PathBuf],
     chunk_size: usize,
@@ -697,7 +514,6 @@ fn calculate_chunk_layout(
 }
 
 /// Build mapping from chunks to tracks for progress tracking
-#[allow(dead_code)]
 fn build_track_chunk_mapping(
     file_mappings: &[FileChunkMapping],
     track_files: &[TrackSourceFile],
@@ -730,7 +546,6 @@ fn build_track_chunk_mapping(
 }
 
 /// Check if completing a chunk triggers track completion
-#[allow(dead_code)]
 fn check_track_completion(
     chunk_index: i32,
     track_chunk_map: &TrackChunkMap,
@@ -753,7 +568,6 @@ fn check_track_completion(
 }
 
 /// Calculate progress percentage
-#[allow(dead_code)]
 fn calculate_progress(completed: usize, total: usize) -> u8 {
     if total == 0 {
         100
@@ -767,7 +581,6 @@ fn calculate_progress(completed: usize, total: usize) -> u8 {
 // ============================================================================
 
 /// Stage 4: Persist chunk to DB and handle progress tracking
-#[allow(dead_code)]
 async fn persist_and_track_progress(
     upload_result: Result<UploadedChunk, String>,
     album_id: &str,
@@ -818,7 +631,6 @@ async fn persist_and_track_progress(
 }
 
 /// Read a chunk from disk
-#[allow(dead_code)]
 async fn read_chunk(spec: ChunkSpec) -> Result<ChunkData, String> {
     let file = tokio::fs::File::open(&spec.file_path)
         .await
@@ -849,7 +661,6 @@ async fn read_chunk(spec: ChunkSpec) -> Result<ChunkData, String> {
 }
 
 /// Encrypt a chunk (CPU-bound, should be called from spawn_blocking)
-#[allow(dead_code)]
 fn encrypt_chunk_blocking(
     chunk_data: ChunkData,
     encryption_service: &EncryptionService,
@@ -873,7 +684,6 @@ fn encrypt_chunk_blocking(
 }
 
 /// Upload encrypted chunk to cloud storage
-#[allow(dead_code)]
 async fn upload_chunk(
     encrypted_chunk: EncryptedChunkData,
     cloud_storage: &CloudStorageManager,
@@ -894,7 +704,6 @@ async fn upload_chunk(
 }
 
 /// Persist chunk to database
-#[allow(dead_code)]
 async fn persist_chunk(
     chunk: &UploadedChunk,
     album_id: &str,
