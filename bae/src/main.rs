@@ -166,6 +166,7 @@ fn main() {
         runtime_handle.clone(),
         library_manager.clone(),
         chunking_service.clone(),
+        encryption_service.clone(),
         cloud_storage.clone(),
         import_worker_config,
     );
