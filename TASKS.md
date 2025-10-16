@@ -153,6 +153,30 @@
 
 ## Browsing & Streaming
 
+### Local Playback (Desktop App)
+
+- [ ] Core playback service
+  - [ ] Add rodio dependency
+  - [ ] Create PlaybackService in src/playback/service.rs
+  - [ ] Extract chunk reassembly from subsonic.rs into reusable function
+  - [ ] Implement play/pause/stop/next commands
+  - [ ] Add PlaybackService to AppContext with use_playback_service() hook
+  - [ ] Build track queue (VecDeque) with next/previous navigation
+
+- [ ] Playback UI
+  - [ ] Add NowPlayingBar component (fixed bottom bar)
+  - [ ] Add play/pause button and track info display
+  - [ ] Add "Play" button to AlbumDetail view
+  - [ ] Wire up AlbumDetail play button to PlaybackService
+  - [ ] Add progress bar with current position (update every second)
+  - [ ] Implement seek by clicking on progress bar
+
+- [ ] Polish
+  - [ ] Add volume slider
+  - [ ] Add queue display (list of upcoming tracks)
+  - [ ] Add keyboard shortcut: space for play/pause
+  - [ ] Handle CUE/FLAC tracks (reuse subsonic.rs seek logic)
+
 ### Transcoding
 
 - [ ] Select and integrate audio processing library
