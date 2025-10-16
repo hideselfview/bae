@@ -21,9 +21,9 @@ Source Folder: /Users/user/Downloads/Album/
 Import Pipeline: Scan files → Match to Discogs → Streaming Chunk Pipeline
     ↓
 Stream Processing:
-    Read files (8KB increments) → Fill chunk buffer (1MB)
+    Read files sequentially → Fill chunk buffer (configurable size, default 1MB)
          ↓                              ↓
-    Continue next file      Encrypt (blocking pool) → Upload (parallel, max 20)
+    Continue next file      Encrypt (spawn_blocking) → Upload (parallel, configurable workers)
          ↓                              ↓
     [loop until done]           Update progress
     ↓
@@ -34,26 +34,43 @@ Local Cache: ~/.bae/cache/ (encrypted chunks, LRU eviction)
 Streaming: Cache → Decrypt → Reassemble → Stream
 ```
 
-**Streaming Pipeline:** bae reads album files sequentially and streams data into chunk buffers. When a buffer fills (1MB), it's immediately encrypted on Tokio's blocking thread pool (enabling parallel CPU-bound encryption) then uploaded via semaphore-controlled concurrency (max 20 concurrent uploads). Reading continues while encryption and uploads happen in background. This eliminates temporary files, reduces memory usage, and maximizes throughput through parallel processing. See `BAE_IMPORT_WORKFLOW.md` for import details and `BAE_CUE_FLAC_SPEC.md` for CUE/FLAC handling.
+**Streaming Pipeline:** bae reads album files sequentially into chunk buffers using `tokio::io::BufReader`. When a buffer fills (configurable, default 1MB), it's encrypted via `tokio::task::spawn_blocking` (CPU-bound work on blocking thread pool), then uploaded with bounded parallelism controlled by `.buffer_unordered()` from the futures crate. Reading continues while encryption and uploads happen concurrently. This eliminates temporary files, reduces memory usage, and maximizes throughput through parallel processing. See `BAE_IMPORT_WORKFLOW.md` for import details and `BAE_CUE_FLAC_SPEC.md` for CUE/FLAC handling.
+
+**Import Pipeline Architecture:**
+- `import/service.rs` - Orchestrates validation, queueing, and pipeline execution
+- `import/pipeline/` - Stream-based pipeline with `impl Stream` return type for composition
+- `import/album_layout.rs` - Analyzes file-to-chunk and chunk-to-track mappings
+- `import/track_file_mapper.rs` - Validates track-to-file mapping before DB insertion
+- `import/metadata_persister.rs` - Persists file/chunk metadata to database after upload
+
+**Import Status Flow:**
+1. User initiates import → Validation runs synchronously
+2. If valid → Album/tracks inserted with `ImportStatus::Queued`
+3. Pipeline starts → Album marked `ImportStatus::Importing`
+4. Chunks upload → Track marked `ImportStatus::Complete` when all its chunks finish
+5. All tracks done → Album marked `ImportStatus::Complete`
+
+**Progress Tracking:**
+- Chunk-to-track mapping built during layout analysis
+- Each chunk completion checked against mapping
+- Tracks marked complete as soon as all their chunks upload
+- Real-time progress events via `ImportProgressService`
 
 **Database Schema:**
 - `albums` → album metadata from Discogs
-- `tracks` → individual track metadata  
+- `tracks` → individual track metadata
 - `files` → original file info (filename, size, format)
-- `chunks` → encrypted album chunks (index, S3 location, checksum)
+- `chunks` → encrypted album chunks (chunk_index, encrypted_size, S3 location)
 - `file_chunks` → file-to-chunk mapping (which chunks contain which files)
-
-**Database Sync:**
-- SQLite database backed up to S3 immediately after each import
-- Manifest statistics updated every 5-10 minutes in background
-- On shutdown to capture any pending changes
-- Enables multi-device library access
-- Database stored at `s3://bucket/bae-library.db`
+- `cue_sheets` → parsed CUE sheet data for CUE/FLAC albums
+- `track_positions` → seek offsets within files for CUE/FLAC streaming
 
 **Chunk Format:**
 ```
 [nonce_len(4)][nonce(12)][key_id_len(4)][key_id][encrypted_data]
 ```
+
+Chunks use AES-256-GCM encryption. Integrity is guaranteed by the GCM authentication tag, so no separate checksum is stored.
 
 ### Storage Locations
 
@@ -63,14 +80,12 @@ Streaming: Cache → Decrypt → Reassemble → Stream
 - Encrypted with AES-256-GCM before upload
 - Source of truth for all music data
 - Scales to millions of chunks without S3 throttling
-- Database backup: `s3://bucket/bae-library.db`
-- Library manifest: `s3://bucket/bae-library.json` (indicates library presence)
 
 **Local Storage (`~/.bae/`):**
 - Cache directory: `~/.bae/cache/` (encrypted chunks, LRU eviction)
-- Database: `~/.bae/libraries/{library_id}/library.db` (SQLite, synced to S3)
+- Database: `~/.bae/libraries/{library_id}/library.db` (SQLite)
 - Config file: `~/.bae/config.yaml` (library settings, S3 credentials)
-- Encryption keys stored in system keyring
+- Encryption keys stored in system keyring (production) or `.env` file (dev mode)
 
 ## Subsonic API Implementation
 
@@ -111,6 +126,10 @@ All responses use standard Subsonic JSON envelope:
   }
 }
 ```
+
+### Authentication
+
+No authentication - any username/password accepted. This allows any Subsonic client to connect to the local server.
 
 ## Streaming Pipeline
 
@@ -202,112 +221,59 @@ Any Subsonic-compatible client can connect to `http://localhost:4533`:
 - Aurial
 - Subfire
 
-### Authentication
+## File Format Support
 
-Currently no authentication - any username/password accepted.
-TODO: Implement proper user management and token-based auth.
-
-## Current Limitations
-
-### File Format Support
-
-**Supported Formats:**
-- Individual audio files: `1 file = 1 track` (MP3, FLAC, etc.)
+bae supports:
+- Individual audio files: `1 file = 1 track` (MP3, FLAC, WAV, M4A, AAC, OGG)
 - CUE/FLAC albums: `1 file = entire album` with track boundaries
 
-### CUE Sheet Support
+### CUE/FLAC Support
 
-**Implemented:**
-- Parse `.cue` files for track boundaries using nom parser
-- Seek to specific positions within large FLAC files using symphonia
-- Store FLAC headers in database for streaming
-- Chunk-range streaming reduces bandwidth
-- Precise track extraction with audio processing
-
-**Remaining:**
-- AI-powered CUE-to-Discogs track mapping (currently uses simple filename matching)
-- See `BAE_CUE_FLAC_SPEC.md` for implementation details
-
-**Transcoding:**
-- No format conversion (FLAC → MP3 for bandwidth)
-- No quality adjustment for mobile clients
-- No streaming optimization
-
-**Advanced Streaming:**
-- No HTTP range request support (seeking)
-- No streaming buffers (entire file loaded to memory)
-- No concurrent stream management
-
-**Cloud Storage:**
-- Chunk upload and download implemented
-- Local cache management (CacheManager with LRU eviction)
-- Database sync to S3 (after imports and periodically)
-
-## Future Architecture
-
-### CUE/FLAC Support (Completed)
-
-CUE/FLAC albums are now fully supported:
+CUE/FLAC albums are fully supported:
 
 ```
 album.flac + album.cue
     ↓
 Parse CUE: track boundaries (00:00, 03:45, 07:22, ...)
     ↓
-Chunk entire FLAC: 150 × 1MB encrypted chunks
+Chunk entire FLAC: N × (configurable MB) encrypted chunks
     ↓
 Stream with seeking: reassemble chunks + seek to track position
 ```
 
-**Database Implementation:**
+**Implementation:**
+- Parse `.cue` files for track boundaries using nom parser
+- Seek to specific positions within large FLAC files using symphonia
+- Store FLAC headers in database for streaming
+- Chunk-range streaming reduces bandwidth
+- Precise track extraction with audio processing
 - `cue_sheets` table stores parsed CUE data
 - `track_positions` table stores seek offsets within files
 - `files` table extended with FLAC headers and CUE flags
-- Streaming supports precise byte-range seeking with symphonia
 
-### Transcoding Pipeline
-
-```
-Encrypted Chunks → Decrypt → Reassemble → Transcode → Stream
-                                    ↓
-                            FLAC → MP3/OGG/AAC
-```
-
-**Implementation:**
-- Integrate FFmpeg for format conversion
-- Add quality profiles (320k, 128k, 64k)
-- Stream transcoded data without temp files
-
-### Cloud Streaming
-
-```
-Track Request → Check Local Cache → Download Missing Chunks → Decrypt → Stream
-                      ↓
-              Cache Management (LRU, size limits)
-```
+See `BAE_CUE_FLAC_SPEC.md` for complete implementation details.
 
 ## Security Model
 
 ### Encryption at Rest
 
 - All chunks encrypted with AES-256-GCM
-- Master keys stored in system keyring
+- Master keys stored in system keyring (production) or `.env` file (dev mode)
 - Unique nonces prevent cryptographic attacks
 - Key ID verification prevents key confusion
+- AES-GCM authentication tag ensures integrity (no separate checksum needed)
 
 ### Network Security
 
 - Local-only API server (localhost:4533)
 - No external network exposure by default
-- TODO: Add HTTPS for remote access
-- TODO: Add proper authentication/authorization
+- No authentication (any client can connect to local server)
 
 ## Performance Characteristics
 
 ### Memory Usage
 
-- **Current**: Entire track loaded into memory before streaming
-- **Target**: Streaming chunks with bounded memory usage
+Entire track loaded into memory before streaming. Bounded channel backpressure during import limits memory usage during chunk processing.
 
 ### Latency
 
@@ -318,32 +284,7 @@ Track Request → Check Local Cache → Download Missing Chunks → Decrypt → 
 ### Throughput
 
 - **Bottleneck**: AES decryption speed
-- **Optimization**: Parallel chunk decryption
-- **Caching**: Decrypted chunks could be cached temporarily
+- **Optimization**: Parallel chunk decryption possible
+- **Caching**: Encrypted chunks cached locally with LRU eviction
 
-## Implementation Status
-
-### Completed
-- Chunk storage and encryption (AES-256-GCM)
-- Subsonic API server foundation (axum-based)
-- Streaming endpoint with chunk reassembly
-- Cloud chunk upload and download (S3)
-- Local chunk caching with LRU eviction (CacheManager)
-- Database schema for tracks/files/chunks
-- **CUE/FLAC support with precise seeking**
-- **FLAC header storage for streaming**
-- **Chunk-range streaming reduces bandwidth**
-
-### In Progress
-- Database sync to S3 (periodic backup)
-- Library initialization and manifest detection
-- First-launch setup wizard (S3 + Discogs configuration)
-
-### Not Implemented
-- Transcoding pipeline (FLAC → MP3/OGG for bandwidth)
-- HTTP range request support for seeking
-- Streaming optimization (buffering, concurrent streams)
-- Authentication system (currently accepts any credentials)
-- Advanced audio format conversion
-
-This architecture provides encrypted chunk storage and Subsonic API compatibility.
+This architecture provides encrypted chunk storage with Subsonic API compatibility.

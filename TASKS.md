@@ -88,8 +88,14 @@
   - [x] Update import flow to be cloud-first (no local ~/Music storage)
   - [x] Implement CacheManager for local chunk caching with LRU eviction
   - [x] Integrate cache layer into streaming pipeline
-  - [ ] Implement database sync to S3 (after imports and periodic)
+  - [ ] Implement database sync to S3
+    - [ ] After each successful import
+    - [ ] Periodic sync (every 5-10 minutes)
+    - [ ] On application shutdown
   - [ ] Add library manifest creation/detection in S3
+    - [ ] Create manifest with library ID and settings
+    - [ ] Update manifest statistics (total albums/tracks/chunks/bytes)
+    - [ ] Detect existing library on startup
 - [x] Build library manager
   - [x] Create library management system
   - [x] Implement album and track import workflows
