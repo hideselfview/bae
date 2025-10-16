@@ -80,7 +80,6 @@ pub struct DbChunk {
     pub chunk_index: i32,
     pub encrypted_size: i64,
     pub storage_location: String, // S3 URI: s3://bucket/chunks/{shard}/{chunk_id}.enc
-    pub is_local: bool,           // Legacy field, always false
     pub last_accessed: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
@@ -205,7 +204,6 @@ impl Database {
                 chunk_index INTEGER NOT NULL,
                 encrypted_size INTEGER NOT NULL,
                 storage_location TEXT NOT NULL,
-                is_local BOOLEAN NOT NULL DEFAULT FALSE,
                 last_accessed TEXT,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (album_id) REFERENCES albums (id) ON DELETE CASCADE
@@ -534,8 +532,8 @@ impl Database {
             r#"
             INSERT INTO chunks (
                 id, album_id, chunk_index, encrypted_size, 
-                storage_location, is_local, last_accessed, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                storage_location, last_accessed, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&chunk.id)
@@ -543,7 +541,6 @@ impl Database {
         .bind(chunk.chunk_index)
         .bind(chunk.encrypted_size)
         .bind(&chunk.storage_location)
-        .bind(chunk.is_local)
         .bind(chunk.last_accessed.as_ref().map(|dt| dt.to_rfc3339()))
         .bind(chunk.created_at.to_rfc3339())
         .execute(&self.pool)
@@ -600,7 +597,6 @@ impl Database {
                 chunk_index: row.get("chunk_index"),
                 encrypted_size: row.get("encrypted_size"),
                 storage_location: row.get("storage_location"),
-                is_local: row.get("is_local"),
                 last_accessed: row.get::<Option<String>, _>("last_accessed").map(|s| {
                     DateTime::parse_from_rfc3339(&s)
                         .unwrap()
@@ -739,7 +735,6 @@ impl Database {
                 chunk_index: row.get("chunk_index"),
                 encrypted_size: row.get("encrypted_size"),
                 storage_location: row.get("storage_location"),
-                is_local: row.get("is_local"),
                 last_accessed: row.get::<Option<String>, _>("last_accessed").map(|s| {
                     DateTime::parse_from_rfc3339(&s)
                         .unwrap()
@@ -857,7 +852,6 @@ impl DbChunk {
         chunk_index: i32,
         encrypted_size: usize,
         storage_location: &str,
-        is_local: bool,
     ) -> Self {
         DbChunk {
             id: chunk_id.to_string(),
@@ -865,8 +859,7 @@ impl DbChunk {
             chunk_index,
             encrypted_size: encrypted_size as i64,
             storage_location: storage_location.to_string(),
-            is_local,
-            last_accessed: if is_local { Some(Utc::now()) } else { None },
+            last_accessed: None,
             created_at: Utc::now(),
         }
     }

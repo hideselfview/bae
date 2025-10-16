@@ -299,7 +299,6 @@ pub(super) async fn persist_chunk(
         chunk.chunk_index,
         chunk.encrypted_size,
         &chunk.cloud_location,
-        false,
     );
 
     library_manager

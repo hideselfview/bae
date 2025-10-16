@@ -585,27 +585,14 @@ async fn download_and_decrypt_chunk(
         return Ok(decrypted_data);
     }
 
-    // Cache miss - need to download
-    let encrypted_data = if chunk.is_local {
-        // Read from local storage (legacy support)
-        let local_path = chunk
-            .storage_location
-            .strip_prefix("local:")
-            .ok_or("Invalid local storage location")?;
+    // Cache miss - download from cloud storage
+    println!("Downloading chunk from cloud: {}", chunk.storage_location);
 
-        println!("Reading chunk from local path: {}", local_path);
-        tokio::fs::read(local_path).await?
-    } else {
-        // Download from cloud storage (using injected cloud storage manager)
-        println!("Downloading chunk from cloud: {}", chunk.storage_location);
-
-        // Download encrypted chunk data
-        state
-            .cloud_storage
-            .download_chunk(&chunk.storage_location)
-            .await
-            .map_err(|e| format!("Failed to download chunk: {}", e))?
-    };
+    let encrypted_data = state
+        .cloud_storage
+        .download_chunk(&chunk.storage_location)
+        .await
+        .map_err(|e| format!("Failed to download chunk: {}", e))?;
 
     // Store in cache for future requests
     if let Err(e) = cache_manager.put_chunk(&chunk.id, &encrypted_data).await {
