@@ -14,9 +14,10 @@
 mod tests;
 
 use crate::cloud_storage::CloudStorageManager;
-use crate::encryption::EncryptionService;
+use crate::database::DbChunk;
+use crate::encryption::{EncryptedChunk, EncryptionService};
 use crate::import::album_layout::TrackProgressTracker;
-use crate::import::service::DiscoveredFile;
+use crate::import::service::{DiscoveredFile, ImportConfig};
 use crate::import::types::ImportProgress;
 use crate::library::LibraryManager;
 use futures::stream::{Stream, StreamExt};
@@ -42,7 +43,7 @@ use uuid::Uuid;
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_pipeline(
     folder_files: Vec<DiscoveredFile>,
-    config: crate::import::service::ImportConfig,
+    config: ImportConfig,
     album_id: String,
     encryption_service: EncryptionService,
     cloud_storage: CloudStorageManager,
@@ -251,8 +252,7 @@ pub(super) fn encrypt_chunk_blocking(
         .map_err(|e| format!("Encryption failed: {}", e))?;
 
     // Create EncryptedChunk and serialize to bytes (includes nonce and authentication tag)
-    let encrypted_chunk =
-        crate::encryption::EncryptedChunk::new(ciphertext, nonce, "master".to_string());
+    let encrypted_chunk = EncryptedChunk::new(ciphertext, nonce, "master".to_string());
     let encrypted_bytes = encrypted_chunk.to_bytes();
 
     Ok(EncryptedChunkData {
@@ -293,7 +293,7 @@ pub(super) async fn persist_chunk(
     album_id: &str,
     library_manager: &LibraryManager,
 ) -> Result<(), String> {
-    let db_chunk = crate::database::DbChunk::from_album_chunk(
+    let db_chunk = DbChunk::from_album_chunk(
         &chunk.chunk_id,
         album_id,
         chunk.chunk_index,
