@@ -1,7 +1,7 @@
 // # Import Service
 //
-// Single-instance queue-based service that processes album imports sequentially.
-// One worker task processes import requests one at a time from a queue.
+// Single-instance queue-based service that imports albums sequentially.
+// One worker task handles import requests one at a time from a queue.
 //
 // Flow:
 // 1. Validation & Queueing (synchronous per request):
@@ -9,7 +9,7 @@
 //    - Insert album/tracks with status='queued'
 //    - Returns immediately so next request can be validated
 //
-// 2. Pipeline Processing (async per import):
+// 2. Pipeline Execution (async per import):
 //    - Mark album as 'importing'
 //    - Streaming pipeline: read → encrypt → upload → persist (bounded parallelism)
 //    - Mark album/tracks as 'complete'
@@ -53,7 +53,7 @@ impl ImportHandle {
     ///
     /// Performs validation (track-to-file mapping) and DB insertion synchronously.
     /// If validation fails, returns error immediately with no side effects.
-    /// If successful, album is inserted with status='queued' and queued for processing.
+    /// If successful, album is inserted with status='queued' and sent to import worker.
     pub async fn send_request(&self, request: ImportRequest) -> Result<(), String> {
         match request {
             ImportRequest::FromFolder { album, folder } => {
@@ -129,7 +129,7 @@ pub struct ImportConfig {
     pub chunk_size_bytes: usize,
 }
 
-/// Validated import ready for pipeline processing
+/// Validated import ready for pipeline execution
 struct ValidatedImport {
     db_album: DbAlbum,
     tracks_to_files: Vec<TrackSourceFile>,
@@ -149,8 +149,8 @@ pub struct ImportService {
 impl ImportService {
     /// Start the single import service worker for the entire app.
     ///
-    /// Creates one worker task that processes validated imports sequentially from a queue.
-    /// Multiple imports will be queued and processed one at a time, not concurrently.
+    /// Creates one worker task that imports validated albums sequentially from a queue.
+    /// Multiple imports will be queued and handled one at a time, not concurrently.
     /// Returns a handle that can be cloned and used throughout the app to submit import requests.
     pub fn start(
         runtime_handle: tokio::runtime::Handle,
@@ -172,7 +172,7 @@ impl ImportService {
             config,
         };
 
-        // Spawn worker task that processes validated imports sequentially
+        // Spawn worker task that imports validated albums sequentially
         runtime_handle.spawn(service.run_import_worker());
 
         // Create ProgressService, used to broadcast progress updates to external subscribers
@@ -188,7 +188,7 @@ impl ImportService {
     async fn run_import_worker(mut self) {
         println!("ImportService: Worker started");
 
-        // Process validated imports sequentially from the queue.
+        // Import validated albums sequentially from the queue.
         loop {
             match self.validated_rx.recv().await {
                 Some(validated) => {
@@ -210,6 +210,13 @@ impl ImportService {
         }
     }
 
+    /// Executes the streaming import pipeline for a validated album.
+    ///
+    /// Orchestrates the entire import workflow:
+    /// 1. Marks the album as 'importing'
+    /// 2. Calculates chunk layout and track progress
+    /// 3. Streams files → encrypts → uploads → persists
+    /// 4. Persists metadata and marks album complete.
     async fn import_from_folder(&self, validated: ValidatedImport) -> Result<(), String> {
         let library_manager = self.library_manager.get();
 
@@ -219,7 +226,7 @@ impl ImportService {
             folder_files,
         } = validated;
 
-        // Mark album as importing now that we're about to start processing
+        // Mark album as importing now that pipeline is starting
         library_manager
             .mark_album_importing(&db_album.id)
             .await
@@ -237,7 +244,7 @@ impl ImportService {
             calculate_file_mappings_from_discovered(&folder_files, self.config.chunk_size_bytes)?;
 
         println!(
-            "ImportService: Will process {} chunks across {} files",
+            "ImportService: Will stream {} chunks across {} files",
             total_chunks,
             file_mappings.len()
         );
@@ -326,7 +333,7 @@ impl ImportService {
         }
 
         println!(
-            "ImportService: All {} chunks processed successfully",
+            "ImportService: All {} chunks uploaded successfully",
             total_chunks
         );
 
@@ -421,14 +428,25 @@ fn extract_artist_name(import_item: &DiscogsAlbum) -> String {
 // Stream-based Pipeline Data Structures
 // ============================================================================
 
-/// File discovered during initial filesystem scan
+/// File discovered during initial filesystem scan.
+///
+/// Created during validation phase when we traverse the album folder once.
+/// Used to calculate chunk layout and feed the reader task.
+///
+/// Example: `{ path: "/music/album/track01.flac", size: 45_821_345 }`
 #[derive(Clone)]
 pub struct DiscoveredFile {
     pub path: PathBuf,
     pub size: u64,
 }
 
-/// Raw chunk data read from disk with checksum
+/// Raw chunk data read from disk with checksum.
+///
+/// Stage 1 output: Reader task produces these by reading files sequentially
+/// and packing bytes into fixed-size chunks. The checksum is calculated from
+/// the raw data before encryption for integrity verification.
+///
+/// Example: `{ chunk_id: "uuid-123", chunk_index: 0, data: [1MB of bytes], checksum: "sha256..." }`
 struct ChunkData {
     chunk_id: String,
     chunk_index: i32,
@@ -436,7 +454,13 @@ struct ChunkData {
     checksum: String,
 }
 
-/// Encrypted chunk data ready for upload
+/// Encrypted chunk data ready for upload.
+///
+/// Stage 2 output: Encryption workers produce these by encrypting ChunkData
+/// via spawn_blocking. The encrypted_data includes AES-256-GCM ciphertext,
+/// nonce, and metadata serialized together.
+///
+/// Example: `{ chunk_id: "uuid-123", chunk_index: 0, original_size: 1048576, encrypted_data: [1.01MB encrypted bytes], checksum: "sha256..." }`
 struct EncryptedChunkData {
     chunk_id: String,
     chunk_index: i32,
@@ -445,7 +469,13 @@ struct EncryptedChunkData {
     checksum: String,
 }
 
-/// Chunk successfully uploaded to cloud storage
+/// Chunk successfully uploaded to cloud storage.
+///
+/// Stage 3 output: Upload workers produce these after successfully uploading
+/// to S3/cloud storage. The cloud_location is the S3 key or storage path used
+/// to retrieve this chunk later during playback.
+///
+/// Example: `{ chunk_id: "uuid-123", chunk_index: 0, original_size: 1048576, encrypted_size: 1049000, checksum: "sha256...", cloud_location: "s3://bucket/album-id/chunk-0" }`
 struct UploadedChunk {
     chunk_id: String,
     chunk_index: i32,
@@ -455,7 +485,17 @@ struct UploadedChunk {
     cloud_location: String,
 }
 
-/// Tracks progress of tracks during import - which chunks belong to which tracks
+/// Tracks which chunks belong to which tracks for progress updates.
+///
+/// Built before pipeline starts by mapping file ranges to chunk indices.
+/// Used in Stage 4 to determine when a track is complete (all its chunks uploaded)
+/// so we can send TrackComplete progress events and mark tracks as complete in DB.
+///
+/// Example:
+/// ```
+/// chunk_to_track: { 0 -> "track-id-1", 1 -> "track-id-1", 2 -> "track-id-2", ... }
+/// track_chunk_counts: { "track-id-1" -> 2, "track-id-2" -> 3, ... }
+/// ```
 struct TrackProgressTracker {
     chunk_to_track: HashMap<i32, String>,
     track_chunk_counts: HashMap<String, usize>,
