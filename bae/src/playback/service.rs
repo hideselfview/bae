@@ -5,7 +5,7 @@ use crate::encryption::EncryptionService;
 use crate::library::LibraryManager;
 use rodio::{OutputStream, OutputStreamBuilder, Sink};
 use std::collections::VecDeque;
-use std::io::Cursor;
+use std::io::{BufReader, Cursor};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
@@ -287,9 +287,10 @@ impl PlaybackService {
 
         println!("Track loaded: {} bytes", audio_data.len());
 
-        // Create audio source from buffer
+        // Create audio source from buffer with buffered reading
         let cursor = Cursor::new(audio_data);
-        let source = match rodio::Decoder::new(cursor) {
+        let buf_reader = BufReader::new(cursor);
+        let source = match rodio::Decoder::new(buf_reader) {
             Ok(decoder) => decoder,
             Err(e) => {
                 eprintln!("Failed to decode audio: {}", e);
