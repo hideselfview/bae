@@ -30,13 +30,14 @@ use crate::import::types::{ImportProgress, ImportRequest, TrackSourceFile};
 use crate::library::LibraryManager;
 use crate::library_context::SharedLibraryManager;
 use crate::models::DiscogsAlbum;
-use futures::stream::{self, StreamExt};
+use futures::stream::StreamExt;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, BufReader};
 use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 use uuid::Uuid;
 
 /// Handle for sending import requests and subscribing to progress updates
@@ -85,15 +86,13 @@ impl ImportHandle {
 
                 // ========== QUEUE FOR PIPELINE ==========
 
-                let validated = ValidatedImport {
-                    db_album,
-                    tracks_to_files,
-                    folder_files,
-                };
-
                 self.validated_tx
-                    .send(validated)
-                    .map_err(|_| "Import service is not running".to_string())?;
+                    .send(ValidatedImport {
+                        db_album,
+                        tracks_to_files,
+                        folder_files,
+                    })
+                    .map_err(|_| "Failed to queue validated album for import".to_string())?;
 
                 Ok(())
             }
@@ -175,7 +174,7 @@ impl ImportService {
         };
 
         // Spawn worker task that processes validated imports sequentially
-        runtime_handle.spawn(service.run_worker());
+        runtime_handle.spawn(service.run_import_worker());
 
         // Create ProgressService, used to broadcast progress updates to external subscribers
         let progress_service = ImportProgressService::new(progress_rx, runtime_handle.clone());
@@ -187,11 +186,10 @@ impl ImportService {
         }
     }
 
-    async fn run_worker(mut self) {
+    async fn run_import_worker(mut self) {
         println!("ImportService: Worker started");
 
         // Process validated imports sequentially from the queue.
-        // Each import is fully completed before the next one starts.
         loop {
             match self.validated_rx.recv().await {
                 Some(validated) => {
@@ -215,6 +213,7 @@ impl ImportService {
 
     async fn import_from_folder(&self, validated: ValidatedImport) -> Result<(), String> {
         let library_manager = self.library_manager.get();
+
         let ValidatedImport {
             db_album,
             tracks_to_files,
@@ -261,19 +260,19 @@ impl ImportService {
         let progress_tx = self.progress_tx.clone();
         let progress_tracker = Arc::new(progress_tracker);
 
-        // Stage 1: Read chunks from files (each file opened once, chunks read sequentially)
+        // Stage 1: Read files and stream chunks (bounded channel for backpressure)
         let chunk_size_bytes = self.config.chunk_size_bytes;
-        let results = stream::iter(file_mappings.clone())
-            .then(move |file_mapping| async move {
-                read_chunks_from_file(file_mapping, chunk_size_bytes).await
-            })
-            .flat_map(|chunks_result| {
-                stream::iter(match chunks_result {
-                    Ok(chunks) => chunks.into_iter().map(Ok).collect(),
-                    Err(e) => vec![Err(e)],
-                })
-            })
-            // Stage 2: Encrypt chunks (bounded CPU via spawn_blocking)
+        let (chunk_tx, chunk_rx) = mpsc::channel::<Result<ChunkData, String>>(10);
+
+        // Spawn reader task that streams chunks as they're produced
+        tokio::spawn(stream_files_into_chunks(
+            folder_files.clone(),
+            chunk_size_bytes,
+            chunk_tx,
+        ));
+
+        // Stage 2: Consume chunks from channel and encrypt (bounded CPU via spawn_blocking)
+        let results = ReceiverStream::new(chunk_rx)
             .map(move |chunk_data_result| {
                 let encryption_service = encryption_service.clone();
                 async move {
@@ -431,6 +430,7 @@ fn extract_artist_name(import_item: &DiscogsAlbum) -> String {
 // ============================================================================
 
 /// File discovered during initial filesystem scan
+#[derive(Clone)]
 pub struct DiscoveredFile {
     pub path: PathBuf,
     pub size: u64,
@@ -670,43 +670,88 @@ async fn persist_and_track_progress(
     Ok(())
 }
 
-/// Read all chunks from a single file.
+/// Read files sequentially and stream chunks as they're produced.
 ///
-/// Opens each file once and reads all its chunks sequentially using a buffered reader.
-/// Generates chunk IDs and SHA-256 checksums for data integrity verification.
-async fn read_chunks_from_file(
-    file_mapping: FileChunkMapping,
+/// Treats all files as a concatenated byte stream, dividing it into fixed-size chunks.
+/// Chunks are sent to the channel as soon as they're full, allowing downstream
+/// encryption and upload to start immediately without buffering the entire album.
+///
+/// Files don't align to chunk boundaries - a chunk may contain data from multiple files.
+async fn stream_files_into_chunks(
+    files: Vec<DiscoveredFile>,
     chunk_size: usize,
-) -> Result<Vec<ChunkData>, String> {
-    let file = tokio::fs::File::open(&file_mapping.file_path)
-        .await
-        .map_err(|e| format!("Failed to open file {:?}: {}", file_mapping.file_path, e))?;
+    chunk_tx: mpsc::Sender<Result<ChunkData, String>>,
+) {
+    let mut current_chunk_buffer = Vec::with_capacity(chunk_size);
+    let mut current_chunk_index = 0i32;
 
-    let mut reader = BufReader::new(file);
-    let mut chunks = Vec::new();
+    for file in files {
+        let file_handle = match tokio::fs::File::open(&file.path).await {
+            Ok(f) => f,
+            Err(e) => {
+                let _ = chunk_tx
+                    .send(Err(format!("Failed to open file {:?}: {}", file.path, e)))
+                    .await;
+                return;
+            }
+        };
 
-    for chunk_index in file_mapping.start_chunk_index..=file_mapping.end_chunk_index {
-        let mut buffer = vec![0u8; chunk_size];
-        let bytes_read = reader
-            .read(&mut buffer)
-            .await
-            .map_err(|e| format!("Failed to read chunk: {}", e))?;
+        let mut reader = BufReader::new(file_handle);
 
-        buffer.truncate(bytes_read);
+        loop {
+            let space_remaining = chunk_size - current_chunk_buffer.len();
+            let mut temp_buffer = vec![0u8; space_remaining];
 
-        let mut hasher = Sha256::new();
-        hasher.update(&buffer);
-        let checksum = format!("{:x}", hasher.finalize());
+            let bytes_read = match reader.read(&mut temp_buffer).await {
+                Ok(n) => n,
+                Err(e) => {
+                    let _ = chunk_tx
+                        .send(Err(format!("Failed to read from file: {}", e)))
+                        .await;
+                    return;
+                }
+            };
 
-        chunks.push(ChunkData {
-            chunk_id: Uuid::new_v4().to_string(),
-            chunk_index,
-            data: buffer,
-            checksum,
-        });
+            if bytes_read == 0 {
+                // EOF - move to next file
+                break;
+            }
+
+            // Add the bytes we read to current chunk
+            current_chunk_buffer.extend_from_slice(&temp_buffer[..bytes_read]);
+
+            // If chunk is full, send it and start a new one
+            if current_chunk_buffer.len() == chunk_size {
+                let chunk = finalize_chunk(current_chunk_index, current_chunk_buffer);
+                if chunk_tx.send(Ok(chunk)).await.is_err() {
+                    // Receiver dropped, stop reading
+                    return;
+                }
+                current_chunk_index += 1;
+                current_chunk_buffer = Vec::with_capacity(chunk_size);
+            }
+        }
     }
 
-    Ok(chunks)
+    // Send final partial chunk if any data remains
+    if !current_chunk_buffer.is_empty() {
+        let chunk = finalize_chunk(current_chunk_index, current_chunk_buffer);
+        let _ = chunk_tx.send(Ok(chunk)).await;
+    }
+}
+
+/// Finalize a chunk by calculating its checksum and creating ChunkData.
+fn finalize_chunk(chunk_index: i32, data: Vec<u8>) -> ChunkData {
+    let mut hasher = Sha256::new();
+    hasher.update(&data);
+    let checksum = format!("{:x}", hasher.finalize());
+
+    ChunkData {
+        chunk_id: Uuid::new_v4().to_string(),
+        chunk_index,
+        data,
+        checksum,
+    }
 }
 
 /// Encrypt a chunk using AES-256-GCM.

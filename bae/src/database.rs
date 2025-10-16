@@ -15,10 +15,10 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "TEXT", rename_all = "lowercase")]
 pub enum ImportStatus {
-    Queued,     // Validated and in import queue, waiting to start
-    Importing,  // Actively being processed (chunks being read/encrypted/uploaded)
-    Complete,   // Successfully imported
-    Failed,     // Import failed
+    Queued,    // Validated and in import queue, waiting to start
+    Importing, // Actively being processed (chunks being read/encrypted/uploaded)
+    Complete,  // Successfully imported
+    Failed,    // Import failed
 }
 
 impl ImportStatus {
