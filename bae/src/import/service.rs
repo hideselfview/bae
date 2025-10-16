@@ -387,8 +387,7 @@ fn create_album_and_tracks(import_item: &DiscogsAlbum) -> Result<(DbAlbum, Vec<D
     let mut tracks = Vec::new();
 
     for discogs_track in discogs_tracks.iter() {
-        let track_number = Some(discogs_track.parse_track_number()?);
-        let track = DbTrack::from_discogs_track(discogs_track, &album.id, track_number);
+        let track = DbTrack::from_discogs_track(discogs_track, &album.id)?;
         tracks.push(track);
     }
 

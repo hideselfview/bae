@@ -807,9 +807,10 @@ impl DbTrack {
     pub fn from_discogs_track(
         discogs_track: &crate::models::DiscogsTrack,
         album_id: &str,
-        track_number: Option<i32>,
-    ) -> Self {
-        DbTrack {
+    ) -> Result<Self, String> {
+        let track_number = Some(discogs_track.parse_track_number()?);
+
+        Ok(DbTrack {
             id: Uuid::new_v4().to_string(),
             album_id: album_id.to_string(),
             title: discogs_track.title.clone(),
@@ -819,7 +820,7 @@ impl DbTrack {
             discogs_position: Some(discogs_track.position.clone()),
             import_status: ImportStatus::Queued,
             created_at: Utc::now(),
-        }
+        })
     }
 }
 
