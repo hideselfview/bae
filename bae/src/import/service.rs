@@ -220,7 +220,7 @@ impl ImportService {
         );
 
         // 6. Build track mapping for progress tracking
-        let track_chunk_map = build_track_chunk_mapping(&file_mappings, &tracks_to_files);
+        let progress_tracker = build_track_progress_tracker(&file_mappings, &tracks_to_files);
 
         // ========== PIPELINE ==========
 
@@ -233,7 +233,7 @@ impl ImportService {
         let max_encrypt_workers = self.config.max_encrypt_workers;
         let max_upload_workers = self.config.max_upload_workers;
         let progress_tx = self.progress_tx.clone();
-        let track_chunk_map = Arc::new(track_chunk_map);
+        let progress_tracker = Arc::new(progress_tracker);
 
         // Stage 1: Read chunks from files (each file opened once, chunks read sequentially)
         let chunk_size_bytes = self.config.chunk_size_bytes;
@@ -274,7 +274,7 @@ impl ImportService {
             .map(move |upload_result| {
                 let album_id = db_album_id.clone();
                 let library_manager = library_manager.clone();
-                let track_chunk_map = track_chunk_map.clone();
+                let progress_tracker = progress_tracker.clone();
                 let completed_chunks = completed_chunks.clone();
                 let progress_tx = progress_tx.clone();
 
@@ -283,7 +283,7 @@ impl ImportService {
                         upload_result,
                         &album_id,
                         &library_manager,
-                        &track_chunk_map,
+                        &progress_tracker,
                         &completed_chunks,
                         &progress_tx,
                         total_chunks,
@@ -337,7 +337,10 @@ impl ImportService {
     }
 }
 
-/// Create album database record from Discogs data
+/// Create album database record from Discogs data.
+///
+/// Extracts artist name and converts Discogs metadata to our DB schema.
+/// Must happen before track creation so we have an album_id to link tracks to.
 fn create_album_record(import_item: &DiscogsAlbum) -> Result<DbAlbum, String> {
     let artist_name = extract_artist_name(import_item);
 
@@ -348,7 +351,10 @@ fn create_album_record(import_item: &DiscogsAlbum) -> Result<DbAlbum, String> {
     Ok(album)
 }
 
-/// Create track database records from Discogs tracklist
+/// Create track database records from Discogs tracklist.
+///
+/// Converts each Discogs track to our DB schema and links them to the album.
+/// Track numbers are parsed from Discogs position strings (e.g., "1", "A1", "1-1").
 fn create_track_records(
     import_item: &DiscogsAlbum,
     album_id: &str,
@@ -365,8 +371,10 @@ fn create_track_records(
     Ok(tracks)
 }
 
-/// Parse track number from Discogs position string
-/// Discogs positions can be like "1", "A1", "1-1", etc.
+/// Parse track number from Discogs position string.
+///
+/// Discogs uses inconsistent position formats ("1", "A1", "1-1", etc).
+/// We extract numeric characters and parse them. Falls back to index+1 if parsing fails.
 fn parse_track_number(position: &str, fallback_index: usize) -> Option<i32> {
     // Try to extract number from position string
     let numbers: String = position.chars().filter(|c| c.is_numeric()).collect();
@@ -379,7 +387,10 @@ fn parse_track_number(position: &str, fallback_index: usize) -> Option<i32> {
     }
 }
 
-/// Extract artist name from import item
+/// Extract artist name from album title.
+///
+/// Discogs album titles often follow "Artist - Album" format.
+/// We split on " - " to extract the artist. Falls back to "Unknown Artist".
 fn extract_artist_name(import_item: &DiscogsAlbum) -> String {
     let title = import_item.title();
     if let Some(dash_pos) = title.find(" - ") {
@@ -426,8 +437,8 @@ struct UploadedChunk {
     cloud_location: String,
 }
 
-/// Mapping of chunks to tracks for progress tracking
-struct TrackChunkMap {
+/// Tracks progress of tracks during import - which chunks belong to which tracks
+struct TrackProgressTracker {
     chunk_to_track: HashMap<i32, String>,
     track_chunk_counts: HashMap<String, usize>,
 }
@@ -436,7 +447,11 @@ struct TrackChunkMap {
 // Pipeline Helper Functions
 // ============================================================================
 
-/// Discover all files in folder with metadata (single filesystem traversal)
+/// Discover all files in folder with metadata.
+///
+/// Single filesystem traversal to gather file paths and sizes upfront.
+/// This avoids redundant directory reads later for CUE detection and chunk calculations.
+/// Files are sorted by path for consistent ordering across runs.
 fn discover_folder_files(folder: &Path) -> Result<Vec<DiscoveredFile>, String> {
     let mut files = Vec::new();
 
@@ -460,7 +475,11 @@ fn discover_folder_files(folder: &Path) -> Result<Vec<DiscoveredFile>, String> {
     Ok(files)
 }
 
-/// Calculate file mappings and total chunk count from already-discovered files
+/// Calculate file mappings and total chunk count from already-discovered files.
+///
+/// Treats all files as a single concatenated byte stream, divided into fixed-size chunks.
+/// Each file mapping records which chunks it spans and byte offsets within those chunks.
+/// This enables efficient streaming: open each file once, read its chunks sequentially.
 fn calculate_file_mappings_from_discovered(
     files: &[DiscoveredFile],
     chunk_size: usize,
@@ -495,11 +514,17 @@ fn calculate_file_mappings_from_discovered(
     Ok((file_mappings, total_chunks))
 }
 
-/// Build mapping from chunks to tracks for progress tracking
-fn build_track_chunk_mapping(
+/// Build progress tracker for tracks during import.
+///
+/// Creates reverse mappings from chunks to tracks so we can:
+/// 1. Identify which track a chunk belongs to when it completes
+/// 2. Count how many chunks each track needs to mark it complete
+///
+/// This enables progressive UI updates as tracks finish, rather than waiting for the entire album.
+fn build_track_progress_tracker(
     file_mappings: &[FileChunkMapping],
     track_files: &[TrackSourceFile],
-) -> TrackChunkMap {
+) -> TrackProgressTracker {
     let mut file_to_track: HashMap<PathBuf, String> = HashMap::new();
     for track_file in track_files {
         file_to_track.insert(track_file.file_path.clone(), track_file.db_track_id.clone());
@@ -521,22 +546,25 @@ fn build_track_chunk_mapping(
         }
     }
 
-    TrackChunkMap {
+    TrackProgressTracker {
         chunk_to_track,
         track_chunk_counts,
     }
 }
 
-/// Check if completing a chunk triggers track completion
+/// Check if completing a chunk triggers track completion.
+///
+/// Called after each chunk upload to see if all chunks for a track are done.
+/// Returns the track_id if complete, allowing us to mark it playable immediately.
 fn check_track_completion(
     chunk_index: i32,
-    track_chunk_map: &TrackChunkMap,
+    progress_tracker: &TrackProgressTracker,
     completed_chunks: &HashSet<i32>,
 ) -> Option<String> {
-    let track_id = track_chunk_map.chunk_to_track.get(&chunk_index)?;
-    let total_for_track = track_chunk_map.track_chunk_counts.get(track_id).copied()?;
+    let track_id = progress_tracker.chunk_to_track.get(&chunk_index)?;
+    let total_for_track = progress_tracker.track_chunk_counts.get(track_id).copied()?;
 
-    let completed_for_track = track_chunk_map
+    let completed_for_track = progress_tracker
         .chunk_to_track
         .iter()
         .filter(|(idx, tid)| *tid == track_id && completed_chunks.contains(idx))
@@ -562,12 +590,16 @@ fn calculate_progress(completed: usize, total: usize) -> u8 {
 // Pipeline Stage Functions
 // ============================================================================
 
-/// Stage 4: Persist chunk to DB and handle progress tracking
+/// Stage 4: Persist chunk to DB and handle progress tracking.
+///
+/// Final stage of the pipeline. Saves chunk metadata to DB and emits progress events.
+/// Checks if this chunk completes a track, marking it playable and emitting TrackComplete.
+/// This is where the streaming pipeline meets the database and UI.
 async fn persist_and_track_progress(
     upload_result: Result<UploadedChunk, String>,
     album_id: &str,
     library_manager: &LibraryManager,
-    track_chunk_map: &TrackChunkMap,
+    progress_tracker: &TrackProgressTracker,
     completed_chunks: &Arc<Mutex<HashSet<i32>>>,
     progress_tx: &mpsc::UnboundedSender<ImportProgress>,
     total_chunks: usize,
@@ -583,7 +615,7 @@ async fn persist_and_track_progress(
         completed.insert(uploaded_chunk.chunk_index);
 
         let track_id =
-            check_track_completion(uploaded_chunk.chunk_index, track_chunk_map, &completed);
+            check_track_completion(uploaded_chunk.chunk_index, progress_tracker, &completed);
 
         let percent = calculate_progress(completed.len(), total_chunks);
         (track_id, (completed.len(), percent))
@@ -612,7 +644,10 @@ async fn persist_and_track_progress(
     Ok(())
 }
 
-/// Read all chunks from a single file (open once, read sequentially)
+/// Read all chunks from a single file.
+///
+/// Opens each file once and reads all its chunks sequentially using a buffered reader.
+/// Generates chunk IDs and SHA-256 checksums for data integrity verification.
 async fn read_chunks_from_file(
     file_mapping: FileChunkMapping,
     chunk_size: usize,
@@ -648,7 +683,10 @@ async fn read_chunks_from_file(
     Ok(chunks)
 }
 
-/// Encrypt a chunk (CPU-bound, should be called from spawn_blocking)
+/// Encrypt a chunk using AES-256-GCM.
+///
+/// CPU-bound operation called from spawn_blocking to avoid starving async I/O.
+/// Wraps encrypted data with nonce and metadata, ready for cloud upload.
 fn encrypt_chunk_blocking(
     chunk_data: ChunkData,
     encryption_service: &EncryptionService,
@@ -671,7 +709,10 @@ fn encrypt_chunk_blocking(
     })
 }
 
-/// Upload encrypted chunk to cloud storage
+/// Upload encrypted chunk to cloud storage.
+///
+/// I/O-bound operation that sends encrypted data to S3 or equivalent.
+/// Returns cloud location for database storage and later retrieval.
 async fn upload_chunk(
     encrypted_chunk: EncryptedChunkData,
     cloud_storage: &CloudStorageManager,
@@ -691,7 +732,10 @@ async fn upload_chunk(
     })
 }
 
-/// Persist chunk to database
+/// Persist chunk metadata to database.
+///
+/// Stores chunk ID, size, checksum, and cloud location for later retrieval.
+/// This creates the link between our database and cloud storage.
 async fn persist_chunk(
     chunk: &UploadedChunk,
     album_id: &str,
