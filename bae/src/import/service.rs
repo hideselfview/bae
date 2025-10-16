@@ -19,10 +19,10 @@
 // - MetadataPersister: Saves file/chunk metadata to DB
 // - ProgressService: Broadcasts real-time progress updates to UI subscribers
 
-use crate::chunking::FileChunkMapping;
 use crate::cloud_storage::CloudStorageManager;
 use crate::database::{DbAlbum, DbTrack};
 use crate::encryption::EncryptionService;
+use crate::import::album_layout::{AlbumLayout, TrackProgressTracker};
 use crate::import::metadata_persister::MetadataPersister;
 use crate::import::progress_service::ImportProgressService;
 use crate::import::track_file_mapper::TrackFileMapper;
@@ -31,7 +31,7 @@ use crate::library::LibraryManager;
 use crate::library_context::SharedLibraryManager;
 use crate::models::DiscogsAlbum;
 use futures::stream::StreamExt;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, BufReader};
@@ -238,18 +238,18 @@ impl ImportService {
             album_id: db_album.id.clone(),
         });
 
-        // Calculate chunk layout from discovered files (no additional filesystem calls)
-        let (file_mappings, total_chunks) =
-            calculate_file_mappings_from_discovered(&folder_files, self.config.chunk_size_bytes)?;
+        // Analyze album layout: files → chunks → tracks
+        let layout = AlbumLayout::analyze(
+            &folder_files,
+            &tracks_to_files,
+            self.config.chunk_size_bytes,
+        )?;
 
         println!(
             "ImportService: Will stream {} chunks across {} files",
-            total_chunks,
-            file_mappings.len()
+            layout.total_chunks,
+            layout.file_mappings.len()
         );
-
-        // Build track mapping for progress tracking
-        let progress_tracker = build_track_progress_tracker(&file_mappings, &tracks_to_files);
 
         // ========== STREAMING PIPELINE ==========
         // Read → Encrypt → Upload → Persist (bounded parallelism at each stage)
@@ -263,7 +263,9 @@ impl ImportService {
         let max_encrypt_workers = self.config.max_encrypt_workers;
         let max_upload_workers = self.config.max_upload_workers;
         let progress_tx = self.progress_tx.clone();
-        let progress_tracker = Arc::new(progress_tracker);
+        let progress_tracker = Arc::new(layout.progress_tracker);
+        let total_chunks = layout.total_chunks;
+        let file_mappings = layout.file_mappings;
 
         // Stage 1: Read files and stream chunks (bounded channel for backpressure)
         let chunk_size_bytes = self.config.chunk_size_bytes;
@@ -448,21 +450,6 @@ struct UploadedChunk {
     cloud_location: String,
 }
 
-/// Tracks which chunks belong to which tracks for progress updates.
-///
-/// Built before pipeline starts by mapping file ranges to chunk indices.
-/// Used in Stage 4 to determine when a track is complete (all its chunks uploaded)
-/// so we can send TrackComplete progress events and mark tracks as complete in DB.
-///
-/// Example:
-/// ```
-/// chunk_to_track: { 0 -> "track-id-1", 1 -> "track-id-1", 2 -> "track-id-2", ... }
-/// track_chunk_counts: { "track-id-1" -> 2, "track-id-2" -> 3, ... }
-/// ```
-struct TrackProgressTracker {
-    chunk_to_track: HashMap<i32, String>,
-    track_chunk_counts: HashMap<String, usize>,
-}
 
 // ============================================================================
 // Pipeline Helper Functions
@@ -494,83 +481,6 @@ fn discover_folder_files(folder: &Path) -> Result<Vec<DiscoveredFile>, String> {
     files.sort_by(|a, b| a.path.cmp(&b.path));
 
     Ok(files)
-}
-
-/// Calculate file mappings and total chunk count from already-discovered files.
-///
-/// Treats all files as a single concatenated byte stream, divided into fixed-size chunks.
-/// Each file mapping records which chunks it spans and byte offsets within those chunks.
-/// This enables efficient streaming: open each file once, read its chunks sequentially.
-fn calculate_file_mappings_from_discovered(
-    files: &[DiscoveredFile],
-    chunk_size: usize,
-) -> Result<(Vec<FileChunkMapping>, usize), String> {
-    let mut file_mappings = Vec::new();
-    let mut total_bytes_processed = 0u64;
-
-    for file in files {
-        let start_byte = total_bytes_processed;
-        let end_byte = total_bytes_processed + file.size;
-
-        let start_chunk_index = (start_byte / chunk_size as u64) as i32;
-        let end_chunk_index = ((end_byte - 1) / chunk_size as u64) as i32;
-
-        file_mappings.push(FileChunkMapping {
-            file_path: file.path.clone(),
-            start_chunk_index,
-            end_chunk_index,
-            start_byte_offset: (start_byte % chunk_size as u64) as i64,
-            end_byte_offset: ((end_byte - 1) % chunk_size as u64) as i64,
-        });
-
-        total_bytes_processed = end_byte;
-    }
-
-    let total_chunks = if total_bytes_processed == 0 {
-        0
-    } else {
-        ((total_bytes_processed - 1) / chunk_size as u64) as usize + 1
-    };
-
-    Ok((file_mappings, total_chunks))
-}
-
-/// Build progress tracker for tracks during import.
-///
-/// Creates reverse mappings from chunks to tracks so we can:
-/// 1. Identify which track a chunk belongs to when it completes
-/// 2. Count how many chunks each track needs to mark it complete
-///
-/// This enables progressive UI updates as tracks finish, rather than waiting for the entire album.
-fn build_track_progress_tracker(
-    file_mappings: &[FileChunkMapping],
-    track_files: &[TrackSourceFile],
-) -> TrackProgressTracker {
-    let mut file_to_track: HashMap<PathBuf, String> = HashMap::new();
-    for track_file in track_files {
-        file_to_track.insert(track_file.file_path.clone(), track_file.db_track_id.clone());
-    }
-
-    let mut chunk_to_track: HashMap<i32, String> = HashMap::new();
-    let mut track_chunk_counts: HashMap<String, usize> = HashMap::new();
-
-    for file_mapping in file_mappings {
-        if let Some(track_id) = file_to_track.get(&file_mapping.file_path) {
-            let chunk_count =
-                (file_mapping.end_chunk_index - file_mapping.start_chunk_index + 1) as usize;
-
-            for chunk_idx in file_mapping.start_chunk_index..=file_mapping.end_chunk_index {
-                chunk_to_track.insert(chunk_idx, track_id.clone());
-            }
-
-            *track_chunk_counts.entry(track_id.clone()).or_insert(0) += chunk_count;
-        }
-    }
-
-    TrackProgressTracker {
-        chunk_to_track,
-        track_chunk_counts,
-    }
 }
 
 /// Check if completing a chunk triggers track completion.
