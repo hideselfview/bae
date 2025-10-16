@@ -80,7 +80,6 @@ pub struct DbChunk {
     pub chunk_index: i32,
     pub chunk_size: i64,
     pub encrypted_size: i64,
-    pub checksum: String,
     pub storage_location: String, // S3 key or local path
     pub is_local: bool,
     pub last_accessed: Option<DateTime<Utc>>,
@@ -207,7 +206,6 @@ impl Database {
                 chunk_index INTEGER NOT NULL,
                 chunk_size INTEGER NOT NULL,
                 encrypted_size INTEGER NOT NULL,
-                checksum TEXT NOT NULL,
                 storage_location TEXT NOT NULL,
                 is_local BOOLEAN NOT NULL DEFAULT FALSE,
                 last_accessed TEXT,
@@ -538,8 +536,8 @@ impl Database {
             r#"
             INSERT INTO chunks (
                 id, album_id, chunk_index, chunk_size, encrypted_size, 
-                checksum, storage_location, is_local, last_accessed, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                storage_location, is_local, last_accessed, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&chunk.id)
@@ -547,7 +545,6 @@ impl Database {
         .bind(chunk.chunk_index)
         .bind(chunk.chunk_size)
         .bind(chunk.encrypted_size)
-        .bind(&chunk.checksum)
         .bind(&chunk.storage_location)
         .bind(chunk.is_local)
         .bind(chunk.last_accessed.as_ref().map(|dt| dt.to_rfc3339()))
@@ -606,7 +603,6 @@ impl Database {
                 chunk_index: row.get("chunk_index"),
                 chunk_size: row.get("chunk_size"),
                 encrypted_size: row.get("encrypted_size"),
-                checksum: row.get("checksum"),
                 storage_location: row.get("storage_location"),
                 is_local: row.get("is_local"),
                 last_accessed: row.get::<Option<String>, _>("last_accessed").map(|s| {
@@ -747,7 +743,6 @@ impl Database {
                 chunk_index: row.get("chunk_index"),
                 chunk_size: row.get("chunk_size"),
                 encrypted_size: row.get("encrypted_size"),
-                checksum: row.get("checksum"),
                 storage_location: row.get("storage_location"),
                 is_local: row.get("is_local"),
                 last_accessed: row.get::<Option<String>, _>("last_accessed").map(|s| {
@@ -861,14 +856,12 @@ impl DbFile {
 }
 
 impl DbChunk {
-    #[allow(clippy::too_many_arguments)]
     pub fn from_album_chunk(
         chunk_id: &str,
         album_id: &str,
         chunk_index: i32,
         original_size: usize,
         encrypted_size: usize,
-        checksum: &str,
         storage_location: &str,
         is_local: bool,
     ) -> Self {
@@ -878,7 +871,6 @@ impl DbChunk {
             chunk_index,
             chunk_size: original_size as i64,
             encrypted_size: encrypted_size as i64,
-            checksum: checksum.to_string(),
             storage_location: storage_location.to_string(),
             is_local,
             last_accessed: if is_local { Some(Utc::now()) } else { None },

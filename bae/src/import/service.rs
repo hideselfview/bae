@@ -31,7 +31,6 @@ use crate::library::LibraryManager;
 use crate::library_context::SharedLibraryManager;
 use crate::models::DiscogsAlbum;
 use futures::stream::StreamExt;
-use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -410,33 +409,30 @@ pub struct DiscoveredFile {
     pub size: u64,
 }
 
-/// Raw chunk data read from disk with checksum.
+/// Raw chunk data read from disk.
 ///
 /// Stage 1 output: Reader task produces these by reading files sequentially
-/// and packing bytes into fixed-size chunks. The checksum is calculated from
-/// the raw data before encryption for integrity verification.
+/// and packing bytes into fixed-size chunks.
 ///
-/// Example: `{ chunk_id: "uuid-123", chunk_index: 0, data: [1MB of bytes], checksum: "sha256..." }`
+/// Example: `{ chunk_id: "uuid-123", chunk_index: 0, data: [1MB of bytes] }`
 struct ChunkData {
     chunk_id: String,
     chunk_index: i32,
     data: Vec<u8>,
-    checksum: String,
 }
 
 /// Encrypted chunk data ready for upload.
 ///
 /// Stage 2 output: Encryption workers produce these by encrypting ChunkData
 /// via spawn_blocking. The encrypted_data includes AES-256-GCM ciphertext,
-/// nonce, and metadata serialized together.
+/// nonce, and authentication tag.
 ///
-/// Example: `{ chunk_id: "uuid-123", chunk_index: 0, original_size: 1048576, encrypted_data: [1.01MB encrypted bytes], checksum: "sha256..." }`
+/// Example: `{ chunk_id: "uuid-123", chunk_index: 0, original_size: 1048576, encrypted_data: [1.01MB encrypted bytes] }`
 struct EncryptedChunkData {
     chunk_id: String,
     chunk_index: i32,
     original_size: usize,
     encrypted_data: Vec<u8>,
-    checksum: String,
 }
 
 /// Chunk successfully uploaded to cloud storage.
@@ -445,13 +441,12 @@ struct EncryptedChunkData {
 /// to S3/cloud storage. The cloud_location is the S3 key or storage path used
 /// to retrieve this chunk later during playback.
 ///
-/// Example: `{ chunk_id: "uuid-123", chunk_index: 0, original_size: 1048576, encrypted_size: 1049000, checksum: "sha256...", cloud_location: "s3://bucket/album-id/chunk-0" }`
+/// Example: `{ chunk_id: "uuid-123", chunk_index: 0, original_size: 1048576, encrypted_size: 1049000, cloud_location: "s3://bucket/album-id/chunk-0" }`
 struct UploadedChunk {
     chunk_id: String,
     chunk_index: i32,
     original_size: usize,
     encrypted_size: usize,
-    checksum: String,
     cloud_location: String,
 }
 
@@ -742,24 +737,19 @@ async fn stream_files_into_chunks(
     }
 }
 
-/// Finalize a chunk by calculating its checksum and creating ChunkData.
+/// Finalize a chunk by creating ChunkData with a unique ID.
 fn finalize_chunk(chunk_index: i32, data: Vec<u8>) -> ChunkData {
-    let mut hasher = Sha256::new();
-    hasher.update(&data);
-    let checksum = format!("{:x}", hasher.finalize());
-
     ChunkData {
         chunk_id: Uuid::new_v4().to_string(),
         chunk_index,
         data,
-        checksum,
     }
 }
 
 /// Encrypt a chunk using AES-256-GCM.
 ///
 /// CPU-bound operation called from spawn_blocking to avoid starving async I/O.
-/// Wraps encrypted data with nonce and metadata, ready for cloud upload.
+/// Wraps encrypted data with nonce and authentication tag, ready for cloud upload.
 fn encrypt_chunk_blocking(
     chunk_data: ChunkData,
     encryption_service: &EncryptionService,
@@ -768,7 +758,7 @@ fn encrypt_chunk_blocking(
         .encrypt(&chunk_data.data)
         .map_err(|e| format!("Encryption failed: {}", e))?;
 
-    // Create EncryptedChunk and serialize to bytes (includes nonce and metadata)
+    // Create EncryptedChunk and serialize to bytes (includes nonce and authentication tag)
     let encrypted_chunk =
         crate::encryption::EncryptedChunk::new(ciphertext, nonce, "master".to_string());
     let encrypted_bytes = encrypted_chunk.to_bytes();
@@ -778,7 +768,6 @@ fn encrypt_chunk_blocking(
         chunk_index: chunk_data.chunk_index,
         original_size: chunk_data.data.len(),
         encrypted_data: encrypted_bytes,
-        checksum: chunk_data.checksum,
     })
 }
 
@@ -800,15 +789,15 @@ async fn upload_chunk(
         chunk_index: encrypted_chunk.chunk_index,
         original_size: encrypted_chunk.original_size,
         encrypted_size: encrypted_chunk.encrypted_data.len(),
-        checksum: encrypted_chunk.checksum,
         cloud_location,
     })
 }
 
 /// Persist chunk metadata to database.
 ///
-/// Stores chunk ID, size, checksum, and cloud location for later retrieval.
+/// Stores chunk ID, size, and cloud location for later retrieval.
 /// This creates the link between our database and cloud storage.
+/// Integrity is guaranteed by AES-GCM's authentication tag - no separate checksum needed.
 async fn persist_chunk(
     chunk: &UploadedChunk,
     album_id: &str,
@@ -820,7 +809,6 @@ async fn persist_chunk(
         chunk.chunk_index,
         chunk.original_size,
         chunk.encrypted_size,
-        &chunk.checksum,
         &chunk.cloud_location,
         false,
     );
