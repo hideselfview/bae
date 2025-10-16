@@ -143,7 +143,31 @@ pub struct DiscogsTrack {
     pub duration: Option<String>, // Duration as string from Discogs (e.g., "3:45")
 }
 
-impl DiscogsTrack {}
+impl DiscogsTrack {
+    /// Parse track number from Discogs position string.
+    ///
+    /// Discogs uses inconsistent position formats ("1", "A1", "1-1", etc).
+    /// We extract numeric characters and parse them.
+    /// Returns error if no valid number can be extracted.
+    pub fn parse_track_number(&self) -> Result<i32, String> {
+        // Try to extract number from position string
+        let numbers: String = self.position.chars().filter(|c| c.is_numeric()).collect();
+
+        if numbers.is_empty() {
+            return Err(format!(
+                "No numeric characters in track position: '{}'",
+                self.position
+            ));
+        }
+
+        numbers.parse::<i32>().map_err(|e| {
+            format!(
+                "Failed to parse track number from '{}': {}",
+                self.position, e
+            )
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {

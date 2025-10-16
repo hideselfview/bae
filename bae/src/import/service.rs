@@ -386,29 +386,13 @@ fn create_album_and_tracks(import_item: &DiscogsAlbum) -> Result<(DbAlbum, Vec<D
     let discogs_tracks = import_item.tracklist();
     let mut tracks = Vec::new();
 
-    for (index, discogs_track) in discogs_tracks.iter().enumerate() {
-        let track_number = parse_track_number(&discogs_track.position, index);
+    for discogs_track in discogs_tracks.iter() {
+        let track_number = Some(discogs_track.parse_track_number()?);
         let track = DbTrack::from_discogs_track(discogs_track, &album.id, track_number);
         tracks.push(track);
     }
 
     Ok((album, tracks))
-}
-
-/// Parse track number from Discogs position string.
-///
-/// Discogs uses inconsistent position formats ("1", "A1", "1-1", etc).
-/// We extract numeric characters and parse them. Falls back to index+1 if parsing fails.
-fn parse_track_number(position: &str, fallback_index: usize) -> Option<i32> {
-    // Try to extract number from position string
-    let numbers: String = position.chars().filter(|c| c.is_numeric()).collect();
-
-    if let Ok(num) = numbers.parse::<i32>() {
-        Some(num)
-    } else {
-        // Fallback to index + 1
-        Some((fallback_index + 1) as i32)
-    }
 }
 
 /// Extract artist name from album title.
