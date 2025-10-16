@@ -16,6 +16,7 @@ mod import;
 mod library;
 mod library_context;
 mod models;
+mod playback;
 mod subsonic;
 
 use components::album_import::ImportWorkflowManager;
@@ -29,6 +30,7 @@ pub struct AppContext {
     pub library_manager: SharedLibraryManager,
     pub config: config::Config,
     pub import_service_handle: import::ImportHandle,
+    pub playback_handle: playback::PlaybackHandle,
 }
 
 #[derive(Debug, Clone, Routable, PartialEq)]
@@ -165,11 +167,22 @@ fn main() {
         import_config,
     );
 
+    // Create playback service
+    let playback_handle = playback::PlaybackService::start(
+        library_manager.get().clone(),
+        cloud_storage.clone(),
+        cache_manager.clone(),
+        encryption_service.clone(),
+        config.chunk_size_bytes,
+        runtime_handle.clone(),
+    );
+
     // Create root application context
     let app_context = AppContext {
         library_manager: library_manager.clone(),
         config: config.clone(),
         import_service_handle,
+        playback_handle,
     };
 
     // Start Subsonic API server as async task on shared runtime

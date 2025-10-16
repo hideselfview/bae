@@ -4,6 +4,8 @@ use crate::library_context::use_library_manager;
 use crate::Route;
 use dioxus::prelude::*;
 
+use super::use_playback_service;
+
 /// Album detail page showing album info and tracklist
 #[component]
 pub fn AlbumDetail(album_id: String) -> Element {
@@ -86,6 +88,8 @@ pub fn AlbumDetail(album_id: String) -> Element {
 /// Album detail view component
 #[component]
 fn AlbumDetailView(album: DbAlbum, tracks: Vec<DbTrack>) -> Element {
+    let playback = use_playback_service();
+
     rsx! {
         div {
             class: "grid grid-cols-1 lg:grid-cols-3 gap-8",
@@ -150,6 +154,19 @@ fn AlbumDetailView(album: DbAlbum, tracks: Vec<DbTrack>) -> Element {
                             }
                         }
                     }
+
+                    // Play Album button
+                    button {
+                        class: "w-full mt-6 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg transition-colors flex items-center justify-center gap-2",
+                        onclick: {
+                            let tracks = tracks.clone();
+                            move |_| {
+                                let track_ids: Vec<String> = tracks.iter().map(|t| t.id.clone()).collect();
+                                playback.play_album(track_ids);
+                            }
+                        },
+                        "▶ Play Album"
+                    }
                 }
             }
 
@@ -171,8 +188,8 @@ fn AlbumDetailView(album: DbAlbum, tracks: Vec<DbTrack>) -> Element {
                     } else {
                         div {
                             class: "space-y-2",
-                            for track in tracks {
-                                TrackRow { track }
+                            for track in &tracks {
+                                TrackRow { track: track.clone() }
                             }
                         }
                     }
@@ -185,9 +202,20 @@ fn AlbumDetailView(album: DbAlbum, tracks: Vec<DbTrack>) -> Element {
 /// Individual track row component
 #[component]
 fn TrackRow(track: DbTrack) -> Element {
+    let playback = use_playback_service();
+
     rsx! {
         div {
             class: "flex items-center py-3 px-4 rounded-lg hover:bg-gray-700 transition-colors group",
+
+            // Play button (hidden by default, shown on hover)
+            button {
+                class: "opacity-0 group-hover:opacity-100 transition-opacity text-blue-400 hover:text-blue-300",
+                onclick: move |_| {
+                    playback.play(track.id.clone());
+                },
+                "▶"
+            }
 
             // Track number
             div {

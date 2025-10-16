@@ -131,6 +131,11 @@ impl LibraryManager {
         Ok(self.database.get_tracks_for_album(album_id).await?)
     }
 
+    /// Get a single track by ID
+    pub async fn get_track(&self, track_id: &str) -> Result<Option<DbTrack>, LibraryError> {
+        Ok(self.database.get_track_by_id(track_id).await?)
+    }
+
     /// Get files for a specific track
     pub async fn get_files_for_track(&self, track_id: &str) -> Result<Vec<DbFile>, LibraryError> {
         Ok(self.database.get_files_for_track(track_id).await?)

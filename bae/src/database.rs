@@ -477,6 +477,29 @@ impl Database {
     }
 
     /// Get tracks for an album
+    pub async fn get_track_by_id(&self, track_id: &str) -> Result<Option<DbTrack>, sqlx::Error> {
+        let row = sqlx::query("SELECT * FROM tracks WHERE id = ?")
+            .bind(track_id)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        if let Some(row) = row {
+            Ok(Some(DbTrack {
+                id: row.get("id"),
+                album_id: row.get("album_id"),
+                title: row.get("title"),
+                track_number: row.get("track_number"),
+                duration_ms: row.get("duration_ms"),
+                artist_name: row.get("artist_name"),
+                discogs_position: row.get("discogs_position"),
+                import_status: row.get("import_status"),
+                created_at: row.get("created_at"),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub async fn get_tracks_for_album(&self, album_id: &str) -> Result<Vec<DbTrack>, sqlx::Error> {
         let rows = sqlx::query("SELECT * FROM tracks WHERE album_id = ? ORDER BY track_number")
             .bind(album_id)
