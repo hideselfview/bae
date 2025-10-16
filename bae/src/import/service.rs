@@ -427,25 +427,23 @@ struct ChunkData {
 /// via spawn_blocking. The encrypted_data includes AES-256-GCM ciphertext,
 /// nonce, and authentication tag.
 ///
-/// Example: `{ chunk_id: "uuid-123", chunk_index: 0, original_size: 1048576, encrypted_data: [1.01MB encrypted bytes] }`
+/// Example: `{ chunk_id: "uuid-123", chunk_index: 0, encrypted_data: [1.01MB encrypted bytes] }`
 struct EncryptedChunkData {
     chunk_id: String,
     chunk_index: i32,
-    original_size: usize,
     encrypted_data: Vec<u8>,
 }
 
 /// Chunk successfully uploaded to cloud storage.
 ///
 /// Stage 3 output: Upload workers produce these after successfully uploading
-/// to S3/cloud storage. The cloud_location is the S3 key or storage path used
-/// to retrieve this chunk later during playback.
+/// to S3. The cloud_location is the full S3 URI used to retrieve this chunk
+/// during playback.
 ///
-/// Example: `{ chunk_id: "uuid-123", chunk_index: 0, original_size: 1048576, encrypted_size: 1049000, cloud_location: "s3://bucket/album-id/chunk-0" }`
+/// Example: `{ chunk_id: "abc123...", chunk_index: 0, encrypted_size: 1049000, cloud_location: "s3://bucket/chunks/ab/c1/abc123....enc" }`
 struct UploadedChunk {
     chunk_id: String,
     chunk_index: i32,
-    original_size: usize,
     encrypted_size: usize,
     cloud_location: String,
 }
@@ -766,7 +764,6 @@ fn encrypt_chunk_blocking(
     Ok(EncryptedChunkData {
         chunk_id: chunk_data.chunk_id,
         chunk_index: chunk_data.chunk_index,
-        original_size: chunk_data.data.len(),
         encrypted_data: encrypted_bytes,
     })
 }
@@ -787,7 +784,6 @@ async fn upload_chunk(
     Ok(UploadedChunk {
         chunk_id: encrypted_chunk.chunk_id,
         chunk_index: encrypted_chunk.chunk_index,
-        original_size: encrypted_chunk.original_size,
         encrypted_size: encrypted_chunk.encrypted_data.len(),
         cloud_location,
     })
@@ -795,7 +791,7 @@ async fn upload_chunk(
 
 /// Persist chunk metadata to database.
 ///
-/// Stores chunk ID, size, and cloud location for later retrieval.
+/// Stores chunk ID, encrypted size, and cloud location for later retrieval.
 /// This creates the link between our database and cloud storage.
 /// Integrity is guaranteed by AES-GCM's authentication tag - no separate checksum needed.
 async fn persist_chunk(
@@ -807,7 +803,6 @@ async fn persist_chunk(
         &chunk.chunk_id,
         album_id,
         chunk.chunk_index,
-        chunk.original_size,
         chunk.encrypted_size,
         &chunk.cloud_location,
         false,
