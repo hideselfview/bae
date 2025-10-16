@@ -62,8 +62,7 @@ impl ImportHandle {
                 // ========== VALIDATION (before queueing) ==========
 
                 // 1. Create album + track records
-                let db_album = create_album_record(&album)?;
-                let db_tracks = create_track_records(&album, &db_album.id)?;
+                let (db_album, db_tracks) = create_album_and_tracks(&album)?;
 
                 // 2. Discover files
                 let folder_files = discover_folder_files(&folder)?;
@@ -362,38 +361,31 @@ impl ImportService {
     }
 }
 
-/// Create album database record from Discogs data.
+/// Create album and track records from Discogs metadata.
 ///
-/// Extracts artist name and converts Discogs metadata to our DB schema.
-/// Must happen before track creation so we have an album_id to link tracks to.
-fn create_album_record(import_item: &DiscogsAlbum) -> Result<DbAlbum, String> {
+/// Combines album creation (extracting artist name) with track creation,
+/// ensuring the album_id is available for track linkage.
+/// All records start with status='queued'.
+fn create_album_and_tracks(import_item: &DiscogsAlbum) -> Result<(DbAlbum, Vec<DbTrack>), String> {
     let artist_name = extract_artist_name(import_item);
 
+    // Create album record
     let album = match import_item {
         DiscogsAlbum::Master(master) => DbAlbum::from_discogs_master(master, &artist_name),
         DiscogsAlbum::Release(release) => DbAlbum::from_discogs_release(release, &artist_name),
     };
-    Ok(album)
-}
 
-/// Create track database records from Discogs tracklist.
-///
-/// Converts each Discogs track to our DB schema and links them to the album.
-/// Track numbers are parsed from Discogs position strings (e.g., "1", "A1", "1-1").
-fn create_track_records(
-    import_item: &DiscogsAlbum,
-    album_id: &str,
-) -> Result<Vec<DbTrack>, String> {
+    // Create track records linked to this album
     let discogs_tracks = import_item.tracklist();
     let mut tracks = Vec::new();
 
     for (index, discogs_track) in discogs_tracks.iter().enumerate() {
         let track_number = parse_track_number(&discogs_track.position, index);
-        let track = DbTrack::from_discogs_track(discogs_track, album_id, track_number);
+        let track = DbTrack::from_discogs_track(discogs_track, &album.id, track_number);
         tracks.push(track);
     }
 
-    Ok(tracks)
+    Ok((album, tracks))
 }
 
 /// Parse track number from Discogs position string.
