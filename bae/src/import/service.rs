@@ -1,12 +1,15 @@
-// # Import Service - Orchestrator
+// # Import Service
 //
-// This module contains the thin orchestrator that coordinates specialized services:
-// - TrackFileMapper: Validates track-to-file mapping
-// - UploadPipeline: Chunks and uploads to cloud
+// Single-instance queue-based service that processes album imports sequentially.
+// One worker task processes import requests one at a time from a queue.
+//
+// Architecture:
+// - TrackFileMapper: Validates track-to-file mapping before DB insertion
+// - Streaming pipeline: read → encrypt → upload → persist (bounded parallelism)
 // - MetadataPersister: Saves file/chunk metadata to DB
+// - ProgressService: Broadcasts real-time progress updates to UI subscribers
 //
-// The orchestrator's job is to call these services in the right order and handle
-// progress reporting to the UI.
+// Import requests are queued and processed sequentially to avoid resource contention.
 
 use crate::chunking::FileChunkMapping;
 use crate::cloud_storage::CloudStorageManager;
@@ -84,7 +87,11 @@ pub struct ImportService {
 }
 
 impl ImportService {
-    /// Start import service worker, returning handle for sending requests
+    /// Start the single import service worker for the entire app.
+    ///
+    /// Creates one worker task that processes import requests sequentially from a queue.
+    /// Multiple imports will be queued and processed one at a time, not concurrently.
+    /// Returns a handle that can be cloned and used throughout the app to submit import requests.
     pub fn start(
         runtime_handle: tokio::runtime::Handle,
         library_manager: SharedLibraryManager,
@@ -120,7 +127,8 @@ impl ImportService {
     async fn listen_for_import_requests(mut self) {
         println!("ImportService: Worker started");
 
-        // Process import requests
+        // Process import requests sequentially from the queue.
+        // Each import is fully completed before the next one starts.
         loop {
             match self.request_rx.recv().await {
                 Some(request) => {
