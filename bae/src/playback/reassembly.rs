@@ -3,6 +3,7 @@ use crate::cloud_storage::CloudStorageManager;
 use crate::database::{DbChunk, DbTrackPosition};
 use crate::encryption::EncryptionService;
 use crate::library::LibraryManager;
+use futures::stream::{self, StreamExt};
 
 /// Reassemble chunks for a track into a continuous audio buffer
 /// Handles both regular tracks (individual files) and CUE/FLAC tracks (single file, multiple tracks)
@@ -69,17 +70,37 @@ pub async fn reassemble_track(
     let mut sorted_chunks = chunks;
     sorted_chunks.sort_by_key(|c| c.chunk_index);
 
+    // Download and decrypt all chunks in parallel (max 10 concurrent)
+    let chunk_results: Vec<Result<(i32, Vec<u8>), String>> = stream::iter(sorted_chunks)
+        .map(|chunk| {
+            let cloud_storage = cloud_storage.clone();
+            let cache = cache.clone();
+            let encryption_service = encryption_service.clone();
+            async move {
+                let chunk_index = chunk.chunk_index;
+                let chunk_data =
+                    download_and_decrypt_chunk(&chunk, &cloud_storage, &cache, &encryption_service)
+                        .await?;
+                Ok::<_, String>((chunk_index, chunk_data))
+            }
+        })
+        .buffer_unordered(10) // Download up to 10 chunks concurrently
+        .collect()
+        .await;
+
+    // Check for errors and collect indexed chunks
+    let mut indexed_chunks: Vec<(i32, Vec<u8>)> = Vec::new();
+    for result in chunk_results {
+        indexed_chunks.push(result?);
+    }
+
+    // Sort by index to ensure correct order (parallel downloads may complete out of order)
+    indexed_chunks.sort_by_key(|(index, _)| *index);
+
     // Reassemble chunks into audio data
     let mut audio_data = Vec::new();
-
-    for chunk in sorted_chunks {
-        println!(
-            "Processing chunk {} (index {})",
-            chunk.id, chunk.chunk_index
-        );
-
-        let chunk_data =
-            download_and_decrypt_chunk(&chunk, cloud_storage, cache, encryption_service).await?;
+    for (index, chunk_data) in indexed_chunks {
+        println!("Assembling chunk at index {}", index);
         audio_data.extend_from_slice(&chunk_data);
     }
 
@@ -160,18 +181,39 @@ async fn reassemble_cue_track(
 
     let chunk_count = sorted_chunks.len();
 
-    // Start with FLAC headers for instant playback
+    // Download and decrypt all chunks in parallel (max 10 concurrent)
+    let chunk_results: Vec<Result<(i32, Vec<u8>), String>> = stream::iter(sorted_chunks)
+        .map(|chunk| {
+            let cloud_storage = cloud_storage.clone();
+            let cache = cache.clone();
+            let encryption_service = encryption_service.clone();
+            async move {
+                let chunk_index = chunk.chunk_index;
+                let chunk_data =
+                    download_and_decrypt_chunk(&chunk, &cloud_storage, &cache, &encryption_service)
+                        .await?;
+                Ok::<_, String>((chunk_index, chunk_data))
+            }
+        })
+        .buffer_unordered(10) // Download up to 10 chunks concurrently
+        .collect()
+        .await;
+
+    // Check for errors and collect indexed chunks
+    let mut indexed_chunks: Vec<(i32, Vec<u8>)> = Vec::new();
+    for result in chunk_results {
+        indexed_chunks.push(result?);
+    }
+
+    // Sort by index to ensure correct order
+    indexed_chunks.sort_by_key(|(index, _)| *index);
+
+    // Start with FLAC headers
     let mut audio_data = flac_headers.clone();
 
-    // Append track chunks
-    for chunk in sorted_chunks {
-        println!(
-            "Processing track chunk {} (index {})",
-            chunk.id, chunk.chunk_index
-        );
-
-        let chunk_data =
-            download_and_decrypt_chunk(&chunk, cloud_storage, cache, encryption_service).await?;
+    // Append track chunks in order
+    for (index, chunk_data) in indexed_chunks {
+        println!("Assembling CUE track chunk at index {}", index);
         audio_data.extend_from_slice(&chunk_data);
     }
 
