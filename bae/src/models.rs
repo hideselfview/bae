@@ -120,6 +120,19 @@ impl DiscogsAlbum {
             DiscogsAlbum::Release(release) => &release.tracklist,
         }
     }
+
+    /// Extract artist name from album title.
+    ///
+    /// Discogs album titles often follow "Artist - Album" format.
+    /// Splits on " - " to extract the artist. Falls back to "Unknown Artist".
+    pub fn extract_artist_name(&self) -> String {
+        let title = self.title();
+        if let Some(dash_pos) = title.find(" - ") {
+            title[..dash_pos].to_string()
+        } else {
+            "Unknown Artist".to_string()
+        }
+    }
 }
 
 /// Represents a release version from master versions API

@@ -374,7 +374,7 @@ impl ImportService {
 /// ensuring the album_id is available for track linkage.
 /// All records start with status='queued'.
 fn create_album_and_tracks(import_item: &DiscogsAlbum) -> Result<(DbAlbum, Vec<DbTrack>), String> {
-    let artist_name = extract_artist_name(import_item);
+    let artist_name = import_item.extract_artist_name();
 
     // Create album record
     let album = match import_item {
@@ -392,19 +392,6 @@ fn create_album_and_tracks(import_item: &DiscogsAlbum) -> Result<(DbAlbum, Vec<D
     }
 
     Ok((album, tracks))
-}
-
-/// Extract artist name from album title.
-///
-/// Discogs album titles often follow "Artist - Album" format.
-/// We split on " - " to extract the artist. Falls back to "Unknown Artist".
-fn extract_artist_name(import_item: &DiscogsAlbum) -> String {
-    let title = import_item.title();
-    if let Some(dash_pos) = title.find(" - ") {
-        title[..dash_pos].to_string()
-    } else {
-        "Unknown Artist".to_string()
-    }
 }
 
 // ============================================================================
