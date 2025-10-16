@@ -22,22 +22,18 @@
 use crate::cloud_storage::CloudStorageManager;
 use crate::database::{DbAlbum, DbTrack};
 use crate::encryption::EncryptionService;
-use crate::import::album_layout::{AlbumLayout, TrackProgressTracker};
+use crate::import::album_layout::AlbumLayout;
 use crate::import::metadata_persister::MetadataPersister;
+use crate::import::pipeline;
 use crate::import::progress_service::ImportProgressService;
 use crate::import::track_file_mapper::TrackFileMapper;
 use crate::import::types::{ImportProgress, ImportRequest, TrackSourceFile};
-use crate::library::LibraryManager;
 use crate::library_context::SharedLibraryManager;
 use crate::models::DiscogsAlbum;
 use futures::stream::StreamExt;
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use tokio::io::{AsyncReadExt, BufReader};
+use std::sync::Arc;
 use tokio::sync::mpsc;
-use tokio_stream::wrappers::ReceiverStream;
-use uuid::Uuid;
 
 /// Handle for sending import requests and subscribing to progress updates
 #[derive(Clone)]
@@ -254,84 +250,27 @@ impl ImportService {
         // ========== STREAMING PIPELINE ==========
         // Read → Encrypt → Upload → Persist (bounded parallelism at each stage)
 
-        // Shared state for tracking progress
-        let completed_chunks = Arc::new(Mutex::new(HashSet::new()));
-
-        let db_album_id = db_album.id.clone();
-        let encryption_service = self.encryption_service.clone();
-        let cloud_storage = self.cloud_storage.clone();
-        let max_encrypt_workers = self.config.max_encrypt_workers;
-        let max_upload_workers = self.config.max_upload_workers;
-        let progress_tx = self.progress_tx.clone();
-        let progress_tracker = Arc::new(layout.progress_tracker);
-        let total_chunks = layout.total_chunks;
-        let file_mappings = layout.file_mappings;
-
-        // Stage 1: Read files and stream chunks (bounded channel for backpressure)
-        let chunk_size_bytes = self.config.chunk_size_bytes;
-        let (chunk_tx, chunk_rx) = mpsc::channel::<Result<ChunkData, String>>(10);
-
-        // Spawn reader task that streams chunks as they're produced
-        tokio::spawn(stream_files_into_chunks(
+        let results: Vec<_> = pipeline::build_pipeline(
             folder_files.clone(),
-            chunk_size_bytes,
-            chunk_tx,
-        ));
-
-        // Stage 2: Consume chunks from channel and encrypt (bounded CPU via spawn_blocking)
-        let results = ReceiverStream::new(chunk_rx)
-            .map(move |chunk_data_result| {
-                let encryption_service = encryption_service.clone();
-                async move {
-                    let chunk_data = chunk_data_result?;
-                    let join_result = tokio::task::spawn_blocking(move || {
-                        encrypt_chunk_blocking(chunk_data, &encryption_service)
-                    })
-                    .await
-                    .map_err(|e| format!("Encryption task panicked: {}", e))?;
-                    join_result
-                }
-            })
-            .buffer_unordered(max_encrypt_workers)
-            // Stage 3: Upload chunks (bounded I/O)
-            .map(move |encrypted_result| {
-                let cloud_storage = cloud_storage.clone();
-                async move {
-                    let encrypted = encrypted_result?;
-                    upload_chunk(encrypted, &cloud_storage).await
-                }
-            })
-            .buffer_unordered(max_upload_workers)
-            // Stage 4: Persist to DB and handle progress
-            .map(move |upload_result| {
-                let album_id = db_album_id.clone();
-                let library_manager = library_manager.clone();
-                let progress_tracker = progress_tracker.clone();
-                let completed_chunks = completed_chunks.clone();
-                let progress_tx = progress_tx.clone();
-
-                async move {
-                    persist_and_track_progress(
-                        upload_result,
-                        &album_id,
-                        &library_manager,
-                        &progress_tracker,
-                        &completed_chunks,
-                        &progress_tx,
-                        total_chunks,
-                    )
-                    .await
-                }
-            })
-            .buffer_unordered(10) // Allow some parallelism for DB writes
-            // Collect to drive the stream to completion
-            .collect::<Vec<_>>()
-            .await;
+            self.config.clone(),
+            db_album.id.clone(),
+            self.encryption_service.clone(),
+            self.cloud_storage.clone(),
+            library_manager.clone(),
+            Arc::new(layout.progress_tracker),
+            self.progress_tx.clone(),
+            layout.total_chunks,
+        )
+        .collect()
+        .await;
 
         // Check for errors (fail fast on first error)
         for result in results {
             result?;
         }
+
+        let file_mappings = layout.file_mappings;
+        let total_chunks = layout.total_chunks;
 
         println!(
             "ImportService: All {} chunks uploaded successfully",
@@ -396,7 +335,7 @@ fn create_album_and_tracks(import_item: &DiscogsAlbum) -> Result<(DbAlbum, Vec<D
 }
 
 // ============================================================================
-// Stream-based Pipeline Data Structures
+// Validation Helper Functions
 // ============================================================================
 
 /// File discovered during initial filesystem scan.
@@ -410,49 +349,6 @@ pub struct DiscoveredFile {
     pub path: PathBuf,
     pub size: u64,
 }
-
-/// Raw chunk data read from disk.
-///
-/// Stage 1 output: Reader task produces these by reading files sequentially
-/// and packing bytes into fixed-size chunks.
-///
-/// Example: `{ chunk_id: "uuid-123", chunk_index: 0, data: [1MB of bytes] }`
-struct ChunkData {
-    chunk_id: String,
-    chunk_index: i32,
-    data: Vec<u8>,
-}
-
-/// Encrypted chunk data ready for upload.
-///
-/// Stage 2 output: Encryption workers produce these by encrypting ChunkData
-/// via spawn_blocking. The encrypted_data includes AES-256-GCM ciphertext,
-/// nonce, and authentication tag.
-///
-/// Example: `{ chunk_id: "uuid-123", chunk_index: 0, encrypted_data: [1.01MB encrypted bytes] }`
-struct EncryptedChunkData {
-    chunk_id: String,
-    chunk_index: i32,
-    encrypted_data: Vec<u8>,
-}
-
-/// Chunk successfully uploaded to cloud storage.
-///
-/// Stage 3 output: Upload workers produce these after successfully uploading
-/// to S3. The cloud_location is the full S3 URI used to retrieve this chunk
-/// during playback.
-///
-/// Example: `{ chunk_id: "abc123...", chunk_index: 0, encrypted_size: 1049000, cloud_location: "s3://bucket/chunks/ab/c1/abc123....enc" }`
-struct UploadedChunk {
-    chunk_id: String,
-    chunk_index: i32,
-    encrypted_size: usize,
-    cloud_location: String,
-}
-
-// ============================================================================
-// Pipeline Helper Functions
-// ============================================================================
 
 /// Discover all files in folder with metadata.
 ///
@@ -480,245 +376,4 @@ fn discover_folder_files(folder: &Path) -> Result<Vec<DiscoveredFile>, String> {
     files.sort_by(|a, b| a.path.cmp(&b.path));
 
     Ok(files)
-}
-
-/// Check if completing a chunk triggers track completion.
-///
-/// Called after each chunk upload to see if all chunks for a track are done.
-/// Returns the track_id if complete, allowing us to mark it playable immediately.
-fn check_track_completion(
-    chunk_index: i32,
-    progress_tracker: &TrackProgressTracker,
-    completed_chunks: &HashSet<i32>,
-) -> Option<String> {
-    let track_id = progress_tracker.chunk_to_track.get(&chunk_index)?;
-    let total_for_track = progress_tracker.track_chunk_counts.get(track_id).copied()?;
-
-    let completed_for_track = progress_tracker
-        .chunk_to_track
-        .iter()
-        .filter(|(idx, tid)| *tid == track_id && completed_chunks.contains(idx))
-        .count();
-
-    if completed_for_track == total_for_track {
-        Some(track_id.clone())
-    } else {
-        None
-    }
-}
-
-/// Calculate progress percentage
-fn calculate_progress(completed: usize, total: usize) -> u8 {
-    if total == 0 {
-        100
-    } else {
-        ((completed as f64 / total as f64) * 100.0).min(100.0) as u8
-    }
-}
-
-// ============================================================================
-// Pipeline Stage Functions
-// ============================================================================
-
-/// Stage 4: Persist chunk to DB and handle progress tracking.
-///
-/// Final stage of the pipeline. Saves chunk metadata to DB and emits progress events.
-/// Checks if this chunk completes a track, marking it playable and emitting TrackComplete.
-/// This is where the streaming pipeline meets the database and UI.
-async fn persist_and_track_progress(
-    upload_result: Result<UploadedChunk, String>,
-    album_id: &str,
-    library_manager: &LibraryManager,
-    progress_tracker: &TrackProgressTracker,
-    completed_chunks: &Arc<Mutex<HashSet<i32>>>,
-    progress_tx: &mpsc::UnboundedSender<ImportProgress>,
-    total_chunks: usize,
-) -> Result<(), String> {
-    let uploaded_chunk = upload_result?;
-
-    // Persist chunk to database
-    persist_chunk(&uploaded_chunk, album_id, library_manager).await?;
-
-    // Track completion
-    let (track_id_opt, progress_update) = {
-        let mut completed = completed_chunks.lock().unwrap();
-        completed.insert(uploaded_chunk.chunk_index);
-
-        let track_id =
-            check_track_completion(uploaded_chunk.chunk_index, progress_tracker, &completed);
-
-        let percent = calculate_progress(completed.len(), total_chunks);
-        (track_id, (completed.len(), percent))
-    };
-
-    // Mark track complete if needed
-    if let Some(track_id) = track_id_opt {
-        library_manager
-            .mark_track_complete(&track_id)
-            .await
-            .map_err(|e| format!("Failed to mark track complete: {}", e))?;
-        let _ = progress_tx.send(ImportProgress::TrackComplete {
-            album_id: album_id.to_string(),
-            track_id,
-        });
-    }
-
-    // Send progress update
-    let _ = progress_tx.send(ImportProgress::ProcessingProgress {
-        album_id: album_id.to_string(),
-        percent: progress_update.1,
-        current: progress_update.0,
-        total: total_chunks,
-    });
-
-    Ok(())
-}
-
-/// Read files sequentially and stream chunks as they're produced.
-///
-/// Treats all files as a concatenated byte stream, dividing it into fixed-size chunks.
-/// Chunks are sent to the channel as soon as they're full, allowing downstream
-/// encryption and upload to start immediately without buffering the entire album.
-///
-/// Files don't align to chunk boundaries - a chunk may contain data from multiple files.
-async fn stream_files_into_chunks(
-    files: Vec<DiscoveredFile>,
-    chunk_size: usize,
-    chunk_tx: mpsc::Sender<Result<ChunkData, String>>,
-) {
-    let mut current_chunk_buffer = Vec::with_capacity(chunk_size);
-    let mut current_chunk_index = 0i32;
-
-    for file in files {
-        let file_handle = match tokio::fs::File::open(&file.path).await {
-            Ok(f) => f,
-            Err(e) => {
-                let _ = chunk_tx
-                    .send(Err(format!("Failed to open file {:?}: {}", file.path, e)))
-                    .await;
-                return;
-            }
-        };
-
-        let mut reader = BufReader::new(file_handle);
-
-        loop {
-            let space_remaining = chunk_size - current_chunk_buffer.len();
-            let mut temp_buffer = vec![0u8; space_remaining];
-
-            let bytes_read = match reader.read(&mut temp_buffer).await {
-                Ok(n) => n,
-                Err(e) => {
-                    let _ = chunk_tx
-                        .send(Err(format!("Failed to read from file: {}", e)))
-                        .await;
-                    return;
-                }
-            };
-
-            if bytes_read == 0 {
-                // EOF - move to next file
-                break;
-            }
-
-            // Add the bytes we read to current chunk
-            current_chunk_buffer.extend_from_slice(&temp_buffer[..bytes_read]);
-
-            // If chunk is full, send it and start a new one
-            if current_chunk_buffer.len() == chunk_size {
-                let chunk = finalize_chunk(current_chunk_index, current_chunk_buffer);
-                if chunk_tx.send(Ok(chunk)).await.is_err() {
-                    // Receiver dropped, stop reading
-                    return;
-                }
-                current_chunk_index += 1;
-                current_chunk_buffer = Vec::with_capacity(chunk_size);
-            }
-        }
-    }
-
-    // Send final partial chunk if any data remains
-    if !current_chunk_buffer.is_empty() {
-        let chunk = finalize_chunk(current_chunk_index, current_chunk_buffer);
-        let _ = chunk_tx.send(Ok(chunk)).await;
-    }
-}
-
-/// Finalize a chunk by creating ChunkData with a unique ID.
-fn finalize_chunk(chunk_index: i32, data: Vec<u8>) -> ChunkData {
-    ChunkData {
-        chunk_id: Uuid::new_v4().to_string(),
-        chunk_index,
-        data,
-    }
-}
-
-/// Encrypt a chunk using AES-256-GCM.
-///
-/// CPU-bound operation called from spawn_blocking to avoid starving async I/O.
-/// Wraps encrypted data with nonce and authentication tag, ready for cloud upload.
-fn encrypt_chunk_blocking(
-    chunk_data: ChunkData,
-    encryption_service: &EncryptionService,
-) -> Result<EncryptedChunkData, String> {
-    let (ciphertext, nonce) = encryption_service
-        .encrypt(&chunk_data.data)
-        .map_err(|e| format!("Encryption failed: {}", e))?;
-
-    // Create EncryptedChunk and serialize to bytes (includes nonce and authentication tag)
-    let encrypted_chunk =
-        crate::encryption::EncryptedChunk::new(ciphertext, nonce, "master".to_string());
-    let encrypted_bytes = encrypted_chunk.to_bytes();
-
-    Ok(EncryptedChunkData {
-        chunk_id: chunk_data.chunk_id,
-        chunk_index: chunk_data.chunk_index,
-        encrypted_data: encrypted_bytes,
-    })
-}
-
-/// Upload encrypted chunk to cloud storage.
-///
-/// I/O-bound operation that sends encrypted data to S3 or equivalent.
-/// Returns cloud location for database storage and later retrieval.
-async fn upload_chunk(
-    encrypted_chunk: EncryptedChunkData,
-    cloud_storage: &CloudStorageManager,
-) -> Result<UploadedChunk, String> {
-    let cloud_location = cloud_storage
-        .upload_chunk_data(&encrypted_chunk.chunk_id, &encrypted_chunk.encrypted_data)
-        .await
-        .map_err(|e| format!("Upload failed: {}", e))?;
-
-    Ok(UploadedChunk {
-        chunk_id: encrypted_chunk.chunk_id,
-        chunk_index: encrypted_chunk.chunk_index,
-        encrypted_size: encrypted_chunk.encrypted_data.len(),
-        cloud_location,
-    })
-}
-
-/// Persist chunk metadata to database.
-///
-/// Stores chunk ID, encrypted size, and cloud location for later retrieval.
-/// This creates the link between our database and cloud storage.
-/// Integrity is guaranteed by AES-GCM's authentication tag - no separate checksum needed.
-async fn persist_chunk(
-    chunk: &UploadedChunk,
-    album_id: &str,
-    library_manager: &LibraryManager,
-) -> Result<(), String> {
-    let db_chunk = crate::database::DbChunk::from_album_chunk(
-        &chunk.chunk_id,
-        album_id,
-        chunk.chunk_index,
-        chunk.encrypted_size,
-        &chunk.cloud_location,
-        false,
-    );
-
-    library_manager
-        .add_chunk(&db_chunk)
-        .await
-        .map_err(|e| format!("Failed to add chunk: {}", e))
 }

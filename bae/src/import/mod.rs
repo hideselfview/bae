@@ -4,8 +4,9 @@
 //
 // - **TrackFileMapper**: Validates track-to-file mapping before DB insertion
 // - **AlbumLayout**: Analyzes album's physical structure (files → chunks → tracks)
+// - **Pipeline**: Streaming read → encrypt → upload → persist stages
 // - **MetadataPersister**: Persists file/chunk metadata to database
-// - **ImportService**: Orchestrates streaming pipeline (read → encrypt → upload → persist)
+// - **ImportService**: Orchestrates the import workflow
 //
 // Public API:
 // - `ImportService`: Create and start the service
@@ -15,6 +16,7 @@
 
 mod album_layout;
 mod metadata_persister;
+mod pipeline;
 mod progress_service;
 mod service;
 mod track_file_mapper;
