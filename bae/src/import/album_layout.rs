@@ -19,8 +19,8 @@ use std::path::PathBuf;
 /// Contains everything needed to stream chunks and track progress.
 pub struct AlbumLayout {
     pub file_mappings: Vec<FileChunkMapping>,
-    pub progress_tracker: TrackProgressTracker,
     pub total_chunks: usize,
+    pub progress_tracker: TrackProgressTracker,
 }
 
 impl AlbumLayout {
@@ -34,15 +34,21 @@ impl AlbumLayout {
         chunk_size: usize,
     ) -> Result<Self, String> {
         // Calculate how files map to chunks
-        let (file_mappings, total_chunks) = calculate_file_mappings(discovered_files, chunk_size)?;
+        let file_mappings = calculate_file_mappings(discovered_files, chunk_size);
+
+        // Total chunks = last chunk index + 1 (chunks are 0-indexed)
+        let total_chunks = file_mappings
+            .last()
+            .map(|mapping| (mapping.end_chunk_index + 1) as usize)
+            .unwrap_or(0);
 
         // Calculate how chunks map to tracks (for progress)
         let progress_tracker = build_progress_tracker(&file_mappings, tracks_to_files);
 
         Ok(AlbumLayout {
             file_mappings,
-            progress_tracker,
             total_chunks,
+            progress_tracker,
         })
     }
 }
@@ -62,15 +68,12 @@ pub struct TrackProgressTracker {
     pub track_chunk_counts: HashMap<String, usize>,
 }
 
-/// Calculate file mappings and total chunk count from already-discovered files.
+/// Calculate file mappings from already-discovered files.
 ///
 /// Treats all files as a single concatenated byte stream, divided into fixed-size chunks.
 /// Each file mapping records which chunks it spans and byte offsets within those chunks.
 /// This enables efficient streaming: open each file once, read its chunks sequentially.
-fn calculate_file_mappings(
-    files: &[DiscoveredFile],
-    chunk_size: usize,
-) -> Result<(Vec<FileChunkMapping>, usize), String> {
+fn calculate_file_mappings(files: &[DiscoveredFile], chunk_size: usize) -> Vec<FileChunkMapping> {
     let mut file_mappings = Vec::new();
     let mut total_bytes_processed = 0u64;
 
@@ -92,13 +95,7 @@ fn calculate_file_mappings(
         total_bytes_processed = end_byte;
     }
 
-    let total_chunks = if total_bytes_processed == 0 {
-        0
-    } else {
-        ((total_bytes_processed - 1) / chunk_size as u64) as usize + 1
-    };
-
-    Ok((file_mappings, total_chunks))
+    file_mappings
 }
 
 /// Build progress tracker for tracks during import.
