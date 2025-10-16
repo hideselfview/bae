@@ -375,7 +375,7 @@ impl Database {
             INSERT INTO albums (
                 id, title, artist_name, year, discogs_master_id, 
                 discogs_release_id, cover_art_url, import_status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&album.id)
