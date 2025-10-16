@@ -15,14 +15,16 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "TEXT", rename_all = "lowercase")]
 pub enum ImportStatus {
-    Importing,
-    Complete,
-    Failed,
+    Queued,     // Validated and in import queue, waiting to start
+    Importing,  // Actively being processed (chunks being read/encrypted/uploaded)
+    Complete,   // Successfully imported
+    Failed,     // Import failed
 }
 
 impl ImportStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
+            ImportStatus::Queued => "queued",
             ImportStatus::Importing => "importing",
             ImportStatus::Complete => "complete",
             ImportStatus::Failed => "failed",
@@ -775,7 +777,7 @@ impl DbAlbum {
             discogs_master_id: Some(master.id.clone()),
             discogs_release_id: None,
             cover_art_url: master.thumb.clone(),
-            import_status: ImportStatus::Importing,
+            import_status: ImportStatus::Queued,
             created_at: now,
             updated_at: now,
         }
@@ -794,7 +796,7 @@ impl DbAlbum {
             discogs_master_id: release.master_id.clone(),
             discogs_release_id: Some(release.id.clone()),
             cover_art_url: release.thumb.clone(),
-            import_status: ImportStatus::Importing,
+            import_status: ImportStatus::Queued,
             created_at: now,
             updated_at: now,
         }
@@ -815,7 +817,7 @@ impl DbTrack {
             duration_ms: None, // Will be filled in during track mapping
             artist_name: None, // Will be filled in during track mapping
             discogs_position: Some(discogs_track.position.clone()),
-            import_status: ImportStatus::Importing,
+            import_status: ImportStatus::Queued,
             created_at: Utc::now(),
         }
     }

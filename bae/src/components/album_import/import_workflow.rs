@@ -81,23 +81,29 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
 
         move |_| {
             if let Some(folder) = selected_folder.read().as_ref() {
-                println!("Import started for {} from {}", item.title(), folder);
+                let item = item.clone();
+                let import_service = import_service.clone();
+                let folder = folder.clone();
 
-                // Send import request to service
-                let request = ImportRequest::FromFolder {
-                    album: item.clone(),
-                    folder: PathBuf::from(folder),
-                };
+                spawn(async move {
+                    println!("Import started for {} from {}", item.title(), folder);
 
-                if let Err(e) = import_service.send_request(request) {
-                    println!("Failed to send import request: {}", e);
-                    current_step.set(ImportStep::ImportError(e));
-                    return;
-                }
+                    // Send import request to service (validates and queues)
+                    let request = ImportRequest::FromFolder {
+                        album: item.clone(),
+                        folder: PathBuf::from(folder),
+                    };
 
-                // Import started successfully - navigate to library
-                // User can see progress there
-                navigator.push(Route::Library {});
+                    if let Err(e) = import_service.send_request(request).await {
+                        println!("Failed to validate/queue import: {}", e);
+                        current_step.set(ImportStep::ImportError(e));
+                        return;
+                    }
+
+                    // Import validated and queued successfully - navigate to library
+                    // User can see it with 'queued' status
+                    navigator.push(Route::Library {});
+                });
             }
         }
     };

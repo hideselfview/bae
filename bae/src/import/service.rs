@@ -3,13 +3,21 @@
 // Single-instance queue-based service that processes album imports sequentially.
 // One worker task processes import requests one at a time from a queue.
 //
+// Flow:
+// 1. Validation & Queueing (synchronous per request):
+//    - Validate track-to-file mapping
+//    - Insert album/tracks with status='queued'
+//    - Returns immediately so next request can be validated
+//
+// 2. Pipeline Processing (async per import):
+//    - Mark album as 'importing'
+//    - Streaming pipeline: read → encrypt → upload → persist (bounded parallelism)
+//    - Mark album/tracks as 'complete'
+//
 // Architecture:
 // - TrackFileMapper: Validates track-to-file mapping before DB insertion
-// - Streaming pipeline: read → encrypt → upload → persist (bounded parallelism)
 // - MetadataPersister: Saves file/chunk metadata to DB
 // - ProgressService: Broadcasts real-time progress updates to UI subscribers
-//
-// Import requests are queued and processed sequentially to avoid resource contention.
 
 use crate::chunking::FileChunkMapping;
 use crate::cloud_storage::CloudStorageManager;
@@ -34,16 +42,62 @@ use uuid::Uuid;
 /// Handle for sending import requests and subscribing to progress updates
 #[derive(Clone)]
 pub struct ImportHandle {
-    request_tx: mpsc::UnboundedSender<ImportRequest>,
+    validated_tx: mpsc::UnboundedSender<ValidatedImport>,
     progress_service: ImportProgressService,
+    library_manager: SharedLibraryManager,
 }
 
 impl ImportHandle {
-    /// Send an import request to the import service
-    pub fn send_request(&self, request: ImportRequest) -> Result<(), String> {
-        self.request_tx
-            .send(request)
-            .map_err(|e| format!("Failed to send import request: {}", e))
+    /// Validate and queue an import request.
+    ///
+    /// Performs validation (track-to-file mapping) and DB insertion synchronously.
+    /// If validation fails, returns error immediately with no side effects.
+    /// If successful, album is inserted with status='queued' and queued for processing.
+    pub async fn send_request(&self, request: ImportRequest) -> Result<(), String> {
+        match request {
+            ImportRequest::FromFolder { album, folder } => {
+                let library_manager = self.library_manager.get();
+
+                // ========== VALIDATION (before queueing) ==========
+
+                // 1. Create album + track records
+                let db_album = create_album_record(&album)?;
+                let db_tracks = create_track_records(&album, &db_album.id)?;
+
+                // 2. Discover files
+                let folder_files = discover_folder_files(&folder)?;
+
+                // 3. Validate track-to-file mapping
+                let tracks_to_files =
+                    TrackFileMapper::map_tracks_to_files(&db_tracks, &folder_files).await?;
+
+                // 4. Insert album + tracks with status='queued'
+                library_manager
+                    .insert_album_with_tracks(&db_album, &db_tracks)
+                    .await
+                    .map_err(|e| format!("Database error: {}", e))?;
+
+                println!(
+                    "ImportHandle: Validated and queued album '{}' with {} tracks",
+                    db_album.title,
+                    db_tracks.len()
+                );
+
+                // ========== QUEUE FOR PIPELINE ==========
+
+                let validated = ValidatedImport {
+                    db_album,
+                    tracks_to_files,
+                    folder_files,
+                };
+
+                self.validated_tx
+                    .send(validated)
+                    .map_err(|_| "Import service is not running".to_string())?;
+
+                Ok(())
+            }
+        }
     }
 
     /// Subscribe to progress updates for a specific album
@@ -67,6 +121,7 @@ impl ImportHandle {
 }
 
 /// Configuration for import service
+#[derive(Clone)]
 pub struct ImportConfig {
     /// Number of parallel encryption workers (CPU-bound, typically 2x CPU cores)
     pub max_encrypt_workers: usize,
@@ -76,20 +131,27 @@ pub struct ImportConfig {
     pub chunk_size_bytes: usize,
 }
 
+/// Validated import ready for pipeline processing
+struct ValidatedImport {
+    db_album: DbAlbum,
+    tracks_to_files: Vec<TrackSourceFile>,
+    folder_files: Vec<DiscoveredFile>,
+}
+
 /// Import service that orchestrates the import workflow on the shared runtime
 pub struct ImportService {
     library_manager: SharedLibraryManager,
     encryption_service: EncryptionService,
     cloud_storage: CloudStorageManager,
     progress_tx: mpsc::UnboundedSender<ImportProgress>,
-    request_rx: mpsc::UnboundedReceiver<ImportRequest>,
+    validated_rx: mpsc::UnboundedReceiver<ValidatedImport>,
     config: ImportConfig,
 }
 
 impl ImportService {
     /// Start the single import service worker for the entire app.
     ///
-    /// Creates one worker task that processes import requests sequentially from a queue.
+    /// Creates one worker task that processes validated imports sequentially from a queue.
     /// Multiple imports will be queued and processed one at a time, not concurrently.
     /// Returns a handle that can be cloned and used throughout the app to submit import requests.
     pub fn start(
@@ -99,42 +161,48 @@ impl ImportService {
         cloud_storage: CloudStorageManager,
         config: ImportConfig,
     ) -> ImportHandle {
-        let (request_tx, request_rx) = mpsc::unbounded_channel();
+        let (validated_tx, validated_rx) = mpsc::unbounded_channel();
         let (progress_tx, progress_rx) = mpsc::unbounded_channel();
 
-        // Create service instance for worker task
+        // Create the import service worker
         let service = ImportService {
-            library_manager,
+            library_manager: library_manager.clone(),
             encryption_service,
             cloud_storage,
             progress_tx,
-            request_rx,
+            validated_rx,
             config,
         };
 
-        // Spawn import worker task on shared runtime
-        runtime_handle.spawn(service.listen_for_import_requests());
+        // Spawn worker task that processes validated imports sequentially
+        runtime_handle.spawn(service.run_worker());
 
         // Create ProgressService, used to broadcast progress updates to external subscribers
         let progress_service = ImportProgressService::new(progress_rx, runtime_handle.clone());
 
         ImportHandle {
-            request_tx,
+            validated_tx,
             progress_service,
+            library_manager,
         }
     }
 
-    async fn listen_for_import_requests(mut self) {
+    async fn run_worker(mut self) {
         println!("ImportService: Worker started");
 
-        // Process import requests sequentially from the queue.
+        // Process validated imports sequentially from the queue.
         // Each import is fully completed before the next one starts.
         loop {
-            match self.request_rx.recv().await {
-                Some(request) => {
-                    if let Err(e) = self.handle_import_request(request).await {
-                        println!("ImportService: Import failed: {}", e);
-                        // TODO: Handle error
+            match self.validated_rx.recv().await {
+                Some(validated) => {
+                    println!(
+                        "ImportService: Starting pipeline for '{}'",
+                        validated.db_album.title
+                    );
+
+                    if let Err(e) = self.import_from_folder(validated).await {
+                        println!("ImportService: Pipeline failed: {}", e);
+                        // TODO: Mark album as failed
                     }
                 }
                 None => {
@@ -145,79 +213,28 @@ impl ImportService {
         }
     }
 
-    async fn handle_import_request(&self, request: ImportRequest) -> Result<(), String> {
-        match request {
-            ImportRequest::FromFolder { album, folder } => {
-                println!(
-                    "ImportService: Received import request for {}",
-                    album.title()
-                );
-
-                self.import_from_folder(&album, &folder).await
-            }
-        }
-    }
-
-    async fn import_from_folder(
-        &self,
-        discogs_album: &DiscogsAlbum,
-        folder: &Path,
-    ) -> Result<(), String> {
+    async fn import_from_folder(&self, validated: ValidatedImport) -> Result<(), String> {
         let library_manager = self.library_manager.get();
+        let ValidatedImport {
+            db_album,
+            tracks_to_files,
+            folder_files,
+        } = validated;
 
-        println!(
-            "ImportService: Starting import for {} from {}",
-            discogs_album.title(),
-            folder.display()
-        );
-
-        // ========== SETUP ==========
-
-        // 1. Create album + track records (in memory only)
-        let db_album = create_album_record(discogs_album)?;
-        let db_tracks = create_track_records(discogs_album, &db_album.id)?;
-
-        println!(
-            "ImportService: Created album record with {} tracks (not inserted yet)",
-            db_tracks.len()
-        );
-
-        // 2. Discover all files in folder (single filesystem traversal with metadata)
-        let folder_files = discover_folder_files(folder)?;
-
-        println!(
-            "ImportService: Found {} files in album folder",
-            folder_files.len()
-        );
-
-        // 3. Build track-to-file mapping using already-discovered files.
-        // We compute this early as a validation step to ensure we have
-        // source audio data for all tracks before proceeding.
-        let tracks_to_files =
-            TrackFileMapper::map_tracks_to_files(&db_tracks, &folder_files).await?;
-
-        println!(
-            "ImportService: Successfully mapped {} tracks to source files",
-            tracks_to_files.len()
-        );
-
-        // 4. Insert album + tracks into database (status='importing')
+        // Mark album as importing now that we're about to start processing
         library_manager
-            .insert_album_with_tracks(&db_album, &db_tracks)
+            .mark_album_importing(&db_album.id)
             .await
-            .map_err(|e| format!("Database error: {}", e))?;
+            .map_err(|e| format!("Failed to mark album as importing: {}", e))?;
 
-        println!(
-            "ImportService: Inserted album and {} tracks into database with status='importing'",
-            db_tracks.len()
-        );
+        println!("ImportService: Marked album as 'importing' - starting pipeline");
 
-        // 5. Send started progress
+        // Send started progress
         let _ = self.progress_tx.send(ImportProgress::Started {
             album_id: db_album.id.clone(),
         });
 
-        // 6. Calculate chunk layout from discovered files (no additional filesystem calls)
+        // Calculate chunk layout from discovered files (no additional filesystem calls)
         let (file_mappings, total_chunks) =
             calculate_file_mappings_from_discovered(&folder_files, self.config.chunk_size_bytes)?;
 
@@ -227,10 +244,11 @@ impl ImportService {
             file_mappings.len()
         );
 
-        // 6. Build track mapping for progress tracking
+        // Build track mapping for progress tracking
         let progress_tracker = build_track_progress_tracker(&file_mappings, &tracks_to_files);
 
-        // ========== PIPELINE ==========
+        // ========== STREAMING PIPELINE ==========
+        // Read → Encrypt → Upload → Persist (bounded parallelism at each stage)
 
         // Shared state for tracking progress
         let completed_chunks = Arc::new(Mutex::new(HashSet::new()));

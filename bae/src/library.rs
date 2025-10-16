@@ -45,6 +45,14 @@ impl LibraryManager {
         Ok(())
     }
 
+    /// Mark album as importing when pipeline starts processing
+    pub async fn mark_album_importing(&self, album_id: &str) -> Result<(), LibraryError> {
+        self.database
+            .update_album_status(album_id, crate::database::ImportStatus::Importing)
+            .await?;
+        Ok(())
+    }
+
     /// Mark track as complete after successful import
     pub async fn mark_track_complete(&self, track_id: &str) -> Result<(), LibraryError> {
         self.database

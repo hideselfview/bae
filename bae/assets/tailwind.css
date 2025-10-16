@@ -15,6 +15,7 @@
     --color-red-700: oklch(50.5% 0.213 27.518);
     --color-red-800: oklch(44.4% 0.177 26.899);
     --color-red-900: oklch(39.6% 0.141 25.723);
+    --color-yellow-600: oklch(68.1% 0.162 75.834);
     --color-green-600: oklch(62.7% 0.194 149.214);
     --color-green-700: oklch(52.7% 0.154 150.069);
     --color-green-800: oklch(44.8% 0.119 151.328);
@@ -547,6 +548,9 @@
   }
   .bg-white {
     background-color: var(--color-white);
+  }
+  .bg-yellow-600 {
+    background-color: var(--color-yellow-600);
   }
   .object-cover {
     object-fit: cover;

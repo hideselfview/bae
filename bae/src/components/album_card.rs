@@ -54,6 +54,11 @@ pub fn AlbumCard(album: DbAlbum) -> Element {
             "",
             None
         ),
+        ImportStatus::Queued => (
+            "bg-gray-800 rounded-lg overflow-hidden shadow-lg hover:shadow-xl transition-shadow duration-300 cursor-pointer relative",
+            "absolute inset-0 bg-black bg-opacity-30",
+            Some(("Queued", 0u8, "bg-yellow-600"))
+        ),
         ImportStatus::Importing => {
             let progress = progress_percent();
             (
