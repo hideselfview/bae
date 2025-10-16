@@ -10,6 +10,9 @@
 //
 // The pipeline ensures bounded memory usage and fail-fast error handling.
 
+#[cfg(test)]
+mod tests;
+
 use crate::cloud_storage::CloudStorageManager;
 use crate::encryption::EncryptionService;
 use crate::import::album_layout::TrackProgressTracker;
@@ -119,10 +122,10 @@ pub(super) fn build_pipeline(
 /// and packing bytes into fixed-size chunks.
 ///
 /// Example: `{ chunk_id: "uuid-123", chunk_index: 0, data: [1MB of bytes] }`
-struct ChunkData {
-    chunk_id: String,
-    chunk_index: i32,
-    data: Vec<u8>,
+pub(super) struct ChunkData {
+    pub(super) chunk_id: String,
+    pub(super) chunk_index: i32,
+    pub(super) data: Vec<u8>,
 }
 
 /// Encrypted chunk data ready for upload.
@@ -132,10 +135,10 @@ struct ChunkData {
 /// nonce, and authentication tag.
 ///
 /// Example: `{ chunk_id: "uuid-123", chunk_index: 0, encrypted_data: [1.01MB encrypted bytes] }`
-struct EncryptedChunkData {
-    chunk_id: String,
-    chunk_index: i32,
-    encrypted_data: Vec<u8>,
+pub(super) struct EncryptedChunkData {
+    pub(super) chunk_id: String,
+    pub(super) chunk_index: i32,
+    pub(super) encrypted_data: Vec<u8>,
 }
 
 /// Chunk successfully uploaded to cloud storage.
@@ -145,11 +148,11 @@ struct EncryptedChunkData {
 /// during playback.
 ///
 /// Example: `{ chunk_id: "abc123...", chunk_index: 0, encrypted_size: 1049000, cloud_location: "s3://bucket/chunks/ab/c1/abc123....enc" }`
-struct UploadedChunk {
-    chunk_id: String,
-    chunk_index: i32,
-    encrypted_size: usize,
-    cloud_location: String,
+pub(super) struct UploadedChunk {
+    pub(super) chunk_id: String,
+    pub(super) chunk_index: i32,
+    pub(super) encrypted_size: usize,
+    pub(super) cloud_location: String,
 }
 
 // ============================================================================
@@ -163,7 +166,7 @@ struct UploadedChunk {
 /// encryption and upload to start immediately without buffering the entire album.
 ///
 /// Files don't align to chunk boundaries - a chunk may contain data from multiple files.
-async fn produce_chunk_stream(
+pub(super) async fn produce_chunk_stream(
     files: Vec<DiscoveredFile>,
     chunk_size: usize,
     chunk_tx: mpsc::Sender<Result<ChunkData, String>>,
@@ -227,7 +230,7 @@ async fn produce_chunk_stream(
 }
 
 /// Finalize a chunk by creating ChunkData with a unique ID.
-fn finalize_chunk(chunk_index: i32, data: Vec<u8>) -> ChunkData {
+pub(super) fn finalize_chunk(chunk_index: i32, data: Vec<u8>) -> ChunkData {
     ChunkData {
         chunk_id: Uuid::new_v4().to_string(),
         chunk_index,
@@ -239,7 +242,7 @@ fn finalize_chunk(chunk_index: i32, data: Vec<u8>) -> ChunkData {
 ///
 /// CPU-bound operation called from spawn_blocking to avoid starving async I/O.
 /// Wraps encrypted data with nonce and authentication tag, ready for cloud upload.
-fn encrypt_chunk_blocking(
+pub(super) fn encrypt_chunk_blocking(
     chunk_data: ChunkData,
     encryption_service: &EncryptionService,
 ) -> Result<EncryptedChunkData, String> {
@@ -263,7 +266,7 @@ fn encrypt_chunk_blocking(
 ///
 /// I/O-bound operation that sends encrypted data to S3 or equivalent.
 /// Returns cloud location for database storage and later retrieval.
-async fn upload_chunk(
+pub(super) async fn upload_chunk(
     encrypted_chunk: EncryptedChunkData,
     cloud_storage: &CloudStorageManager,
 ) -> Result<UploadedChunk, String> {
@@ -285,7 +288,7 @@ async fn upload_chunk(
 /// Stores chunk ID, encrypted size, and cloud location for later retrieval.
 /// This creates the link between our database and cloud storage.
 /// Integrity is guaranteed by AES-GCM's authentication tag - no separate checksum needed.
-async fn persist_chunk(
+pub(super) async fn persist_chunk(
     chunk: &UploadedChunk,
     album_id: &str,
     library_manager: &LibraryManager,
@@ -314,7 +317,7 @@ async fn persist_chunk(
 /// Final stage of the pipeline. Saves chunk metadata to DB and emits progress events.
 /// Checks if this chunk completes a track, marking it playable and emitting TrackComplete.
 /// This is where the streaming pipeline meets the database and UI.
-async fn persist_and_track_progress(
+pub(super) async fn persist_and_track_progress(
     upload_result: Result<UploadedChunk, String>,
     album_id: &str,
     library_manager: &LibraryManager,
@@ -367,7 +370,7 @@ async fn persist_and_track_progress(
 ///
 /// Called after each chunk upload to see if all chunks for a track are done.
 /// Returns the track_id if complete, allowing us to mark it playable immediately.
-fn check_track_completion(
+pub(super) fn check_track_completion(
     chunk_index: i32,
     progress_tracker: &TrackProgressTracker,
     completed_chunks: &HashSet<i32>,
@@ -389,7 +392,7 @@ fn check_track_completion(
 }
 
 /// Calculate progress percentage
-fn calculate_progress(completed: usize, total: usize) -> u8 {
+pub(super) fn calculate_progress(completed: usize, total: usize) -> u8 {
     if total == 0 {
         100
     } else {
