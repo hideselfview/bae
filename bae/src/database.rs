@@ -852,8 +852,8 @@ impl DbFile {
 
 impl DbChunk {
     pub fn from_album_chunk(
-        chunk_id: &str,
         album_id: &str,
+        chunk_id: &str,
         chunk_index: i32,
         encrypted_size: usize,
         storage_location: &str,

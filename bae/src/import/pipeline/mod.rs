@@ -294,8 +294,8 @@ pub(super) async fn persist_chunk(
     library_manager: &LibraryManager,
 ) -> Result<(), String> {
     let db_chunk = DbChunk::from_album_chunk(
-        &chunk.chunk_id,
         album_id,
+        &chunk.chunk_id,
         chunk.chunk_index,
         chunk.encrypted_size,
         &chunk.cloud_location,
