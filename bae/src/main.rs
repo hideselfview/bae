@@ -2,6 +2,7 @@ use dioxus::desktop::{Config as DioxusConfig, WindowBuilder};
 use dioxus::prelude::*;
 
 mod album_import_context;
+mod app_context;
 mod audio_processing;
 mod cache;
 mod chunking;
@@ -25,13 +26,8 @@ use library_context::SharedLibraryManager;
 use subsonic::create_router;
 
 /// Root application context containing all top-level dependencies
-#[derive(Clone)]
-pub struct AppContext {
-    pub library_manager: SharedLibraryManager,
-    pub config: config::Config,
-    pub import_service_handle: import::ImportHandle,
-    pub playback_handle: playback::PlaybackHandle,
-}
+// Import AppContext from our local app_context module
+pub use app_context::AppContext;
 
 #[derive(Debug, Clone, Routable, PartialEq)]
 #[rustfmt::skip]

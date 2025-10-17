@@ -70,18 +70,22 @@ pub async fn reassemble_track(
     let mut sorted_chunks = chunks;
     sorted_chunks.sort_by_key(|c| c.chunk_index);
 
+    // Calculate the base chunk index (minimum) so we can compute file-relative positions
+    let base_chunk_index = sorted_chunks.first().map(|c| c.chunk_index).unwrap_or(0);
+
     // Download and decrypt all chunks in parallel (max 10 concurrent)
     let chunk_results: Vec<Result<(i32, Vec<u8>), String>> = stream::iter(sorted_chunks)
-        .map(|chunk| {
+        .map(move |chunk| {
             let cloud_storage = cloud_storage.clone();
             let cache = cache.clone();
             let encryption_service = encryption_service.clone();
             async move {
-                let chunk_index = chunk.chunk_index;
+                // Use file-relative position (0, 1, 2, ...) instead of album-level index
+                let file_position = chunk.chunk_index - base_chunk_index;
                 let chunk_data =
                     download_and_decrypt_chunk(&chunk, &cloud_storage, &cache, &encryption_service)
                         .await?;
-                Ok::<_, String>((chunk_index, chunk_data))
+                Ok::<_, String>((file_position, chunk_data))
             }
         })
         .buffer_unordered(10) // Download up to 10 chunks concurrently
@@ -94,8 +98,8 @@ pub async fn reassemble_track(
         indexed_chunks.push(result?);
     }
 
-    // Sort by index to ensure correct order (parallel downloads may complete out of order)
-    indexed_chunks.sort_by_key(|(index, _)| *index);
+    // Sort by file position to ensure correct order (parallel downloads may complete out of order)
+    indexed_chunks.sort_by_key(|(position, _)| *position);
 
     // Reassemble chunks into audio data
     let mut audio_data = Vec::new();
@@ -181,18 +185,22 @@ async fn reassemble_cue_track(
 
     let chunk_count = sorted_chunks.len();
 
+    // Calculate the base chunk index (minimum) so we can compute file-relative positions
+    let base_chunk_index = sorted_chunks.first().map(|c| c.chunk_index).unwrap_or(0);
+
     // Download and decrypt all chunks in parallel (max 10 concurrent)
     let chunk_results: Vec<Result<(i32, Vec<u8>), String>> = stream::iter(sorted_chunks)
-        .map(|chunk| {
+        .map(move |chunk| {
             let cloud_storage = cloud_storage.clone();
             let cache = cache.clone();
             let encryption_service = encryption_service.clone();
             async move {
-                let chunk_index = chunk.chunk_index;
+                // Use file-relative position (0, 1, 2, ...) instead of album-level index
+                let file_position = chunk.chunk_index - base_chunk_index;
                 let chunk_data =
                     download_and_decrypt_chunk(&chunk, &cloud_storage, &cache, &encryption_service)
                         .await?;
-                Ok::<_, String>((chunk_index, chunk_data))
+                Ok::<_, String>((file_position, chunk_data))
             }
         })
         .buffer_unordered(10) // Download up to 10 chunks concurrently
@@ -205,8 +213,8 @@ async fn reassemble_cue_track(
         indexed_chunks.push(result?);
     }
 
-    // Sort by index to ensure correct order
-    indexed_chunks.sort_by_key(|(index, _)| *index);
+    // Sort by file position to ensure correct order (parallel downloads may complete out of order)
+    indexed_chunks.sort_by_key(|(position, _)| *position);
 
     // Start with FLAC headers
     let mut audio_data = flac_headers.clone();
@@ -236,37 +244,44 @@ async fn download_and_decrypt_chunk(
     encryption_service: &EncryptionService,
 ) -> Result<Vec<u8>, String> {
     // Check cache first
-    match cache.get_chunk(&chunk.id).await {
+    let encrypted_data = match cache.get_chunk(&chunk.id).await {
         Ok(Some(cached_encrypted_data)) => {
             println!("Cache hit for chunk: {}", chunk.id);
-            let decrypted = encryption_service
-                .decrypt_chunk(&cached_encrypted_data)
-                .map_err(|e| format!("Failed to decrypt cached chunk: {}", e))?;
-            return Ok(decrypted);
+            cached_encrypted_data
         }
         Ok(None) => {
             println!("Cache miss - downloading chunk from cloud: {}", chunk.id);
+            // Download from cloud storage
+            let data = cloud_storage
+                .download_chunk(&chunk.storage_location)
+                .await
+                .map_err(|e| format!("Failed to download chunk: {}", e))?;
+
+            // Cache the encrypted data for future use
+            if let Err(e) = cache.put_chunk(&chunk.id, &data).await {
+                println!("Failed to cache chunk (non-fatal): {}", e);
+            }
+            data
         }
         Err(e) => {
             println!("Cache error (continuing with download): {}", e);
+            // Download from cloud storage
+            cloud_storage
+                .download_chunk(&chunk.storage_location)
+                .await
+                .map_err(|e| format!("Failed to download chunk: {}", e))?
         }
-    }
+    };
 
-    // Download from cloud storage
-    let encrypted_data = cloud_storage
-        .download_chunk(&chunk.storage_location)
-        .await
-        .map_err(|e| format!("Failed to download chunk: {}", e))?;
-
-    // Cache the encrypted data for future use
-    if let Err(e) = cache.put_chunk(&chunk.id, &encrypted_data).await {
-        println!("Failed to cache chunk (non-fatal): {}", e);
-    }
-
-    // Decrypt and return
-    let decrypted_data = encryption_service
-        .decrypt_chunk(&encrypted_data)
-        .map_err(|e| format!("Failed to decrypt chunk: {}", e))?;
+    // Decrypt in spawn_blocking to avoid blocking the async runtime
+    let encryption_service = encryption_service.clone();
+    let decrypted_data = tokio::task::spawn_blocking(move || {
+        encryption_service
+            .decrypt_chunk(&encrypted_data)
+            .map_err(|e| format!("Failed to decrypt chunk: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Decryption task failed: {}", e))??;
 
     Ok(decrypted_data)
 }

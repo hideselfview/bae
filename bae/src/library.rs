@@ -146,6 +146,11 @@ impl LibraryManager {
         Ok(self.database.get_chunks_for_file(file_id).await?)
     }
 
+    /// Get all chunks for an album (for testing/verification)
+    pub async fn get_chunks_for_album(&self, album_id: &str) -> Result<Vec<DbChunk>, LibraryError> {
+        Ok(self.database.get_chunks_for_album(album_id).await?)
+    }
+
     /// Get track position for CUE/FLAC tracks
     pub async fn get_track_position(
         &self,

@@ -287,6 +287,28 @@ impl PlaybackService {
 
         println!("Track loaded: {} bytes", audio_data.len());
 
+        // Validate FLAC header
+        if audio_data.len() < 4 {
+            eprintln!("Audio data too small: {} bytes", audio_data.len());
+            self.stop();
+            return;
+        }
+
+        if &audio_data[0..4] != b"fLaC" {
+            eprintln!(
+                "Invalid FLAC header: expected 'fLaC', got {:?}",
+                &audio_data[0..4.min(audio_data.len())]
+            );
+            eprintln!(
+                "First 16 bytes: {:?}",
+                &audio_data[0..16.min(audio_data.len())]
+            );
+            self.stop();
+            return;
+        }
+
+        println!("Valid FLAC header detected");
+
         // Create audio source from buffer with buffered reading
         let cursor = Cursor::new(audio_data);
         let buf_reader = BufReader::new(cursor);

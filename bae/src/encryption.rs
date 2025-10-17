@@ -56,6 +56,18 @@ impl EncryptionService {
         Ok(EncryptionService { cipher })
     }
 
+    /// Create an encryption service with a raw key (for testing)
+    pub fn new_with_key(key_bytes: Vec<u8>) -> Self {
+        if key_bytes.len() != 32 {
+            panic!("Invalid key length, expected 32 bytes");
+        }
+
+        let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
+        let cipher = Aes256Gcm::new(key);
+
+        EncryptionService { cipher }
+    }
+
     /// Encrypt data with AES-256-GCM
     /// Returns (encrypted_data, nonce) - both needed for decryption
     pub fn encrypt(&self, plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>), EncryptionError> {

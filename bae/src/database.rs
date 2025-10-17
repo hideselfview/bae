@@ -603,6 +603,34 @@ impl Database {
         Ok(())
     }
 
+    /// Get all chunks for an album (for testing/verification)
+    pub async fn get_chunks_for_album(&self, album_id: &str) -> Result<Vec<DbChunk>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT * FROM chunks
+            WHERE album_id = ?
+            ORDER BY chunk_index
+            "#,
+        )
+        .bind(album_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut chunks = Vec::new();
+        for row in rows {
+            chunks.push(DbChunk {
+                id: row.get("id"),
+                album_id: row.get("album_id"),
+                chunk_index: row.get("chunk_index"),
+                encrypted_size: row.get("encrypted_size"),
+                storage_location: row.get("storage_location"),
+                last_accessed: row.get("last_accessed"),
+                created_at: row.get("created_at"),
+            });
+        }
+        Ok(chunks)
+    }
+
     /// Get chunks for a file (via file_chunks mapping)
     pub async fn get_chunks_for_file(&self, file_id: &str) -> Result<Vec<DbChunk>, sqlx::Error> {
         let rows = sqlx::query(
