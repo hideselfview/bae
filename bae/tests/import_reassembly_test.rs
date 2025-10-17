@@ -71,8 +71,18 @@ async fn test_import_and_reassembly() {
 
     // Step 1: Generate test data
     println!("Step 1: Generating test data...");
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let temp_path = temp_dir.path();
+
+    // Create separate directories: one for album files, one for infrastructure
+    let temp_root = TempDir::new().expect("Failed to create temp root");
+    let album_dir = temp_root.path().join("album");
+    let db_dir = temp_root.path().join("db");
+    let cache_dir_path = temp_root.path().join("cache");
+
+    std::fs::create_dir_all(&album_dir).expect("Failed to create album dir");
+    std::fs::create_dir_all(&db_dir).expect("Failed to create db dir");
+    std::fs::create_dir_all(&cache_dir_path).expect("Failed to create cache dir");
+
+    let temp_path = &album_dir;
 
     let pattern_ascending: Vec<u8> = (0..=255).collect();
     let pattern_descending: Vec<u8> = (0..=255).rev().collect();
@@ -113,8 +123,8 @@ async fn test_import_and_reassembly() {
     let mock_storage = Arc::new(MockCloudStorage::new());
     let cloud_storage = CloudStorageManager::from_storage(mock_storage.clone());
 
-    // Create temp database
-    let db_file = temp_path.join("test.db");
+    // Create temp database (in separate directory from album files)
+    let db_file = db_dir.join("test.db");
     let database = Database::new(&format!("sqlite://{}", db_file.display()))
         .await
         .expect("Failed to create database");
@@ -125,9 +135,8 @@ async fn test_import_and_reassembly() {
             .expect("Invalid hex key"),
     );
 
-    // Create cache manager
-    let cache_dir = temp_path.join("cache");
-    fs::create_dir_all(&cache_dir).expect("Failed to create cache dir");
+    // Create cache manager (in separate directory from album files)
+    let cache_dir = cache_dir_path.clone();
     let cache_config = bae::cache::CacheConfig {
         cache_dir,
         max_size_bytes: 1024 * 1024 * 1024, // 1GB for testing
@@ -216,16 +225,31 @@ async fn test_import_and_reassembly() {
         );
     }
 
-    // Verify files
-    for track in &tracks {
+    // Verify files and print file_chunks mappings
+    for (i, track) in tracks.iter().enumerate() {
         let files = library_manager
             .get_files_for_track(&track.id)
             .await
             .expect("Failed to get files");
         assert_eq!(files.len(), 1, "Expected 1 file per track");
         println!(
-            "    File: {} ({} bytes)",
-            files[0].original_filename, files[0].file_size
+            "    File {}: {} ({} bytes)",
+            i + 1,
+            files[0].original_filename,
+            files[0].file_size
+        );
+
+        // Get chunks for this file to see what's mapped
+        let file_chunks = library_manager
+            .get_chunks_for_file(&files[0].id)
+            .await
+            .expect("Failed to get chunks for file");
+
+        println!(
+            "      → {} chunks mapped (indices: {}-{})",
+            file_chunks.len(),
+            file_chunks.first().map(|c| c.chunk_index).unwrap_or(-1),
+            file_chunks.last().map(|c| c.chunk_index).unwrap_or(-1)
         );
     }
 
@@ -318,7 +342,7 @@ async fn test_import_and_reassembly() {
 
         // Manually reassemble (simulating playback logic)
         let mut reassembled = Vec::new();
-        for chunk in &chunks {
+        for (i, chunk) in chunks.iter().enumerate() {
             // Download encrypted chunk
             let encrypted_data = cloud_storage
                 .download_chunk(&chunk.storage_location)
@@ -330,6 +354,12 @@ async fn test_import_and_reassembly() {
                 .decrypt_chunk(&encrypted_data)
                 .expect("Failed to decrypt chunk");
 
+            println!(
+                "      Chunk {} (album index {}): {} bytes decrypted",
+                i,
+                chunk.chunk_index,
+                decrypted_data.len()
+            );
             reassembled.extend_from_slice(&decrypted_data);
         }
 

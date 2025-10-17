@@ -13,6 +13,9 @@
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod chunk_reader_test;
+
 use crate::cloud_storage::CloudStorageManager;
 use crate::database::DbChunk;
 use crate::encryption::{EncryptedChunk, EncryptionService};
