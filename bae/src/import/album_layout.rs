@@ -197,75 +197,35 @@ mod tests {
     }
 
     #[test]
-    fn test_chunk_boundaries_reveal_the_bug() {
-        // This test demonstrates THE BUG: when we reassemble a file from chunks,
-        // we get the ENTIRE chunk, including padding bytes that belong to the next file.
-
+    fn test_chunk_boundaries_with_partial_final_chunk() {
         let chunk_size = 1024 * 1024; // 1MB
 
         let files = vec![
             DiscoveredFile {
                 path: PathBuf::from("file1.flac"),
-                size: 2_097_152, // Exactly 2MB = chunks 0, 1
+                size: 2_097_152, // 2MB = chunks 0, 1
             },
             DiscoveredFile {
                 path: PathBuf::from("file2.flac"),
-                size: 3_145_728, // Exactly 3MB = chunks 2, 3, 4
+                size: 3_145_728, // 3MB = chunks 2, 3, 4
             },
             DiscoveredFile {
                 path: PathBuf::from("file3.flac"),
-                size: 1_572_864, // 1.5MB = chunks 5, 6 (but only 0.5MB of chunk 6!)
+                size: 1_572_864, // 1.5MB = chunks 5, 6 (chunk 6 is partial)
             },
         ];
 
-        let mappings = calculate_file_mappings(&files, chunk_size);
+        let _mappings = calculate_file_mappings(&files, chunk_size);
 
-        // File 3 calculation:
-        let file3_start_byte = 2_097_152u64 + 3_145_728;
-        let file3_end_byte = file3_start_byte + 1_572_864;
+        // Verify file 3 uses only 0.5MB of chunk 6
+        let file3_start_byte = 2_097_152u64 + 3_145_728; // 5_242_880
+        let file3_end_byte = file3_start_byte + 1_572_864; // 6_815_744
+        let chunk_6_start_byte = 6 * chunk_size as u64; // 6_291_456
+        let file3_bytes_in_chunk_6 = file3_end_byte - chunk_6_start_byte; // 524_288
 
-        println!("File 3 start: {}", file3_start_byte);
-        println!("File 3 end: {}", file3_end_byte);
-
-        // Chunk 5 spans bytes: 5_242_880 to 6_291_455 (1MB)
-        // Chunk 6 spans bytes: 6_291_456 to 7_340_031 (1MB)
-
-        // File 3 data occupies:
-        // - ALL of chunk 5: bytes 5_242_880 to 6_291_455 (1MB)
-        // - PART of chunk 6: bytes 6_291_456 to 6_815_743 (524,288 bytes = 0.5MB)
-
-        let chunk_6_start_byte = 6 * chunk_size as u64;
-        let file3_bytes_in_chunk_6 = file3_end_byte - chunk_6_start_byte;
-
-        println!("Chunk 6 starts at byte: {}", chunk_6_start_byte);
-        println!("File 3 ends at byte: {}", file3_end_byte);
-        println!("File 3 bytes in chunk 6: {}", file3_bytes_in_chunk_6);
-
-        assert_eq!(file3_bytes_in_chunk_6, 524_288);
-
-        // THE BUG: When we retrieve "all chunks for file 3" from the database,
-        // we get chunks 5 and 6 in their ENTIRETY (2MB total).
-        // But file 3 is only 1.5MB, so we get 0.5MB of EXTRA DATA!
-
-        let reassembled_size_from_full_chunks = 2 * chunk_size; // Chunks 5 and 6
-        let actual_file_size = files[2].size;
-        let extra_bytes = reassembled_size_from_full_chunks - actual_file_size as usize;
-
-        println!("Expected file size: {} bytes", actual_file_size);
-        println!(
-            "Reassembled from full chunks: {} bytes",
-            reassembled_size_from_full_chunks
+        assert_eq!(
+            file3_bytes_in_chunk_6, 524_288,
+            "File 3 should only use 0.5MB of chunk 6"
         );
-        println!("Extra bytes: {} bytes", extra_bytes);
-
-        // This matches the integration test failure!
-        // Expected: 1,572,864
-        // Got: 2,097,152 (1,572,864 + 524,288)
-        // But wait, the integration test said we got 1,675,264 bytes, not 2,097,152...
-
-        // Let me recalculate: 1,675,264 - 1,572,864 = 102,400 bytes extra
-        // That's not 524,288...
-
-        // Maybe there's a different issue? Let me think about this differently.
     }
 }
