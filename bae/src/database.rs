@@ -144,7 +144,7 @@ impl Database {
         // Albums table
         sqlx::query(&format!(
             r#"
-            CREATE TABLE albums (
+            CREATE TABLE IF NOT EXISTS albums (
                 id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
                 artist_name TEXT NOT NULL,
@@ -165,7 +165,7 @@ impl Database {
         // Tracks table
         sqlx::query(&format!(
             r#"
-            CREATE TABLE tracks (
+            CREATE TABLE IF NOT EXISTS tracks (
                 id TEXT PRIMARY KEY,
                 album_id TEXT NOT NULL,
                 title TEXT NOT NULL,
@@ -186,7 +186,7 @@ impl Database {
         // Files table (maps tracks to actual audio files)
         sqlx::query(
             r#"
-            CREATE TABLE files (
+            CREATE TABLE IF NOT EXISTS files (
                 id TEXT PRIMARY KEY,
                 track_id TEXT NOT NULL,
                 original_filename TEXT NOT NULL,
@@ -206,7 +206,7 @@ impl Database {
         // Chunks table (encrypted album chunks for cloud storage)
         sqlx::query(
             r#"
-            CREATE TABLE chunks (
+            CREATE TABLE IF NOT EXISTS chunks (
                 id TEXT PRIMARY KEY,
                 album_id TEXT NOT NULL,
                 chunk_index INTEGER NOT NULL,
@@ -224,7 +224,7 @@ impl Database {
         // File chunks mapping (which chunks contain which files)
         sqlx::query(
             r#"
-            CREATE TABLE file_chunks (
+            CREATE TABLE IF NOT EXISTS file_chunks (
                 id TEXT PRIMARY KEY,
                 file_id TEXT NOT NULL,
                 start_chunk_index INTEGER NOT NULL,
@@ -242,7 +242,7 @@ impl Database {
         // CUE sheets table (for CUE/FLAC albums)
         sqlx::query(
             r#"
-            CREATE TABLE cue_sheets (
+            CREATE TABLE IF NOT EXISTS cue_sheets (
                 id TEXT PRIMARY KEY,
                 file_id TEXT NOT NULL,
                 cue_content TEXT NOT NULL,
@@ -257,7 +257,7 @@ impl Database {
         // Track positions table (for CUE track boundaries)
         sqlx::query(
             r#"
-            CREATE TABLE track_positions (
+            CREATE TABLE IF NOT EXISTS track_positions (
                 id TEXT PRIMARY KEY,
                 track_id TEXT NOT NULL,
                 file_id TEXT NOT NULL,
@@ -275,37 +275,43 @@ impl Database {
         .await?;
 
         // Create indexes for performance
-        sqlx::query("CREATE INDEX idx_tracks_album_id ON tracks (album_id)")
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_tracks_album_id ON tracks (album_id)")
             .execute(&self.pool)
             .await?;
 
-        sqlx::query("CREATE INDEX idx_files_track_id ON files (track_id)")
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_files_track_id ON files (track_id)")
             .execute(&self.pool)
             .await?;
 
-        sqlx::query("CREATE INDEX idx_chunks_album_id ON chunks (album_id)")
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_chunks_album_id ON chunks (album_id)")
             .execute(&self.pool)
             .await?;
 
-        sqlx::query("CREATE INDEX idx_file_chunks_file_id ON file_chunks (file_id)")
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_file_chunks_file_id ON file_chunks (file_id)")
             .execute(&self.pool)
             .await?;
 
-        sqlx::query("CREATE INDEX idx_cue_sheets_file_id ON cue_sheets (file_id)")
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_cue_sheets_file_id ON cue_sheets (file_id)")
             .execute(&self.pool)
             .await?;
 
-        sqlx::query("CREATE INDEX idx_track_positions_track_id ON track_positions (track_id)")
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_track_positions_track_id ON track_positions (track_id)",
+        )
+        .execute(&self.pool)
+        .await?;
 
-        sqlx::query("CREATE INDEX idx_track_positions_file_id ON track_positions (file_id)")
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_track_positions_file_id ON track_positions (file_id)",
+        )
+        .execute(&self.pool)
+        .await?;
 
-        sqlx::query("CREATE INDEX idx_chunks_last_accessed ON chunks (last_accessed)")
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_chunks_last_accessed ON chunks (last_accessed)",
+        )
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }
