@@ -88,19 +88,19 @@ async fn test_import_and_reassembly() {
     let pattern_descending: Vec<u8> = (0..=255).rev().collect();
     let pattern_evens: Vec<u8> = (0..=127).map(|i| i * 2).collect();
 
-    let (file1_path, file1_data) = generate_test_file(
+    let (_file1_path, file1_data) = generate_test_file(
         temp_path,
         "01 Track 1 - Pattern 0-255.flac",
         &pattern_ascending,
         2 * 1024 * 1024, // 2MB
     );
-    let (file2_path, file2_data) = generate_test_file(
+    let (_file2_path, file2_data) = generate_test_file(
         temp_path,
         "02 Track 2 - Pattern 255-0.flac",
         &pattern_descending,
         3 * 1024 * 1024, // 3MB
     );
-    let (file3_path, file3_data) = generate_test_file(
+    let (_file3_path, file3_data) = generate_test_file(
         temp_path,
         "03 Track 3 - Pattern Evens.flac",
         &pattern_evens,
@@ -142,7 +142,7 @@ async fn test_import_and_reassembly() {
         max_size_bytes: 1024 * 1024 * 1024, // 1GB for testing
         max_chunks: 10000,
     };
-    let cache_manager = CacheManager::with_config(cache_config)
+    let _cache_manager = CacheManager::with_config(cache_config)
         .await
         .expect("Failed to create cache manager");
 
