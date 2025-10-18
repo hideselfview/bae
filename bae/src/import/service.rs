@@ -20,16 +20,16 @@
 // - ProgressService: Broadcasts real-time progress updates to UI subscribers
 
 use crate::cloud_storage::CloudStorageManager;
-use crate::database::{DbAlbum, DbTrack};
+use crate::database::DbAlbum;
 use crate::encryption::EncryptionService;
 use crate::import::album_layout::AlbumLayout;
+use crate::import::album_track_creator;
 use crate::import::metadata_persister::MetadataPersister;
 use crate::import::pipeline;
 use crate::import::progress_service::ImportProgressService;
 use crate::import::track_file_mapper;
 use crate::import::types::{ImportProgress, ImportRequest, TrackSourceFile};
 use crate::library_context::SharedLibraryManager;
-use crate::models::DiscogsAlbum;
 use futures::stream::StreamExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -57,8 +57,8 @@ impl ImportHandle {
 
                 // ========== VALIDATION (before queueing) ==========
 
-                // 1. Create album + track records
-                let (db_album, db_tracks) = create_album_and_tracks(&album)?;
+                // 1. Parse Discogs album into database models
+                let (db_album, db_tracks) = album_track_creator::parse_discogs_album(&album)?;
 
                 // 2. Discover files
                 let folder_files = discover_folder_files(&folder)?;
@@ -309,32 +309,6 @@ impl ImportService {
         );
         Ok(())
     }
-}
-
-/// Create album and track records from Discogs metadata.
-///
-/// Combines album creation (extracting artist name) with track creation,
-/// ensuring the album_id is available for track linkage.
-/// All records start with status='queued'.
-fn create_album_and_tracks(import_item: &DiscogsAlbum) -> Result<(DbAlbum, Vec<DbTrack>), String> {
-    let artist_name = import_item.extract_artist_name();
-
-    // Create album record
-    let album = match import_item {
-        DiscogsAlbum::Master(master) => DbAlbum::from_discogs_master(master, &artist_name),
-        DiscogsAlbum::Release(release) => DbAlbum::from_discogs_release(release, &artist_name),
-    };
-
-    // Create track records linked to this album
-    let discogs_tracks = import_item.tracklist();
-    let mut tracks = Vec::new();
-
-    for discogs_track in discogs_tracks.iter() {
-        let track = DbTrack::from_discogs_track(discogs_track, &album.id)?;
-        tracks.push(track);
-    }
-
-    Ok((album, tracks))
 }
 
 // ============================================================================

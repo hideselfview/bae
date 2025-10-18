@@ -15,6 +15,7 @@
 // - `ImportProgress`: Real-time progress updates
 
 mod album_layout;
+mod album_track_creator;
 mod metadata_persister;
 mod pipeline;
 mod progress_service;

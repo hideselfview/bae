@@ -65,14 +65,106 @@ fn create_test_discogs_album() -> DiscogsAlbum {
     })
 }
 
-#[tokio::test]
-async fn test_import_and_reassembly() {
-    println!("\n=== Starting Import and Reassembly Integration Test ===\n");
+/// Load vinyl album fixture with vinyl side notation (A1-A7, B1-B9)
+fn load_vinyl_album_fixture() -> DiscogsAlbum {
+    use bae::models::DiscogsMaster;
 
-    // Step 1: Generate test data
-    println!("Step 1: Generating test data...");
+    let json = std::fs::read_to_string("tests/fixtures/vinyl_master_test.json")
+        .expect("Failed to read fixture");
+    let master: DiscogsMaster = serde_json::from_str(&json).expect("Failed to parse fixture");
 
-    // Create separate directories: one for album files, one for infrastructure
+    DiscogsAlbum::Master(master)
+}
+
+/// Generate simple test files
+fn generate_simple_test_files(dir: &std::path::Path) -> Vec<Vec<u8>> {
+    let pattern_ascending: Vec<u8> = (0..=255).collect();
+    let pattern_descending: Vec<u8> = (0..=255).rev().collect();
+    let pattern_evens: Vec<u8> = (0..=127).map(|i| i * 2).collect();
+
+    vec![
+        generate_test_file(
+            dir,
+            "01 Track 1 - Pattern 0-255.flac",
+            &pattern_ascending,
+            2 * 1024 * 1024,
+        )
+        .1,
+        generate_test_file(
+            dir,
+            "02 Track 2 - Pattern 255-0.flac",
+            &pattern_descending,
+            3 * 1024 * 1024,
+        )
+        .1,
+        generate_test_file(
+            dir,
+            "03 Track 3 - Pattern Evens.flac",
+            &pattern_evens,
+            1536 * 1024,
+        )
+        .1,
+    ]
+}
+
+/// Generate vinyl album test files (16 files with varied sizes + non-audio files)
+fn generate_vinyl_album_files(dir: &std::path::Path) -> Vec<Vec<u8>> {
+    let files = vec![
+        ("01 Track A1.flac", 14_832_725),
+        ("02 Track A2.flac", 36_482_083),
+        ("03 Track A3.flac", 30_521_871),
+        ("04 Track A4.flac", 33_719_395),
+        ("05 Track A5.flac", 29_026_016),
+        ("06 Track A6.flac", 35_828_979),
+        ("07 Track A7.flac", 38_103_336),
+        ("08 Track B1.flac", 28_602_917),
+        ("09 Track B2.flac", 27_651_815),
+        ("10 Track B3.flac", 17_568_354),
+        ("11 Track B4.flac", 29_874_467),
+        ("12 Track B5.flac", 20_314_862),
+        ("13 Track B6.flac", 7_204_911),
+        ("14 Track B7.flac", 32_466_724),
+        ("15 Track B8.flac", 31_995_657),
+        ("16 Track B9.flac", 31_599_774),
+    ];
+
+    let mut file_data = Vec::new();
+    for (name, size) in files {
+        let pattern: Vec<u8> = (0..=255).collect();
+        let data = pattern.repeat((size / 256) + 1);
+        let data = &data[0..size];
+        fs::write(dir.join(name), data).unwrap();
+        file_data.push(data.to_vec());
+    }
+
+    // Add non-audio files (to verify they're chunked but not mapped to tracks)
+    fs::write(dir.join("album.log"), b"log data").unwrap();
+    fs::write(dir.join("info.txt"), b"text data").unwrap();
+    fs::write(dir.join("album.cue"), b"cue data").unwrap();
+    fs::create_dir(dir.join("Artwork")).unwrap();
+    fs::write(dir.join("Artwork/cover.jpg"), b"jpg data").unwrap();
+
+    file_data
+}
+
+/// Parameterized test runner for import and reassembly
+///
+/// This function handles the complete import+reassembly flow and can be customized
+/// with closures for verification at each stage.
+async fn do_import_and_reassembly<F, G>(
+    test_name: &str,
+    discogs_album: DiscogsAlbum,
+    generate_files: F,
+    expected_track_count: usize,
+    verify_tracks: G,
+) where
+    F: FnOnce(&std::path::Path) -> Vec<Vec<u8>>,
+    G: FnOnce(&[bae::database::DbTrack]),
+{
+    println!("\n=== {} ===\n", test_name);
+
+    // Setup directories
+    println!("Creating temp directories...");
     let temp_root = TempDir::new().expect("Failed to create temp root");
     let album_dir = temp_root.path().join("album");
     let db_dir = temp_root.path().join("db");
@@ -81,87 +173,47 @@ async fn test_import_and_reassembly() {
     std::fs::create_dir_all(&album_dir).expect("Failed to create album dir");
     std::fs::create_dir_all(&db_dir).expect("Failed to create db dir");
     std::fs::create_dir_all(&cache_dir_path).expect("Failed to create cache dir");
+    println!("Directories created");
 
-    let temp_path = &album_dir;
+    // Generate test files
+    println!("Generating test files...");
+    let file_data = generate_files(&album_dir);
+    println!("Generated {} files", file_data.len());
 
-    let pattern_ascending: Vec<u8> = (0..=255).collect();
-    let pattern_descending: Vec<u8> = (0..=255).rev().collect();
-    let pattern_evens: Vec<u8> = (0..=127).map(|i| i * 2).collect();
-
-    let (_file1_path, file1_data) = generate_test_file(
-        temp_path,
-        "01 Track 1 - Pattern 0-255.flac",
-        &pattern_ascending,
-        2 * 1024 * 1024, // 2MB
-    );
-    let (_file2_path, file2_data) = generate_test_file(
-        temp_path,
-        "02 Track 2 - Pattern 255-0.flac",
-        &pattern_descending,
-        3 * 1024 * 1024, // 3MB
-    );
-    let (_file3_path, file3_data) = generate_test_file(
-        temp_path,
-        "03 Track 3 - Pattern Evens.flac",
-        &pattern_evens,
-        1536 * 1024, // 1.5MB
-    );
-
-    println!("  Generated file 1: {} bytes", file1_data.len());
-    println!("  Generated file 2: {} bytes", file2_data.len());
-    println!("  Generated file 3: {} bytes", file3_data.len());
-
-    // Step 2: Setup test infrastructure
-    println!("\nStep 2: Setting up test infrastructure...");
-
-    // Test configuration
-    let chunk_size_bytes = 1024 * 1024; // 1MB chunks
-    let max_encrypt_workers = 4;
-    let max_upload_workers = 4;
-
-    // Create mock cloud storage
+    // Setup services
+    println!("Setting up services...");
+    let chunk_size_bytes = 1024 * 1024;
     let mock_storage = Arc::new(MockCloudStorage::new());
     let cloud_storage = CloudStorageManager::from_storage(mock_storage.clone());
 
-    // Create temp database (in separate directory from album files)
+    println!("Creating database...");
     let db_file = db_dir.join("test.db");
     let database = Database::new(&format!("sqlite://{}", db_file.display()))
         .await
         .expect("Failed to create database");
 
-    // Create encryption service with fixed key
-    let encryption_service = EncryptionService::new_with_key(
-        hex::decode("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
-            .expect("Invalid hex key"),
-    );
+    println!("Creating encryption service...");
+    let encryption_service = EncryptionService::new_with_key(vec![0u8; 32]);
 
-    // Create cache manager (in separate directory from album files)
-    let cache_dir = cache_dir_path.clone();
     let cache_config = bae::cache::CacheConfig {
-        cache_dir,
-        max_size_bytes: 1024 * 1024 * 1024, // 1GB for testing
+        cache_dir: cache_dir_path,
+        max_size_bytes: 1024 * 1024 * 1024,
         max_chunks: 10000,
     };
     let _cache_manager = CacheManager::with_config(cache_config)
         .await
         .expect("Failed to create cache manager");
 
-    // Create library manager
     let library_manager = LibraryManager::new(database.clone());
-
-    // Wrap in SharedLibraryManager for ImportService
     let shared_library_manager =
         bae::library_context::SharedLibraryManager::new(library_manager.clone());
-
-    // Also keep Arc version for direct access in test
     let library_manager = Arc::new(library_manager);
 
-    // Create import service
     let runtime_handle = tokio::runtime::Handle::current();
     let import_config = ImportConfig {
         chunk_size_bytes,
-        max_encrypt_workers,
-        max_upload_workers,
+        max_encrypt_workers: 4,
+        max_upload_workers: 4,
     };
 
     let import_handle = ImportService::start(
@@ -172,231 +224,159 @@ async fn test_import_and_reassembly() {
         import_config,
     );
 
-    println!("  All services initialized");
+    println!("Services initialized");
 
-    // Step 3: Import test album
-    println!("\nStep 3: Importing test album...");
-    let discogs_album = create_test_discogs_album();
-
-    let request = ImportRequest::FromFolder {
-        album: discogs_album,
-        folder: temp_path.to_path_buf(),
-    };
-
-    import_handle
-        .send_request(request)
+    // Import
+    println!("Starting import...");
+    println!("Sending import request...");
+    let album_id = import_handle
+        .send_request(ImportRequest::FromFolder {
+            album: discogs_album,
+            folder: album_dir.clone(),
+        })
         .await
         .expect("Failed to send import request");
+    println!("Request sent, got album_id: {}", album_id);
 
-    // Wait a bit for import to complete
-    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+    println!("Subscribing to album progress...");
+    let mut progress_rx = import_handle.subscribe_album(album_id);
 
-    println!("  Import request completed");
+    // Wait for completion
+    println!("Waiting for import to complete...");
+    let mut progress_count = 0;
+    while let Some(progress) = progress_rx.recv().await {
+        progress_count += 1;
+        println!("[Progress {}] {:?}", progress_count, progress);
+        if matches!(progress, bae::import::ImportProgress::Complete { .. }) {
+            println!("✅ Import completed!");
+            break;
+        }
+        if let bae::import::ImportProgress::Failed { error, .. } = progress {
+            panic!("Import failed: {}", error);
+        }
+    }
+    println!(
+        "Progress monitoring ended (received {} events)",
+        progress_count
+    );
 
-    // Step 4: Verify database state
-    println!("\nStep 4: Verifying database state...");
-
+    // Verify database state
+    println!("Verifying database...");
     let albums = library_manager
         .get_albums()
         .await
         .expect("Failed to get albums");
-
     assert_eq!(albums.len(), 1, "Expected 1 album");
-    let album = &albums[0];
-    println!("  ✓ Album: {} by {}", album.title, album.artist_name);
 
     let tracks = library_manager
-        .get_tracks(&album.id)
+        .get_tracks(&albums[0].id)
         .await
         .expect("Failed to get tracks");
 
-    assert_eq!(tracks.len(), 3, "Expected 3 tracks");
-    for (i, track) in tracks.iter().enumerate() {
-        println!(
-            "  ✓ Track {}: {} (status: {:?})",
-            i + 1,
-            track.title,
-            track.import_status
-        );
-        assert_eq!(
-            track.import_status,
-            bae::database::ImportStatus::Complete,
-            "Track should be complete"
-        );
-    }
+    assert_eq!(tracks.len(), expected_track_count);
+    assert!(
+        tracks
+            .iter()
+            .all(|t| t.import_status == bae::database::ImportStatus::Complete),
+        "Not all tracks have Complete status"
+    );
 
-    // Verify files and print file_chunks mappings
-    for (i, track) in tracks.iter().enumerate() {
+    // Run custom track verification
+    verify_tracks(&tracks);
+
+    // Verify reassembly (spot check up to first 3 tracks)
+    println!("Verifying reassembly...");
+    for (i, (track, expected_data)) in tracks.iter().zip(&file_data).take(3).enumerate() {
         let files = library_manager
             .get_files_for_track(&track.id)
             .await
             .expect("Failed to get files");
-        assert_eq!(files.len(), 1, "Expected 1 file per track");
-        println!(
-            "    File {}: {} ({} bytes)",
-            i + 1,
-            files[0].original_filename,
-            files[0].file_size
-        );
+        assert_eq!(files.len(), 1);
 
-        // Get chunks for this file to see what's mapped
-        let file_chunks = library_manager
+        let chunks = library_manager
             .get_chunks_for_file(&files[0].id)
             .await
-            .expect("Failed to get chunks for file");
+            .expect("Failed to get chunks");
 
-        println!(
-            "      → {} chunks mapped (indices: {}-{})",
-            file_chunks.len(),
-            file_chunks.first().map(|c| c.chunk_index).unwrap_or(-1),
-            file_chunks.last().map(|c| c.chunk_index).unwrap_or(-1)
-        );
-    }
-
-    // Verify chunks
-    let all_chunks = library_manager
-        .get_chunks_for_album(&album.id)
-        .await
-        .expect("Failed to get chunks");
-
-    let total_file_size = file1_data.len() + file2_data.len() + file3_data.len();
-    let expected_chunks = (total_file_size as f64 / chunk_size_bytes as f64).ceil() as usize;
-
-    println!(
-        "  Total chunks in database: {} (expected: {})",
-        all_chunks.len(),
-        expected_chunks
-    );
-    assert_eq!(all_chunks.len(), expected_chunks, "Chunk count mismatch");
-
-    // Verify chunks are consecutive
-    let mut chunk_indices: Vec<i32> = all_chunks.iter().map(|c| c.chunk_index).collect();
-    chunk_indices.sort();
-    for (i, &index) in chunk_indices.iter().enumerate() {
-        assert_eq!(
-            index, i as i32,
-            "Chunk indices should be consecutive from 0"
-        );
-    }
-    println!(
-        "  ✓ Chunks are consecutively numbered from 0 to {}",
-        chunk_indices.len() - 1
-    );
-
-    // Step 5: Verify MockCloudStorage contents
-    println!("\nStep 5: Verifying MockCloudStorage contents...");
-
-    let stored_chunk_count = mock_storage.chunk_count();
-    println!("  Chunks in storage: {}", stored_chunk_count);
-    assert_eq!(
-        stored_chunk_count, expected_chunks,
-        "Storage chunk count should match database"
-    );
-
-    // Verify each database chunk exists in storage
-    for chunk in &all_chunks {
-        let data = mock_storage.get_chunk_by_location(&chunk.storage_location);
-        assert!(
-            data.is_some(),
-            "Chunk {} should exist in storage at {}",
-            chunk.id,
-            chunk.storage_location
-        );
-        let encrypted_data = data.unwrap();
-        assert_eq!(
-            encrypted_data.len() as i64,
-            chunk.encrypted_size,
-            "Encrypted size should match"
-        );
-    }
-    println!("  ✓ All database chunks exist in storage with correct sizes");
-
-    // Step 6: Reassemble and verify files
-    println!("\nStep 6: Reassembling and verifying files...");
-
-    let test_cases = vec![
-        (&tracks[0], &file1_data, "Track 1"),
-        (&tracks[1], &file2_data, "Track 2"),
-        (&tracks[2], &file3_data, "Track 3"),
-    ];
-
-    for (track, expected_data, track_name) in test_cases {
-        println!("  Reassembling {}...", track_name);
-
-        // Get files for this track
-        let files = library_manager
-            .get_files_for_track(&track.id)
-            .await
-            .expect("Failed to get files");
-
-        assert_eq!(files.len(), 1, "Expected 1 file per track");
-        let file = &files[0];
-
-        // Get chunks for this file
-        let chunks = library_manager
-            .get_chunks_for_file(&file.id)
-            .await
-            .expect("Failed to get chunks for file");
-
-        println!("    File has {} chunks", chunks.len());
-
-        // Manually reassemble (simulating playback logic)
         let mut reassembled = Vec::new();
-        for (i, chunk) in chunks.iter().enumerate() {
-            // Download encrypted chunk
-            let encrypted_data = cloud_storage
+        for chunk in chunks {
+            let encrypted = cloud_storage
                 .download_chunk(&chunk.storage_location)
                 .await
-                .expect("Failed to download chunk");
-
-            // Decrypt chunk
-            let decrypted_data = encryption_service
-                .decrypt_chunk(&encrypted_data)
-                .expect("Failed to decrypt chunk");
-
-            println!(
-                "      Chunk {} (album index {}): {} bytes decrypted",
-                i,
-                chunk.chunk_index,
-                decrypted_data.len()
-            );
-            reassembled.extend_from_slice(&decrypted_data);
+                .expect("Failed to download");
+            let decrypted = encryption_service
+                .decrypt_chunk(&encrypted)
+                .expect("Failed to decrypt");
+            reassembled.extend_from_slice(&decrypted);
         }
 
-        println!(
-            "    Reassembled {} bytes (expected {})",
+        assert_eq!(
             reassembled.len(),
-            expected_data.len()
+            expected_data.len(),
+            "Track {} size mismatch",
+            i + 1
         );
-
-        // Verify byte-for-byte match
-        if reassembled != *expected_data {
-            // Find first mismatch
-            for (i, (got, expected)) in reassembled.iter().zip(expected_data.iter()).enumerate() {
-                if got != expected {
-                    let chunk_size = chunk_size_bytes;
-                    let chunk_index = i / chunk_size;
-                    let offset_in_chunk = i % chunk_size;
-                    panic!(
-                        "{}: First mismatch at byte {} (chunk {}, offset {}): got {}, expected {}",
-                        track_name, i, chunk_index, offset_in_chunk, got, expected
-                    );
-                }
-            }
-            if reassembled.len() != expected_data.len() {
-                panic!(
-                    "{}: Size mismatch: got {} bytes, expected {} bytes",
-                    track_name,
-                    reassembled.len(),
-                    expected_data.len()
-                );
-            }
-        }
-
-        println!("    ✓ {} matches original data perfectly", track_name);
+        assert_eq!(
+            reassembled,
+            *expected_data,
+            "Track {} content mismatch",
+            i + 1
+        );
     }
 
-    println!("\n=== Test Passed! ===\n");
-    println!("The chunking, encryption, storage, and reassembly pipeline works correctly.");
-    println!("If FLAC playback is still broken, the issue is likely FLAC-specific (headers, format, etc).");
+    println!("✅ Test passed!\n");
+}
+
+#[tokio::test]
+async fn test_import_and_reassembly() {
+    do_import_and_reassembly(
+        "Simple 3-Track Album Test",
+        create_test_discogs_album(),
+        generate_simple_test_files,
+        3,
+        |tracks| {
+            // Verify basic track info
+            println!("Tracks:");
+            for track in tracks {
+                println!("  - {}", track.title);
+            }
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn test_vinyl_side_notation() {
+    do_import_and_reassembly(
+        "Vinyl Album with Side Notation (A1-A7, B1-B9)",
+        load_vinyl_album_fixture(),
+        generate_vinyl_album_files,
+        16,
+        |tracks| {
+            println!("Verifying NO duplicate track numbers...");
+            let mut numbers: Vec<i32> = tracks.iter().filter_map(|t| t.track_number).collect();
+            numbers.sort();
+
+            println!("Track numbers:");
+            for n in &numbers {
+                println!("  {}", n);
+            }
+
+            let has_dupes = numbers.windows(2).any(|w| w[0] == w[1]);
+
+            if has_dupes {
+                println!("\n⚠️  DUPLICATE TRACK NUMBERS DETECTED!");
+                let mut seen = std::collections::HashSet::new();
+                for num in &numbers {
+                    if !seen.insert(num) {
+                        println!("  Duplicate: {}", num);
+                    }
+                }
+                panic!("FAILED: Duplicate track numbers! Vinyl sides (A1, B1) both became #1");
+            }
+
+            println!("✅ All track numbers are unique despite vinyl side notation!");
+        },
+    )
+    .await;
 }

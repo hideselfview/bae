@@ -94,10 +94,15 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                         folder: PathBuf::from(folder),
                     };
 
-                    if let Err(e) = import_service.send_request(request).await {
-                        println!("Failed to validate/queue import: {}", e);
-                        current_step.set(ImportStep::ImportError(e));
-                        return;
+                    match import_service.send_request(request).await {
+                        Ok(album_id) => {
+                            println!("Album queued for import with ID: {}", album_id);
+                        }
+                        Err(e) => {
+                            println!("Failed to validate/queue import: {}", e);
+                            current_step.set(ImportStep::ImportError(e));
+                            return;
+                        }
                     }
 
                     // Import validated and queued successfully - navigate to library
