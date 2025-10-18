@@ -19,8 +19,8 @@ pub fn parse_discogs_album(import_item: &DiscogsAlbum) -> Result<(DbAlbum, Vec<D
     let discogs_tracks = import_item.tracklist();
     let mut tracks = Vec::new();
 
-    for discogs_track in discogs_tracks.iter() {
-        let track = DbTrack::from_discogs_track(discogs_track, &album.id)?;
+    for (index, discogs_track) in discogs_tracks.iter().enumerate() {
+        let track = DbTrack::from_discogs_track(discogs_track, &album.id, index)?;
         tracks.push(track);
     }
 

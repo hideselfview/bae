@@ -851,14 +851,13 @@ impl DbTrack {
     pub fn from_discogs_track(
         discogs_track: &crate::models::DiscogsTrack,
         album_id: &str,
+        track_index: usize,
     ) -> Result<Self, String> {
-        let track_number = Some(discogs_track.parse_track_number()?);
-
         Ok(DbTrack {
             id: Uuid::new_v4().to_string(),
             album_id: album_id.to_string(),
             title: discogs_track.title.clone(),
-            track_number,
+            track_number: Some((track_index + 1) as i32),
             duration_ms: None, // Will be filled in during track mapping
             artist_name: None, // Will be filled in during track mapping
             discogs_position: Some(discogs_track.position.clone()),
