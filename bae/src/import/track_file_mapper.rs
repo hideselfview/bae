@@ -274,12 +274,12 @@ mod tests {
     async fn test_map_tracks_to_files_mixed_formats() {
         let tracks = create_test_tracks(4);
         let discovered_files = create_discovered_files(vec![
+            "/album/cover.jpg",
             "/album/track1.mp3",
             "/album/track2.flac",
-            "/album/cover.jpg",
             "/album/track3.wav",
-            "/album/readme.txt",
             "/album/track4.m4a",
+            "/album/readme.txt",
         ]);
 
         let result = map_tracks_to_files(&tracks, &discovered_files).await;
