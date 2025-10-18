@@ -34,34 +34,7 @@ pub async fn map_tracks_to_files(
     }
 
     // Fallback to individual audio files
-    let audio_files = filter_audio_files(&file_paths);
-
-    if audio_files.is_empty() {
-        return Err("No audio files found in discovered files".to_string());
-    }
-
-    // Simple mapping strategy: sort files by name and match to track order
-    let mut mappings = Vec::new();
-
-    for (index, track) in tracks.iter().enumerate() {
-        if let Some(audio_file) = audio_files.get(index) {
-            mappings.push(TrackSourceFile {
-                db_track_id: track.id.clone(),
-                file_path: audio_file.clone(),
-            });
-        } else {
-            println!(
-                "TrackFileMapper: Warning - no file found for track: {}",
-                track.title
-            );
-        }
-    }
-
-    println!(
-        "TrackFileMapper: Mapped {} tracks to source files",
-        mappings.len()
-    );
-    Ok(mappings)
+    map_tracks_to_individual_files(&file_paths, tracks)
 }
 
 /// Map tracks to CUE/FLAC source files using CUE sheet parsing
@@ -110,6 +83,41 @@ fn map_tracks_to_cue_flac(
 
     println!(
         "TrackFileMapper: Created {} CUE/FLAC mappings",
+        mappings.len()
+    );
+    Ok(mappings)
+}
+
+/// Map tracks to individual audio files using simple name-based matching
+fn map_tracks_to_individual_files(
+    file_paths: &[PathBuf],
+    tracks: &[DbTrack],
+) -> Result<Vec<TrackSourceFile>, String> {
+    let audio_files = filter_audio_files(file_paths);
+
+    if audio_files.is_empty() {
+        return Err("No audio files found in discovered files".to_string());
+    }
+
+    // Simple mapping strategy: sort files by name and match to track order
+    let mut mappings = Vec::new();
+
+    for (index, track) in tracks.iter().enumerate() {
+        if let Some(audio_file) = audio_files.get(index) {
+            mappings.push(TrackSourceFile {
+                db_track_id: track.id.clone(),
+                file_path: audio_file.clone(),
+            });
+        } else {
+            println!(
+                "TrackFileMapper: Warning - no file found for track: {}",
+                track.title
+            );
+        }
+    }
+
+    println!(
+        "TrackFileMapper: Mapped {} tracks to source files",
         mappings.len()
     );
     Ok(mappings)
