@@ -122,4 +122,50 @@ mod tests {
         assert_eq!(db_album.title, "Empty Album");
         assert_eq!(db_tracks.len(), 0);
     }
+
+    #[test]
+    fn test_parse_discogs_album_vinyl_side_notation() {
+        // Load the vinyl master test fixture
+        let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/vinyl_master_test.json");
+        let json_data =
+            std::fs::read_to_string(&fixture_path).expect("Failed to read vinyl_master_test.json");
+        let master: DiscogsMaster = serde_json::from_str(&json_data).expect("Failed to parse JSON");
+        let album = DiscogsAlbum::Master(master);
+
+        let result = parse_discogs_album(&album);
+        assert!(result.is_ok());
+
+        let (db_album, db_tracks) = result.unwrap();
+
+        // Verify album metadata
+        assert_eq!(db_album.title, "Test Vinyl Album");
+        assert_eq!(db_album.year, Some(1992));
+        assert_eq!(
+            db_album.discogs_master_id,
+            Some("test-vinyl-master".to_string())
+        );
+
+        // Verify tracks
+        assert_eq!(db_tracks.len(), 16, "Should have 16 tracks (A1-A7, B1-B9)");
+
+        // Verify all tracks are linked to the album
+        for track in &db_tracks {
+            assert_eq!(track.album_id, db_album.id);
+        }
+
+        // Verify track numbers are sequential 1-16
+        let track_numbers: Vec<Option<i32>> = db_tracks.iter().map(|t| t.track_number).collect();
+        let expected_numbers: Vec<Option<i32>> = (1..=16).map(Some).collect();
+        assert_eq!(
+            track_numbers, expected_numbers,
+            "Track numbers should be sequential 1-16 despite vinyl side notation"
+        );
+
+        // Verify track titles match the positions
+        assert_eq!(db_tracks[0].title, "Track A1");
+        assert_eq!(db_tracks[6].title, "Track A7");
+        assert_eq!(db_tracks[7].title, "Track B1");
+        assert_eq!(db_tracks[15].title, "Track B9");
+    }
 }
