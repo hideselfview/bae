@@ -83,15 +83,15 @@ impl CueFlacProcessor {
             }
         }
 
-        // Match FLAC files with CUE files
-        for flac_path in flac_files {
-            let flac_stem = flac_path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        // Match CUE files with FLAC files
+        for cue_path in cue_files {
+            let cue_stem = cue_path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
 
-            // Look for matching CUE file
-            for cue_path in &cue_files {
-                let cue_stem = cue_path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+            // Look for matching FLAC file
+            for flac_path in &flac_files {
+                let flac_stem = flac_path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
 
-                if flac_stem == cue_stem {
+                if cue_stem == flac_stem {
                     pairs.push(CueFlacPair {
                         flac_path: flac_path.clone(),
                         cue_path: cue_path.clone(),
