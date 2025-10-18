@@ -26,7 +26,7 @@ use crate::import::album_layout::AlbumLayout;
 use crate::import::metadata_persister::MetadataPersister;
 use crate::import::pipeline;
 use crate::import::progress_service::ImportProgressService;
-use crate::import::track_file_mapper::TrackFileMapper;
+use crate::import::track_file_mapper;
 use crate::import::types::{ImportProgress, ImportRequest, TrackSourceFile};
 use crate::library_context::SharedLibraryManager;
 use crate::models::DiscogsAlbum;
@@ -49,7 +49,8 @@ impl ImportHandle {
     /// Performs validation (track-to-file mapping) and DB insertion synchronously.
     /// If validation fails, returns error immediately with no side effects.
     /// If successful, album is inserted with status='queued' and sent to import worker.
-    pub async fn send_request(&self, request: ImportRequest) -> Result<(), String> {
+    /// Returns the database album ID for progress subscription.
+    pub async fn send_request(&self, request: ImportRequest) -> Result<String, String> {
         match request {
             ImportRequest::FromFolder { album, folder } => {
                 let library_manager = self.library_manager.get();
@@ -64,7 +65,7 @@ impl ImportHandle {
 
                 // 3. Validate track-to-file mapping
                 let tracks_to_files =
-                    TrackFileMapper::map_tracks_to_files(&db_tracks, &folder_files).await?;
+                    track_file_mapper::map_tracks_to_files(&db_tracks, &folder_files).await?;
 
                 // 4. Insert album + tracks with status='queued'
                 library_manager
@@ -80,6 +81,8 @@ impl ImportHandle {
 
                 // ========== QUEUE FOR PIPELINE ==========
 
+                let album_id = db_album.id.clone();
+
                 self.validated_tx
                     .send(ValidatedImport {
                         db_album,
@@ -88,7 +91,7 @@ impl ImportHandle {
                     })
                     .map_err(|_| "Failed to queue validated album for import".to_string())?;
 
-                Ok(())
+                Ok(album_id)
             }
         }
     }
