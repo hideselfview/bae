@@ -1,38 +1,36 @@
-# Rust Cheat Sheet
+# Cargo Cheat Sheet
 
 ## Build Targets
 
-### Library Crate
+Cargo can build different types of targets:
+
+- **`--lib`** - The library crate (`src/lib.rs`). Contains reusable code that other crates can depend on.
+- **`--bin <name>`** - Binary executables. Main binary is in `src/main.rs`, additional binaries in `src/bin/*.rs`.
+- **`--test <name>`** - Integration tests in `tests/*.rs`. Each file is a separate test crate.
+- **`--example <name>`** - Example programs in `examples/*.rs`. Demonstrate library usage.
+- **`--bench <name>`** - Benchmarks in `benches/*.rs`. Performance testing.
+- **(no flag)** - All targets: lib + bins + examples + tests + benches.
+
+Most cargo commands (`build`, `run`, `test`, `clippy`, `check`) work with any target flag. Examples:
+
 ```bash
-# Build library only
-cargo build --lib
-
-# Build library with specific features
-cargo build --lib --features integration-test-utils
-
-# Build library without default features
-cargo build --lib --no-default-features
-```
-
-### Binary Crate
-```bash
-# Build main binary
-cargo build --bin bae
-
-# Run main binary
-cargo run --bin bae
-```
-
-### All Targets
-```bash
-# Build everything (lib + bins + examples + tests)
+# Build everything (lib + bins + examples + tests + benches)
 cargo build
 
-# Build with specific features
-cargo build --features integration-test-utils
+# Build just the library
+cargo build --lib
 
-# Build without default features
-cargo build --no-default-features
+# Run a specific binary
+cargo run --bin bae
+
+# Run unit tests
+cargo test --lib
+
+# Run clippy on a specific integration test
+cargo clippy --test test_roundtrip_vinyl
+
+# Run an example
+cargo run --example my_example
 ```
 
 ## Testing
@@ -43,7 +41,7 @@ cargo build --no-default-features
 cargo test --lib
 
 # Run unit tests with output
-cargo test --lib -- --nocapture
+cargo test --lib -- --no-capture
 
 # Run specific unit test
 cargo test --lib test_name
@@ -57,14 +55,8 @@ cargo test --lib -- --ignored
 
 ### Integration Tests
 ```bash
-# Run all integration tests
-cargo test --test import_reassembly_test
-
-# Run specific integration test
-cargo test --test import_reassembly_test test_name
-
-# Run integration tests with features
-cargo test --test import_reassembly_test --features integration-test-utils
+# Run `test_roundtrip_simple` (requires test-utils feature)
+cargo test --test test_roundtrip_simple --features test-utils
 ```
 
 ### Doc Tests
@@ -82,31 +74,35 @@ cargo test --doc album_layout
 cargo test
 
 # Run with specific features
-cargo test --features integration-test-utils
+cargo test --features test-utils
 
 # Run with output
-cargo test -- --nocapture
+cargo test -- --no-capture
 ```
 
 ## Linting & Formatting
 
 ### Clippy
 ```bash
-# Check library only
-cargo clippy --lib
-
-# Check with specific features
-cargo clippy --lib --features integration-test-utils
-
-# Check without default features
-cargo clippy --lib --no-default-features
-
-# Check all targets
-cargo clippy
+# Check all targets and treat warnings as errors
+cargo clippy --all-targets -- -D warnings
 
 # Fix clippy suggestions
 cargo clippy --fix
 ```
+
+**`-D` options:**
+- `-D warnings` - Treat all warnings as errors
+- `-D clippy::all` - Enable all clippy lints
+- `-D clippy::pedantic` - Enable pedantic lints
+- `-D clippy::nursery` - Enable experimental lints
+- `-D clippy::cargo` - Enable cargo-specific lints
+
+**Other options:**
+- `-A <lint>` - Allow specific lint
+- `-W <lint>` - Warn for specific lint
+- `-D <lint>` - Deny specific lint
+- `--fix` - Apply automatic fixes
 
 ### Formatting
 ```bash
@@ -124,18 +120,18 @@ cargo fmt -- src/file.rs
 
 ### Available Features
 - `desktop` - Desktop UI features (default)
-- `integration-test-utils` - Helper APIs for integration tests
+- `test-utils` - Helper APIs for tests
 
 ### Feature Usage
 ```bash
 # Build with specific feature
-cargo build --features integration-test-utils
+cargo build --features test-utils
 
 # Run tests with specific feature
-cargo test --features integration-test-utils
+cargo test --features test-utils
 
 # Check with specific feature
-cargo clippy --features integration-test-utils
+cargo clippy --features test-utils
 ```
 
 ## Common Commands
@@ -194,26 +190,3 @@ RUST_BACKTRACE=1 cargo test
 - Use `#[cfg(feature = "feature-name")]` for conditional compilation
 - Configure integration tests with `[[test]]` blocks in `Cargo.toml`
 - Use `required-features = ["feature-name"]` for test-specific features
-
-## Troubleshooting
-
-### Common Issues
-- **Dead code warnings**: Use feature gates instead of `#[allow(dead_code)]`
-- **Doc test failures**: Ensure examples use valid Rust syntax
-- **Integration test failures**: Check if features are properly enabled
-- **Module visibility**: Use `pub` for public APIs, `pub(crate)` for internal APIs
-
-### Debug Commands
-```bash
-# Show dependency tree
-cargo tree
-
-# Show feature dependencies
-cargo tree --features integration-test-utils
-
-# Show build plan
-cargo build --dry-run
-
-# Show test plan
-cargo test --dry-run
-```
