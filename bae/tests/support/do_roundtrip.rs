@@ -30,6 +30,7 @@ pub async fn do_roundtrip<F, G>(
 
     // Setup directories
     println!("Creating temp directories...");
+
     let temp_root = TempDir::new().expect("Failed to create temp root");
     let album_dir = temp_root.path().join("album");
     let db_dir = temp_root.path().join("db");
@@ -38,26 +39,32 @@ pub async fn do_roundtrip<F, G>(
     std::fs::create_dir_all(&album_dir).expect("Failed to create album dir");
     std::fs::create_dir_all(&db_dir).expect("Failed to create db dir");
     std::fs::create_dir_all(&cache_dir_path).expect("Failed to create cache dir");
+
     println!("Directories created");
 
     // Generate test files
     println!("Generating test files...");
+
     let file_data = generate_files(&album_dir);
+
     println!("Generated {} files", file_data.len());
 
     // Setup services
     println!("Setting up services...");
+
     let chunk_size_bytes = 1024 * 1024;
     let mock_storage = Arc::new(MockCloudStorage::new());
     let cloud_storage = CloudStorageManager::from_storage(mock_storage.clone());
 
     println!("Creating database...");
+
     let db_file = db_dir.join("test.db");
     let database = Database::new(&format!("sqlite://{}", db_file.display()))
         .await
         .expect("Failed to create database");
 
     println!("Creating encryption service...");
+
     let encryption_service = EncryptionService::new_with_key(vec![0u8; 32]);
 
     let cache_config = bae::cache::CacheConfig {
@@ -94,6 +101,7 @@ pub async fn do_roundtrip<F, G>(
     // Import
     println!("Starting import...");
     println!("Sending import request...");
+
     let album_id = import_handle
         .send_request(ImportRequest::FromFolder {
             album: discogs_album,
@@ -101,17 +109,21 @@ pub async fn do_roundtrip<F, G>(
         })
         .await
         .expect("Failed to send import request");
-    println!("Request sent, got album_id: {}", album_id);
 
+    println!("Request sent, got album_id: {}", album_id);
     println!("Subscribing to album progress...");
+
     let mut progress_rx = import_handle.subscribe_album(album_id);
 
     // Wait for completion
     println!("Waiting for import to complete...");
+
     let mut progress_count = 0;
     while let Some(progress) = progress_rx.recv().await {
         progress_count += 1;
+
         println!("[Progress {}] {:?}", progress_count, progress);
+
         if matches!(progress, bae::import::ImportProgress::Complete { .. }) {
             println!("✅ Import completed!");
             break;
@@ -120,6 +132,7 @@ pub async fn do_roundtrip<F, G>(
             panic!("Import failed: {}", error);
         }
     }
+
     println!(
         "Progress monitoring ended (received {} events)",
         progress_count
@@ -127,6 +140,7 @@ pub async fn do_roundtrip<F, G>(
 
     // Verify database state
     println!("Verifying database...");
+
     let albums = library_manager
         .get_albums()
         .await
@@ -151,6 +165,7 @@ pub async fn do_roundtrip<F, G>(
 
     // Verify reassembly (spot check up to first 3 tracks)
     println!("Verifying reassembly...");
+
     for (i, (track, expected_data)) in tracks.iter().zip(&file_data).take(3).enumerate() {
         let files = library_manager
             .get_files_for_track(&track.id)
