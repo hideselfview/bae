@@ -11,21 +11,19 @@ fn main() {
     match output {
         Ok(output) => {
             if !output.status.success() {
-                println!("cargo:warning=Failed to generate Tailwind CSS");
+                println!("cargo:error=Failed to generate Tailwind CSS");
                 println!(
-                    "cargo:warning=STDERR: {}",
+                    "cargo:error=STDERR: {}",
                     String::from_utf8_lossy(&output.stderr)
                 );
                 println!(
-                    "cargo:warning=STDOUT: {}",
+                    "cargo:error=STDOUT: {}",
                     String::from_utf8_lossy(&output.stdout)
                 );
-            } else {
-                println!("cargo:warning=Tailwind CSS generated successfully");
             }
         }
         Err(e) => {
-            println!("cargo:warning=Failed to run tailwindcss: {}", e);
+            println!("cargo:error=Failed to run tailwindcss: {}", e);
         }
     }
 }

@@ -5,6 +5,7 @@ use crate::import::types::TrackSourceFile;
 use crate::library::LibraryManager;
 use std::collections::HashMap;
 use std::path::Path;
+use tracing::debug;
 
 /// Service responsible for persisting file metadata to the database.
 /// Creates DbFile, DbFileChunk, DbCueSheet, and DbTrackPosition records.
@@ -64,7 +65,7 @@ impl<'a> MetadataPersister<'a> {
             let is_cue_flac = file_mappings.len() > 1 && format == "flac";
 
             if is_cue_flac {
-                println!(
+                debug!(
                     "  Processing CUE/FLAC file with {} tracks",
                     file_mappings.len()
                 );

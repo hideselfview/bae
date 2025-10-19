@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use tracing::{info, warn};
 
 #[cfg(not(debug_assertions))]
 use thiserror::Error;
@@ -52,9 +53,9 @@ impl Config {
         {
             // Try to load .env file
             if dotenvy::dotenv().is_ok() {
-                println!("Config: Dev mode activated - loaded .env file");
+                info!("Dev mode activated - loaded .env file");
             } else {
-                println!("Config: No .env file found, using production config");
+                info!("No .env file found, using production config");
             }
 
             Self::from_env()
@@ -71,17 +72,14 @@ impl Config {
     fn from_env() -> Self {
         let library_id = match std::env::var("BAE_LIBRARY_ID").ok() {
             Some(id) => {
-                println!("Config: Using library ID from .env: {}", id);
+                info!("Using library ID from .env: {}", id);
                 id
             }
             None => {
                 let id = uuid::Uuid::new_v4().to_string();
-                println!(
-                    "Config: WARNING - No BAE_LIBRARY_ID in .env, generated new ID: {}",
-                    id
-                );
-                println!(
-                    "Config: Add this to your .env file to persist: BAE_LIBRARY_ID={}",
+                warn!("No BAE_LIBRARY_ID in .env, generated new ID: {}", id);
+                info!(
+                    "Add this to your .env file to persist: BAE_LIBRARY_ID={}",
                     id
                 );
                 id
@@ -112,7 +110,7 @@ impl Config {
         };
 
         let encryption_key = std::env::var("BAE_ENCRYPTION_KEY").unwrap_or_else(|_| {
-            println!("Config: No BAE_ENCRYPTION_KEY found, generating temporary key");
+            warn!("No BAE_ENCRYPTION_KEY found, generating temporary key");
             // Generate temporary key for dev
             use aes_gcm::{aead::OsRng, Aes256Gcm, KeyInit};
             let key = Aes256Gcm::generate_key(OsRng);
@@ -139,16 +137,16 @@ impl Config {
             .and_then(|s| s.parse().ok())
             .unwrap_or(1024 * 1024); // 1MB default
 
-        println!("Config: Dev mode with S3 storage");
-        println!("Config: S3 bucket: {}", bucket_name);
+        info!("Dev mode with S3 storage");
+        info!("S3 bucket: {}", bucket_name);
         if let Some(endpoint) = &endpoint_url {
-            println!("Config: S3 endpoint: {}", endpoint);
+            info!("S3 endpoint: {}", endpoint);
         }
-        println!(
-            "Config: Worker pools - encrypt: {}, upload: {}",
+        info!(
+            "Worker pools - encrypt: {}, upload: {}",
             max_encrypt_workers, max_upload_workers
         );
-        println!("Config: Chunk size: {} bytes", chunk_size_bytes);
+        info!("Chunk size: {} bytes", chunk_size_bytes);
 
         Self {
             library_id,
@@ -165,7 +163,7 @@ impl Config {
     #[cfg(not(debug_assertions))]
     fn from_config_file() -> Self {
         // TODO: Implement config.yaml loading
-        println!("Config: Production mode - loading from config.yaml (not implemented yet)");
+        info!("Production mode - loading from config.yaml (not implemented yet)");
 
         // Load from keyring
         let credentials = Self::load_from_keyring()
@@ -174,10 +172,7 @@ impl Config {
         // TODO: Load library_id from config.yaml
         let library_id = {
             let id = uuid::Uuid::new_v4().to_string();
-            println!(
-                "Config: WARNING - config.yaml not implemented, generated library ID: {}",
-                id
-            );
+            warn!("config.yaml not implemented, generated library ID: {}", id);
             id
         };
 
@@ -212,13 +207,13 @@ impl Config {
     fn load_from_keyring() -> Result<CredentialData, ConfigError> {
         use keyring::Entry;
 
-        println!("Config: Loading credentials from keyring (password may be required)...");
+        info!("Loading credentials from keyring (password may be required)...");
 
         // Load Discogs API key (required)
         let discogs_api_key = match Entry::new("bae", "discogs_api_key") {
             Ok(entry) => match entry.get_password() {
                 Ok(key) => {
-                    println!("Config: Loaded Discogs API key");
+                    info!("Loaded Discogs API key");
                     key
                 }
                 Err(keyring::Error::NoEntry) => {
@@ -237,7 +232,7 @@ impl Config {
                 Ok(json) => {
                     let config: crate::cloud_storage::S3Config = serde_json::from_str(&json)
                         .map_err(|e| ConfigError::Serialization(e.to_string()))?;
-                    println!("Config: Loaded S3 configuration");
+                    info!("Loaded S3 configuration");
                     config
                 }
                 Err(keyring::Error::NoEntry) => {
@@ -254,7 +249,7 @@ impl Config {
         let encryption_key = match Entry::new("bae", "encryption_master_key") {
             Ok(entry) => match entry.get_password() {
                 Ok(key_hex) => {
-                    println!("Config: Loaded encryption master key");
+                    info!("Loaded encryption master key");
                     key_hex
                 }
                 Err(keyring::Error::NoEntry) => {

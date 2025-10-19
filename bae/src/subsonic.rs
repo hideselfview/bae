@@ -10,6 +10,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tower_http::cors::CorsLayer;
+use tracing::{debug, error, info, warn};
 
 /// Subsonic API server state
 #[derive(Clone)]
@@ -327,7 +328,7 @@ async fn stream_song(
         }
     };
 
-    println!("Streaming request for song ID: {}", song_id);
+    info!("Streaming request for song ID: {}", song_id);
 
     match stream_track_chunks(&state, &song_id).await {
         Ok(audio_data) => {
@@ -341,7 +342,7 @@ async fn stream_song(
             (StatusCode::OK, headers, audio_data).into_response()
         }
         Err(e) => {
-            println!("Streaming error for song {}: {}", song_id, e);
+            error!("Streaming error for song {}: {}", song_id, e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Streaming error: {}", e),
@@ -501,7 +502,7 @@ async fn stream_track_chunks(
     track_id: &str,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     let library_manager = &state.library_manager;
-    println!("Starting chunk reassembly for track: {}", track_id);
+    info!("Starting chunk reassembly for track: {}", track_id);
 
     // Check if this is a CUE/FLAC track with track positions
     if let Some(track_position) = library_manager
@@ -510,12 +511,12 @@ async fn stream_track_chunks(
         .await
         .map_err(|e| format!("Database error: {}", e))?
     {
-        println!("Detected CUE/FLAC track - using efficient chunk range streaming");
+        info!("Detected CUE/FLAC track - using efficient chunk range streaming");
         return stream_cue_track_chunks(state, track_id, &track_position).await;
     }
 
     // Fallback to regular file streaming for individual tracks
-    println!("Using regular file streaming");
+    info!("Using regular file streaming");
 
     // Get files for this track
     let files = library_manager.get().get_files_for_track(track_id).await?;
@@ -525,7 +526,7 @@ async fn stream_track_chunks(
 
     // For now, just handle the first file (most tracks have one file)
     let file = &files[0];
-    println!(
+    debug!(
         "Processing file: {} ({} bytes)",
         file.original_filename, file.file_size
     );
@@ -536,7 +537,7 @@ async fn stream_track_chunks(
         return Err("No chunks found for file".into());
     }
 
-    println!("Found {} chunks to reassemble", chunks.len());
+    debug!("Found {} chunks to reassemble", chunks.len());
 
     // Sort chunks by index to ensure correct order
     let mut sorted_chunks = chunks;
@@ -546,7 +547,7 @@ async fn stream_track_chunks(
     let mut audio_data = Vec::new();
 
     for chunk in sorted_chunks {
-        println!(
+        debug!(
             "Processing chunk {} (index {})",
             chunk.id, chunk.chunk_index
         );
@@ -556,7 +557,7 @@ async fn stream_track_chunks(
         audio_data.extend_from_slice(&chunk_data);
     }
 
-    println!(
+    info!(
         "Successfully reassembled {} bytes of audio data",
         audio_data.len()
     );
@@ -586,7 +587,7 @@ async fn download_and_decrypt_chunk(
     }
 
     // Cache miss - download from cloud storage
-    println!("Downloading chunk from cloud: {}", chunk.storage_location);
+    debug!("Downloading chunk from cloud: {}", chunk.storage_location);
 
     let encrypted_data = state
         .cloud_storage
@@ -596,7 +597,7 @@ async fn download_and_decrypt_chunk(
 
     // Store in cache for future requests
     if let Err(e) = cache_manager.put_chunk(&chunk.id, &encrypted_data).await {
-        println!("Warning: Failed to cache chunk {}: {}", chunk.id, e);
+        warn!("Failed to cache chunk {}: {}", chunk.id, e);
     }
 
     // Decrypt and return (using injected encryption service)
@@ -616,7 +617,7 @@ async fn stream_cue_track_chunks(
     track_position: &crate::database::DbTrackPosition,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     let library_manager = &state.library_manager;
-    println!(
+    info!(
         "Streaming CUE/FLAC track: chunks {}-{}",
         track_position.start_chunk_index, track_position.end_chunk_index
     );
@@ -639,7 +640,7 @@ async fn stream_cue_track_chunks(
         .as_ref()
         .ok_or("No FLAC headers found in database")?;
 
-    println!("Using stored FLAC headers: {} bytes", flac_headers.len());
+    debug!("Using stored FLAC headers: {} bytes", flac_headers.len());
 
     // Get the album_id for this track
     let album_id = library_manager
@@ -661,7 +662,7 @@ async fn stream_cue_track_chunks(
     }
 
     let approximate_total_chunks = file.file_size / state.chunk_size_bytes as i64;
-    println!(
+    info!(
         "Downloading {} chunks instead of {} total chunks ({}% reduction)",
         chunks.len(),
         approximate_total_chunks,
@@ -680,7 +681,7 @@ async fn stream_cue_track_chunks(
 
     // Append track chunks
     for chunk in sorted_chunks {
-        println!(
+        debug!(
             "Processing track chunk {} (index {})",
             chunk.id, chunk.chunk_index
         );
@@ -690,14 +691,14 @@ async fn stream_cue_track_chunks(
         audio_data.extend_from_slice(&chunk_data);
     }
 
-    println!(
+    info!(
         "Successfully assembled CUE track: {} bytes (headers + {} chunks)",
         audio_data.len(),
         chunk_count
     );
 
     // Phase 4: Extract precise track boundaries using audio processing
-    println!(
+    debug!(
         "Extracting precise track boundaries: {}ms to {}ms",
         track_position.start_time_ms, track_position.end_time_ms
     );
@@ -709,7 +710,7 @@ async fn stream_cue_track_chunks(
     )
     .map_err(|e| format!("Precise track extraction failed: {}", e))?;
 
-    println!(
+    info!(
         "Successfully extracted precise track: {} bytes",
         precise_audio.len()
     );

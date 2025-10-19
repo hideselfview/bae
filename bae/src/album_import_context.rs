@@ -2,6 +2,7 @@ use crate::discogs_client::DiscogsSearchResult;
 use crate::models::{DiscogsAlbum, DiscogsMasterReleaseVersion};
 use crate::{config::use_config, discogs_client};
 use dioxus::prelude::*;
+use tracing::debug;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SearchView {
@@ -99,10 +100,7 @@ impl AlbumImportContext {
                 // If master has no thumbnail but search results had one, use the search thumbnail
                 if master.thumb.is_none() && search_thumb.is_some() {
                     master.thumb = search_thumb;
-                    println!(
-                        "AlbumImportContext: Using search thumbnail for master {}",
-                        master.title
-                    );
+                    debug!("Using search thumbnail for master {}", master.title);
                 }
                 let import_item = DiscogsAlbum::Master(master);
                 Ok(import_item)

@@ -3,6 +3,7 @@ use crate::database::DbTrack;
 use crate::import::service::DiscoveredFile;
 use crate::import::types::TrackSourceFile;
 use std::path::PathBuf;
+use tracing::{debug, info, warn};
 
 /// Map tracks to their source audio files using already-discovered files.
 ///
@@ -12,8 +13,8 @@ pub async fn map_tracks_to_files(
     tracks: &[DbTrack],
     discovered_files: &[DiscoveredFile],
 ) -> Result<Vec<TrackSourceFile>, String> {
-    println!(
-        "TrackFileMapper: Mapping {} tracks using {} pre-discovered files",
+    info!(
+        "Mapping {} tracks using {} pre-discovered files",
         tracks.len(),
         discovered_files.len()
     );
@@ -27,10 +28,7 @@ pub async fn map_tracks_to_files(
 
     // If CUE/FLAC pairs were found, use them to map tracks to files
     if !cue_flac_pairs.is_empty() {
-        println!(
-            "TrackFileMapper: Found {} CUE/FLAC pairs",
-            cue_flac_pairs.len()
-        );
+        info!("Found {} CUE/FLAC pairs", cue_flac_pairs.len());
         return map_tracks_to_cue_flac(cue_flac_pairs, tracks);
     }
 
@@ -46,8 +44,8 @@ fn map_tracks_to_cue_flac(
     let mut mappings = Vec::new();
 
     for pair in cue_flac_pairs {
-        println!(
-            "TrackFileMapper: Processing CUE/FLAC pair: {} + {}",
+        debug!(
+            "Processing CUE/FLAC pair: {} + {}",
             pair.flac_path.display(),
             pair.cue_path.display()
         );
@@ -56,10 +54,7 @@ fn map_tracks_to_cue_flac(
         let cue_sheet = CueFlacProcessor::parse_cue_sheet(&pair.cue_path)
             .map_err(|e| format!("Failed to parse CUE sheet: {}", e))?;
 
-        println!(
-            "TrackFileMapper: CUE sheet contains {} tracks",
-            cue_sheet.tracks.len()
-        );
+        debug!("CUE sheet contains {} tracks", cue_sheet.tracks.len());
 
         // For CUE/FLAC, all tracks map to the same FLAC file
         for (index, cue_track) in cue_sheet.tracks.iter().enumerate() {
@@ -69,23 +64,20 @@ fn map_tracks_to_cue_flac(
                     file_path: pair.flac_path.clone(),
                 });
 
-                println!(
-                    "TrackFileMapper: Mapped CUE track '{}' to DB track '{}'",
+                debug!(
+                    "Mapped CUE track '{}' to DB track '{}'",
                     cue_track.title, db_track.title
                 );
             } else {
-                println!(
-                    "TrackFileMapper: Warning - CUE track '{}' has no corresponding DB track",
+                warn!(
+                    "CUE track '{}' has no corresponding DB track",
                     cue_track.title
                 );
             }
         }
     }
 
-    println!(
-        "TrackFileMapper: Created {} CUE/FLAC mappings",
-        mappings.len()
-    );
+    info!("Created {} CUE/FLAC mappings", mappings.len());
     Ok(mappings)
 }
 
@@ -136,10 +128,7 @@ fn map_tracks_to_individual_files(
         }
     }
 
-    println!(
-        "TrackFileMapper: Mapped {} tracks to source files",
-        mappings.len()
-    );
+    info!("Mapped {} tracks to source files", mappings.len());
     Ok(mappings)
 }
 
@@ -161,10 +150,7 @@ fn filter_audio_files(paths: &[PathBuf]) -> Vec<PathBuf> {
 
     // Already sorted by parent function
     audio_files.sort();
-    println!(
-        "TrackFileMapper: Filtered {} audio files",
-        audio_files.len()
-    );
+    debug!("Filtered {} audio files", audio_files.len());
     audio_files
 }
 

@@ -5,6 +5,7 @@ use std::sync::{
     Arc, Mutex,
 };
 use tokio::sync::mpsc as tokio_mpsc;
+use tracing::info;
 
 type SubscriptionId = u64;
 
@@ -86,7 +87,7 @@ impl ImportProgressService {
                         }
                     }
                     None => {
-                        println!("ProgressService: Channel closed, exiting");
+                        info!("Channel closed, exiting");
                         break;
                     }
                 }

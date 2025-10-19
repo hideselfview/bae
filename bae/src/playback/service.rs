@@ -9,6 +9,7 @@ use std::io::{BufReader, Cursor};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
+use tracing::{error, info};
 
 /// Playback commands sent to the service
 #[derive(Debug, Clone)]
@@ -165,7 +166,7 @@ impl PlaybackService {
     }
 
     async fn run(&mut self) {
-        println!("PlaybackService started");
+        info!("PlaybackService started");
 
         while let Some(command) = self.command_rx.recv().await {
             match command {
@@ -240,11 +241,11 @@ impl PlaybackService {
             }
         }
 
-        println!("PlaybackService stopped");
+        info!("PlaybackService stopped");
     }
 
     async fn play_track(&mut self, track_id: &str) {
-        println!("Playing track: {}", track_id);
+        info!("Playing track: {}", track_id);
 
         // Update state to loading
         *self.state.lock().await = PlaybackState::Loading {
@@ -255,12 +256,12 @@ impl PlaybackService {
         let track = match self.library_manager.get_track(track_id).await {
             Ok(Some(track)) => track,
             Ok(None) => {
-                eprintln!("Track not found: {}", track_id);
+                error!("Track not found: {}", track_id);
                 self.stop();
                 return;
             }
             Err(e) => {
-                eprintln!("Failed to fetch track: {}", e);
+                error!("Failed to fetch track: {}", e);
                 self.stop();
                 return;
             }
@@ -279,27 +280,27 @@ impl PlaybackService {
         {
             Ok(data) => data,
             Err(e) => {
-                eprintln!("Failed to reassemble track: {}", e);
+                error!("Failed to reassemble track: {}", e);
                 self.stop();
                 return;
             }
         };
 
-        println!("Track loaded: {} bytes", audio_data.len());
+        info!("Track loaded: {} bytes", audio_data.len());
 
         // Validate FLAC header
         if audio_data.len() < 4 {
-            eprintln!("Audio data too small: {} bytes", audio_data.len());
+            error!("Audio data too small: {} bytes", audio_data.len());
             self.stop();
             return;
         }
 
         if &audio_data[0..4] != b"fLaC" {
-            eprintln!(
+            error!(
                 "Invalid FLAC header: expected 'fLaC', got {:?}",
                 &audio_data[0..4.min(audio_data.len())]
             );
-            eprintln!(
+            error!(
                 "First 16 bytes: {:?}",
                 &audio_data[0..16.min(audio_data.len())]
             );
@@ -307,7 +308,7 @@ impl PlaybackService {
             return;
         }
 
-        println!("Valid FLAC header detected");
+        info!("Valid FLAC header detected");
 
         // Create audio source from buffer with buffered reading
         let cursor = Cursor::new(audio_data);
@@ -315,7 +316,7 @@ impl PlaybackService {
         let source = match rodio::Decoder::new(buf_reader) {
             Ok(decoder) => decoder,
             Err(e) => {
-                eprintln!("Failed to decode audio: {}", e);
+                error!("Failed to decode audio: {}", e);
                 self.stop();
                 return;
             }

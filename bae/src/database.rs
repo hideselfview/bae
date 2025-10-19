@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
+use tracing::info;
 use uuid::Uuid;
 
 // String constants for SQL DEFAULT clauses (keep in sync with as_str())
@@ -131,7 +132,7 @@ impl Database {
     pub async fn new(database_path: &str) -> Result<Self, sqlx::Error> {
         // Use sqlite:// with ?mode=rwc to create if it doesn't exist
         let database_url = format!("sqlite://{}?mode=rwc", database_path);
-        println!("Database: Connecting to {}", database_url);
+        info!("Connecting to {}", database_url);
         let pool = SqlitePool::connect(&database_url).await?;
 
         let db = Database { pool };

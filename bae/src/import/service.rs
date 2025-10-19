@@ -34,6 +34,7 @@ use futures::stream::StreamExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use tracing::{error, info};
 
 /// Handle for sending import requests and subscribing to progress updates
 #[derive(Clone)]
@@ -73,8 +74,8 @@ impl ImportHandle {
                     .await
                     .map_err(|e| format!("Database error: {}", e))?;
 
-                println!(
-                    "ImportHandle: Validated and queued album '{}' with {} tracks",
+                info!(
+                    "Validated and queued album '{}' with {} tracks",
                     db_album.title,
                     db_tracks.len()
                 );
@@ -184,24 +185,21 @@ impl ImportService {
     }
 
     async fn run_import_worker(mut self) {
-        println!("ImportService: Worker started");
+        info!("Worker started");
 
         // Import validated albums sequentially from the queue.
         loop {
             match self.validated_rx.recv().await {
                 Some(validated) => {
-                    println!(
-                        "ImportService: Starting pipeline for '{}'",
-                        validated.db_album.title
-                    );
+                    info!("Starting pipeline for '{}'", validated.db_album.title);
 
                     if let Err(e) = self.import_from_folder(validated).await {
-                        println!("ImportService: Pipeline failed: {}", e);
+                        error!("Pipeline failed: {}", e);
                         // TODO: Mark album as failed
                     }
                 }
                 None => {
-                    println!("ImportService: Channel closed");
+                    info!("Channel closed");
                     break;
                 }
             }
@@ -230,7 +228,7 @@ impl ImportService {
             .await
             .map_err(|e| format!("Failed to mark album as importing: {}", e))?;
 
-        println!("ImportService: Marked album as 'importing' - starting pipeline");
+        info!("Marked album as 'importing' - starting pipeline");
 
         // Send started progress
         let _ = self.progress_tx.send(ImportProgress::Started {
@@ -244,8 +242,8 @@ impl ImportService {
             self.config.chunk_size_bytes,
         )?;
 
-        println!(
-            "ImportService: Will stream {} chunks across {} files",
+        info!(
+            "Will stream {} chunks across {} files",
             layout.total_chunks,
             layout.file_mappings.len()
         );
@@ -282,10 +280,7 @@ impl ImportService {
         let file_mappings = layout.file_mappings;
         let total_chunks = layout.total_chunks;
 
-        println!(
-            "ImportService: All {} chunks uploaded successfully",
-            total_chunks
-        );
+        info!("All {} chunks uploaded successfully", total_chunks);
 
         // ========== TEARDOWN ==========
 
@@ -310,10 +305,7 @@ impl ImportService {
             album_id: db_album.id,
         });
 
-        println!(
-            "ImportService: Import completed successfully for {}",
-            db_album.title
-        );
+        info!("Import completed successfully for {}", db_album.title);
         Ok(())
     }
 }

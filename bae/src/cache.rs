@@ -4,6 +4,7 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio::fs;
 use tokio::sync::RwLock;
+use tracing::{debug, error, info, warn};
 
 /// Errors that can occur during cache operations
 #[derive(Error, Debug)]
@@ -89,13 +90,13 @@ impl CacheManager {
             // Read chunk data from file
             match fs::read(&entry.file_path).await {
                 Ok(data) => {
-                    println!("CacheManager: Cache hit for chunk {}", chunk_id);
+                    debug!("Cache hit for chunk {}", chunk_id);
                     Ok(Some(data))
                 }
                 Err(e) => {
                     // File doesn't exist or can't be read - remove from cache
-                    println!(
-                        "CacheManager: Cache entry corrupted for chunk {}, removing: {}",
+                    warn!(
+                        "Cache entry corrupted for chunk {}, removing: {}",
                         chunk_id, e
                     );
                     let mut current_size = self.current_size.write().await;
@@ -105,7 +106,7 @@ impl CacheManager {
                 }
             }
         } else {
-            println!("CacheManager: Cache miss for chunk {}", chunk_id);
+            debug!("Cache miss for chunk {}", chunk_id);
             Ok(None)
         }
     }
@@ -139,8 +140,8 @@ impl CacheManager {
         entries.insert(chunk_id.to_string(), entry);
         *current_size += chunk_size;
 
-        println!(
-            "CacheManager: Cached chunk {} ({} bytes, total cache: {} bytes)",
+        debug!(
+            "Cached chunk {} ({} bytes, total cache: {} bytes)",
             chunk_id, chunk_size, *current_size
         );
 
@@ -175,8 +176,8 @@ impl CacheManager {
                             entries.insert(chunk_id, cache_entry);
                         }
                         Err(e) => {
-                            println!(
-                                "Warning: Failed to read metadata for cache file {}: {}",
+                            warn!(
+                                "Failed to read metadata for cache file {}: {}",
                                 path.display(),
                                 e
                             );
@@ -186,8 +187,8 @@ impl CacheManager {
             }
         }
 
-        println!(
-            "CacheManager: Loaded {} existing cache entries ({} bytes)",
+        info!(
+            "Loaded {} existing cache entries ({} bytes)",
             entries.len(),
             *current_size
         );
@@ -230,18 +231,15 @@ impl CacheManager {
             if let Some(entry) = entries.remove(&chunk_id) {
                 // Remove the file
                 if let Err(e) = fs::remove_file(&entry.file_path).await {
-                    println!(
-                        "Warning: Failed to remove evicted cache file {}: {}",
+                    warn!(
+                        "Failed to remove evicted cache file {}: {}",
                         entry.file_path.display(),
                         e
                     );
                 }
 
                 *current_size = current_size.saturating_sub(entry.size_bytes);
-                println!(
-                    "CacheManager: Evicted chunk {} ({} bytes)",
-                    chunk_id, entry.size_bytes
-                );
+                debug!("Evicted chunk {} ({} bytes)", chunk_id, entry.size_bytes);
             }
         }
 

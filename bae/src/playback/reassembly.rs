@@ -4,6 +4,7 @@ use crate::database::{DbChunk, DbTrackPosition};
 use crate::encryption::EncryptionService;
 use crate::library::LibraryManager;
 use futures::stream::{self, StreamExt};
+use tracing::{debug, info, warn};
 
 /// Reassemble chunks for a track into a continuous audio buffer
 /// Handles both regular tracks (individual files) and CUE/FLAC tracks (single file, multiple tracks)
@@ -15,7 +16,7 @@ pub async fn reassemble_track(
     encryption_service: &EncryptionService,
     chunk_size_bytes: usize,
 ) -> Result<Vec<u8>, String> {
-    println!("Reassembling chunks for track: {}", track_id);
+    info!("Reassembling chunks for track: {}", track_id);
 
     // Check if this is a CUE/FLAC track with track positions
     if let Some(track_position) = library_manager
@@ -23,7 +24,7 @@ pub async fn reassemble_track(
         .await
         .map_err(|e| format!("Database error: {}", e))?
     {
-        println!("CUE/FLAC track detected - using efficient chunk range streaming");
+        info!("CUE/FLAC track detected - using efficient chunk range streaming");
         return reassemble_cue_track(
             track_id,
             &track_position,
@@ -37,7 +38,7 @@ pub async fn reassemble_track(
     }
 
     // Fallback to regular file streaming for individual tracks
-    println!("Regular track - reassembling full file chunks");
+    info!("Regular track - reassembling full file chunks");
 
     // Get files for this track
     let files = library_manager
@@ -50,7 +51,7 @@ pub async fn reassemble_track(
 
     // Handle the first file (most tracks have one file)
     let file = &files[0];
-    println!(
+    debug!(
         "Processing file: {} ({} bytes)",
         file.original_filename, file.file_size
     );
@@ -64,7 +65,7 @@ pub async fn reassemble_track(
         return Err("No chunks found for file".to_string());
     }
 
-    println!("Found {} chunks to reassemble", chunks.len());
+    debug!("Found {} chunks to reassemble", chunks.len());
 
     // Sort chunks by index to ensure correct order
     let mut sorted_chunks = chunks;
@@ -104,11 +105,11 @@ pub async fn reassemble_track(
     // Reassemble chunks into audio data
     let mut audio_data = Vec::new();
     for (index, chunk_data) in indexed_chunks {
-        println!("Assembling chunk at index {}", index);
+        debug!("Assembling chunk at index {}", index);
         audio_data.extend_from_slice(&chunk_data);
     }
 
-    println!(
+    info!(
         "Successfully reassembled {} bytes of audio data",
         audio_data.len()
     );
@@ -126,7 +127,7 @@ async fn reassemble_cue_track(
     encryption_service: &EncryptionService,
     chunk_size_bytes: usize,
 ) -> Result<Vec<u8>, String> {
-    println!(
+    info!(
         "Streaming CUE/FLAC track: chunks {}-{}",
         track_position.start_chunk_index, track_position.end_chunk_index
     );
@@ -152,7 +153,7 @@ async fn reassemble_cue_track(
         .as_ref()
         .ok_or("No FLAC headers found in database")?;
 
-    println!("Using stored FLAC headers: {} bytes", flac_headers.len());
+    debug!("Using stored FLAC headers: {} bytes", flac_headers.len());
 
     // Get the album_id for this track
     let album_id = library_manager
@@ -172,7 +173,7 @@ async fn reassemble_cue_track(
     }
 
     let approximate_total_chunks = file.file_size / chunk_size_bytes as i64;
-    println!(
+    info!(
         "Downloading {} chunks instead of {} total chunks ({}% reduction)",
         chunks.len(),
         approximate_total_chunks,
@@ -221,11 +222,11 @@ async fn reassemble_cue_track(
 
     // Append track chunks in order
     for (index, chunk_data) in indexed_chunks {
-        println!("Assembling CUE track chunk at index {}", index);
+        debug!("Assembling CUE track chunk at index {}", index);
         audio_data.extend_from_slice(&chunk_data);
     }
 
-    println!(
+    info!(
         "Successfully assembled CUE track: {} bytes (headers + {} chunks)",
         audio_data.len(),
         chunk_count
@@ -246,11 +247,11 @@ async fn download_and_decrypt_chunk(
     // Check cache first
     let encrypted_data = match cache.get_chunk(&chunk.id).await {
         Ok(Some(cached_encrypted_data)) => {
-            println!("Cache hit for chunk: {}", chunk.id);
+            debug!("Cache hit for chunk: {}", chunk.id);
             cached_encrypted_data
         }
         Ok(None) => {
-            println!("Cache miss - downloading chunk from cloud: {}", chunk.id);
+            debug!("Cache miss - downloading chunk from cloud: {}", chunk.id);
             // Download from cloud storage
             let data = cloud_storage
                 .download_chunk(&chunk.storage_location)
@@ -259,12 +260,12 @@ async fn download_and_decrypt_chunk(
 
             // Cache the encrypted data for future use
             if let Err(e) = cache.put_chunk(&chunk.id, &data).await {
-                println!("Failed to cache chunk (non-fatal): {}", e);
+                warn!("Failed to cache chunk (non-fatal): {}", e);
             }
             data
         }
         Err(e) => {
-            println!("Cache error (continuing with download): {}", e);
+            warn!("Cache error (continuing with download): {}", e);
             // Download from cloud storage
             cloud_storage
                 .download_chunk(&chunk.storage_location)

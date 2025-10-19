@@ -3,6 +3,7 @@ use reqwest::{Client, Error as ReqwestError};
 use serde::Deserialize;
 use std::collections::HashMap;
 use thiserror::Error;
+use tracing::{error, warn};
 
 #[derive(Error, Debug)]
 pub enum DiscogsError {
@@ -248,8 +249,8 @@ impl DiscogsClient {
 
             let versions_response: MasterVersionsResponse = serde_json::from_str(&response_text)
                 .map_err(|e| {
-                    println!("JSON parsing error for master_id {}: {}", master_id, e);
-                    println!("Raw response: {}", response_text);
+                    error!("JSON parsing error for master_id {}: {}", master_id, e);
+                    error!("Raw response: {}", response_text);
                     e
                 })?;
 
@@ -268,17 +269,17 @@ impl DiscogsClient {
                 })
                 .collect())
         } else if response.status() == 429 {
-            println!("Rate limit hit for master_id {}", master_id);
+            warn!("Rate limit hit for master_id {}", master_id);
             Err(DiscogsError::RateLimit)
         } else if response.status() == 401 {
-            println!("Invalid API key for master_id {}", master_id);
+            error!("Invalid API key for master_id {}", master_id);
             Err(DiscogsError::InvalidApiKey)
         } else if response.status() == 404 {
-            println!("Master not found: {}", master_id);
+            warn!("Master not found: {}", master_id);
             Err(DiscogsError::NotFound)
         } else {
             let status = response.status();
-            println!("API error for master_id {}: Status {}", master_id, status);
+            error!("API error for master_id {}: Status {}", master_id, status);
             Err(DiscogsError::Request(
                 response.error_for_status().unwrap_err(),
             ))

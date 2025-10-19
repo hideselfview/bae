@@ -1,5 +1,6 @@
 use dioxus::desktop::{Config as DioxusConfig, WindowBuilder};
 use dioxus::prelude::*;
+use tracing::{error, info};
 
 mod album_import_context;
 mod app_context;
@@ -53,7 +54,7 @@ async fn create_cache_manager() -> cache::CacheManager {
         .await
         .expect("Failed to create cache manager");
 
-    println!("Main: Cache manager created");
+    info!("Cache manager created");
     cache_manager
 }
 
@@ -61,7 +62,7 @@ async fn create_cache_manager() -> cache::CacheManager {
 async fn create_cloud_storage_manager(
     config: &config::Config,
 ) -> cloud_storage::CloudStorageManager {
-    println!("Main: Initializing cloud storage...");
+    info!("Initializing cloud storage...");
 
     cloud_storage::CloudStorageManager::new(config.s3_config.clone())
         .await
@@ -72,22 +73,19 @@ async fn create_cloud_storage_manager(
 async fn create_database(config: &config::Config) -> database::Database {
     let library_path = config.get_library_path();
 
-    println!(
-        "Main: Creating library directory: {}",
-        library_path.display()
-    );
+    info!("Creating library directory: {}", library_path.display());
 
     std::fs::create_dir_all(&library_path).expect("Failed to create library directory");
 
     let db_path = library_path.join("library.db");
 
-    println!("Main: Initializing database at: {}", db_path.display());
+    info!("Initializing database at: {}", db_path.display());
 
     let database = database::Database::new(db_path.to_str().unwrap())
         .await
         .expect("Failed to create database");
 
-    println!("Main: Database created");
+    info!("Database created");
 
     database
 }
@@ -96,11 +94,11 @@ async fn create_database(config: &config::Config) -> database::Database {
 fn create_library_manager(database: database::Database) -> SharedLibraryManager {
     let library_manager = library::LibraryManager::new(database);
 
-    println!("Main: Library manager created");
+    info!("Library manager created");
 
     let shared_library = SharedLibraryManager::new(library_manager);
 
-    println!("Main: SharedLibraryManager created");
+    info!("SharedLibraryManager created");
 
     shared_library
 }
@@ -125,7 +123,7 @@ fn main() {
     let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
     let runtime_handle = runtime.handle().clone();
 
-    println!("Main: Building dependencies...");
+    info!("Building dependencies...");
 
     // Load application configuration (handles .env loading in debug builds)
     let config = config::Config::load();
@@ -196,14 +194,14 @@ fn main() {
 
     // Start the desktop app (this will run in the main thread)
     // The runtime stays alive for the app's lifetime (Dioxus launch() blocks main thread)
-    println!("Main: Starting Dioxus desktop app...");
+    info!("Starting Dioxus desktop app...");
 
     LaunchBuilder::desktop()
         .with_cfg(make_config())
         .with_context_provider(move || Box::new(app_context.clone()))
         .launch(App);
 
-    println!("Main: Dioxus desktop app quit");
+    info!("Dioxus desktop app quit");
 }
 
 /// Start the Subsonic API server
@@ -214,7 +212,7 @@ async fn start_subsonic_server(
     cloud_storage: cloud_storage::CloudStorageManager,
     chunk_size_bytes: usize,
 ) {
-    println!("Starting Subsonic API server...");
+    info!("Starting Subsonic API server...");
 
     let app = create_router(
         library_manager,
@@ -226,17 +224,17 @@ async fn start_subsonic_server(
 
     let listener = match tokio::net::TcpListener::bind("127.0.0.1:4533").await {
         Ok(listener) => {
-            println!("Subsonic API server listening on http://127.0.0.1:4533");
+            info!("Subsonic API server listening on http://127.0.0.1:4533");
             listener
         }
         Err(e) => {
-            println!("Failed to bind Subsonic server: {}", e);
+            error!("Failed to bind Subsonic server: {}", e);
             return;
         }
     };
 
     if let Err(e) = axum::serve(listener, app).await {
-        println!("Subsonic server error: {}", e);
+        error!("Subsonic server error: {}", e);
     }
 }
 

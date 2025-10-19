@@ -3,6 +3,7 @@ use aws_credential_types::Credentials;
 use aws_sdk_s3::{primitives::ByteStreamError, Client, Error as S3Error};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tracing::{debug, error, info};
 
 #[derive(Error, Debug)]
 pub enum CloudStorageError {
@@ -114,10 +115,10 @@ impl S3CloudStorage {
         if create_bucket {
             match client.head_bucket().bucket(&bucket_name).send().await {
                 Ok(_) => {
-                    println!("S3CloudStorage: Bucket '{}' already exists", bucket_name);
+                    info!("Bucket '{}' already exists", bucket_name);
                 }
                 Err(_) => {
-                    println!("S3CloudStorage: Creating bucket '{}'", bucket_name);
+                    info!("Creating bucket '{}'", bucket_name);
                     client
                         .create_bucket()
                         .bucket(&bucket_name)
@@ -126,10 +127,7 @@ impl S3CloudStorage {
                         .map_err(|e| {
                             CloudStorageError::SdkError(format!("Create bucket failed: {}", e))
                         })?;
-                    println!(
-                        "S3CloudStorage: Bucket '{}' created successfully",
-                        bucket_name
-                    );
+                    info!("Bucket '{}' created successfully", bucket_name);
                 }
             }
         }
@@ -159,11 +157,7 @@ impl CloudStorage for S3CloudStorage {
     async fn upload_chunk(&self, chunk_id: &str, data: &[u8]) -> Result<String, CloudStorageError> {
         let key = self.chunk_key(chunk_id);
 
-        println!(
-            "S3CloudStorage: Uploading chunk {} ({} bytes)",
-            chunk_id,
-            data.len()
-        );
+        debug!("Uploading chunk {} ({} bytes)", chunk_id, data.len());
 
         self.client
             .put_object()
@@ -176,10 +170,7 @@ impl CloudStorage for S3CloudStorage {
             .map_err(|e| CloudStorageError::SdkError(format!("Put object failed: {}", e)))?;
 
         let storage_location = format!("s3://{}/{}", self.bucket_name, key);
-        println!(
-            "S3CloudStorage: Successfully uploaded chunk to {}",
-            storage_location
-        );
+        debug!("Successfully uploaded chunk to {}", storage_location);
 
         Ok(storage_location)
     }
@@ -192,10 +183,7 @@ impl CloudStorage for S3CloudStorage {
                 CloudStorageError::Download(format!("Invalid S3 location: {}", storage_location))
             })?;
 
-        println!(
-            "S3CloudStorage: Downloading chunk from {}",
-            storage_location
-        );
+        debug!("Downloading chunk from {}", storage_location);
 
         let response = self
             .client
@@ -208,10 +196,7 @@ impl CloudStorage for S3CloudStorage {
 
         let data = response.body.collect().await?.into_bytes().to_vec();
 
-        println!(
-            "S3CloudStorage: Successfully downloaded {} bytes",
-            data.len()
-        );
+        debug!("Successfully downloaded {} bytes", data.len());
         Ok(data)
     }
 }

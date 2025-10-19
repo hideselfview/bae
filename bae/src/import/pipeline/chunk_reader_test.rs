@@ -4,6 +4,7 @@ use crate::import::pipeline::chunk_producer::produce_chunk_stream;
 use crate::import::service::DiscoveredFile;
 use std::fs;
 use tempfile::TempDir;
+use tracing::info;
 
 #[tokio::test]
 async fn test_produce_chunk_stream_exact_integration_test_scenario() {
@@ -37,10 +38,10 @@ async fn test_produce_chunk_stream_exact_integration_test_scenario() {
     let file3_path = temp_path.join("03_file3.flac");
     fs::write(&file3_path, &file3_data).expect("Failed to write file 3");
 
-    println!("Created test files:");
-    println!("  File 1: {} bytes", file1_data.len());
-    println!("  File 2: {} bytes", file2_data.len());
-    println!("  File 3: {} bytes", file3_data.len());
+    info!("Created test files:");
+    info!("  File 1: {} bytes", file1_data.len());
+    info!("  File 2: {} bytes", file2_data.len());
+    info!("  File 3: {} bytes", file3_data.len());
 
     let files = vec![
         DiscoveredFile {
@@ -72,9 +73,9 @@ async fn test_produce_chunk_stream_exact_integration_test_scenario() {
         }
     }
 
-    println!("\nReceived {} chunks:", chunks.len());
+    info!("\nReceived {} chunks:", chunks.len());
     for (i, chunk) in chunks.iter().enumerate() {
-        println!(
+        info!(
             "  Chunk {}: index={}, size={} bytes",
             i,
             chunk.chunk_index,
@@ -106,9 +107,9 @@ async fn test_produce_chunk_stream_exact_integration_test_scenario() {
 
     // THIS IS THE BUG: Chunk 6 should be 524,288 bytes (0.5MB)
     // But the integration test shows it's 626,688 bytes
-    println!("\nChunk 6 size: {} bytes", chunks[6].data.len());
-    println!("Expected: 524,288 bytes (0.5MB)");
-    println!(
+    info!("\nChunk 6 size: {} bytes", chunks[6].data.len());
+    info!("Expected: 524,288 bytes (0.5MB)");
+    info!(
         "Difference: {} bytes",
         chunks[6].data.len() as i64 - 524_288
     );
@@ -128,7 +129,7 @@ async fn test_produce_chunk_stream_exact_integration_test_scenario() {
     );
 
     // Verify chunk content matches original file patterns
-    println!("\nVerifying chunk content integrity...");
+    info!("\nVerifying chunk content integrity...");
 
     // Reassemble all data
     let mut reassembled = Vec::new();
@@ -157,7 +158,7 @@ async fn test_produce_chunk_stream_exact_integration_test_scenario() {
         "File 3 data should match"
     );
 
-    println!("✓ All chunk data verified!");
+    info!("✓ All chunk data verified!");
 }
 
 #[tokio::test]
@@ -197,9 +198,9 @@ async fn test_chunk_reading_respects_file_boundaries() {
         chunks.push(result.expect("Should not error"));
     }
 
-    println!("\nChunk layout:");
+    info!("\nChunk layout:");
     for (i, chunk) in chunks.iter().enumerate() {
-        println!("  Chunk {}: {} bytes", i, chunk.data.len());
+        info!("  Chunk {}: {} bytes", i, chunk.data.len());
     }
 
     // Expected chunks:

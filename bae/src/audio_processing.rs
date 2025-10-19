@@ -4,6 +4,7 @@ use symphonia::core::{
     meta::MetadataOptions, probe::Hint, units::Time,
 };
 use thiserror::Error;
+use tracing::debug;
 
 #[derive(Debug, Error)]
 pub enum AudioProcessingError {
@@ -30,8 +31,8 @@ impl AudioProcessor {
         start_time_ms: u64,
         end_time_ms: u64,
     ) -> Result<Vec<u8>, AudioProcessingError> {
-        println!(
-            "AudioProcessor: Extracting track from {}ms to {}ms",
+        debug!(
+            "Extracting track from {}ms to {}ms",
             start_time_ms, end_time_ms
         );
 
@@ -71,10 +72,7 @@ impl AudioProcessor {
         let start_sample = ((start_time_ms as f64 / 1000.0) * sample_rate) as u64;
         let end_sample = ((end_time_ms as f64 / 1000.0) * sample_rate) as u64;
 
-        println!(
-            "AudioProcessor: Seeking to sample {} ({}ms)",
-            start_sample, start_time_ms
-        );
+        debug!("Seeking to sample {} ({}ms)", start_sample, start_time_ms);
 
         // Seek to start position
         let seconds = (start_time_ms / 1000) as u8;
@@ -161,7 +159,7 @@ impl AudioProcessor {
             }
         }
 
-        println!("AudioProcessor: Extracted {} samples", audio_samples.len());
+        debug!("Extracted {} samples", audio_samples.len());
 
         // Convert samples back to bytes (simple PCM for now)
         // TODO: Re-encode as FLAC for better compression

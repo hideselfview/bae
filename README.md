@@ -60,6 +60,27 @@ cd bae && dx serve
 
 Dev mode activates automatically in debug builds when `.env` exists. Requires MinIO running locally and a valid Discogs API key. See [BAE_LIBRARY_CONFIGURATION.md](BAE_LIBRARY_CONFIGURATION.md) for details.
 
+## Logging
+
+bae uses structured logging with the `tracing` crate. Log levels can be controlled via the `RUST_LOG` environment variable:
+
+```bash
+# Show general information (default)
+RUST_LOG=info cargo run
+
+# Show detailed debugging information
+RUST_LOG=debug cargo run
+
+# Show debug logs only for the bae module
+RUST_LOG=bae=debug cargo run
+
+# Show debug logs only for specific modules
+RUST_LOG=bae::cache=debug,bae::import=info cargo run
+
+# Show all logs from all dependencies
+RUST_LOG=trace cargo run
+```
+
 ## Documentation
 
 - [TASKS.md](TASKS.md) - Implementation progress and task breakdown

@@ -3,11 +3,12 @@ use crate::database::DbAlbum;
 use crate::library_context::use_library_manager;
 use crate::Route;
 use dioxus::prelude::*;
+use tracing::debug;
 
 /// Library browser page
 #[component]
 pub fn Library() -> Element {
-    println!("Library: Component rendering");
+    debug!("Component rendering");
     let library_manager = use_library_manager();
     let mut albums = use_signal(Vec::<DbAlbum>::new);
     let mut filtered_albums = use_signal(Vec::<DbAlbum>::new);
@@ -17,10 +18,10 @@ pub fn Library() -> Element {
 
     // Load albums on component mount
     use_effect(move || {
-        println!("Library: Starting load_albums effect");
+        debug!("Starting load_albums effect");
         let library_manager = library_manager.clone();
         spawn(async move {
-            println!("Library: Inside async spawn, fetching albums");
+            debug!("Inside async spawn, fetching albums");
             loading.set(true);
             error.set(None);
 

@@ -5,6 +5,7 @@ use std::fs;
 
 use bae::models::DiscogsAlbum;
 use support::do_roundtrip;
+use tracing::{error, info};
 
 #[tokio::test]
 async fn test_roundtrip_vinyl() {
@@ -14,29 +15,29 @@ async fn test_roundtrip_vinyl() {
         generate_vinyl_album_files,
         16,
         |tracks| {
-            println!("Verifying NO duplicate track numbers...");
+            info!("Verifying NO duplicate track numbers...");
             let mut numbers: Vec<i32> = tracks.iter().filter_map(|t| t.track_number).collect();
             numbers.sort();
 
-            println!("Track numbers:");
+            info!("Track numbers:");
             for n in &numbers {
-                println!("  {}", n);
+                info!("  {}", n);
             }
 
             let has_dupes = numbers.windows(2).any(|w| w[0] == w[1]);
 
             if has_dupes {
-                println!("\n⚠️  DUPLICATE TRACK NUMBERS DETECTED!");
+                error!("\n⚠️  DUPLICATE TRACK NUMBERS DETECTED!");
                 let mut seen = std::collections::HashSet::new();
                 for num in &numbers {
                     if !seen.insert(num) {
-                        println!("  Duplicate: {}", num);
+                        error!("  Duplicate: {}", num);
                     }
                 }
                 panic!("FAILED: Duplicate track numbers! Vinyl sides (A1, B1) both became #1");
             }
 
-            println!("✅ All track numbers are unique despite vinyl side notation!");
+            info!("✅ All track numbers are unique despite vinyl side notation!");
         },
     )
     .await;

@@ -1,12 +1,13 @@
 use crate::album_import_context::AlbumImportContextProvider;
 use crate::{Route, FAVICON, MAIN_CSS, TAILWIND_CSS};
 use dioxus::prelude::*;
+use tracing::debug;
 
 use super::NowPlayingBar;
 
 #[component]
 pub fn App() -> Element {
-    println!("App: Rendering app component");
+    debug!("Rendering app component");
 
     rsx! {
         document::Link { rel: "icon", href: FAVICON }

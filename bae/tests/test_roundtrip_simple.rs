@@ -4,6 +4,7 @@ mod support;
 use std::{fs, path::PathBuf};
 
 use bae::models::{DiscogsAlbum, DiscogsTrack};
+use tracing::info;
 
 use crate::support::do_roundtrip;
 
@@ -16,9 +17,9 @@ async fn test_roundtrip_simple() {
         3,
         |tracks| {
             // Verify basic track info
-            println!("Tracks:");
+            info!("Tracks:");
             for track in tracks {
-                println!("  - {}", track.title);
+                info!("  - {}", track.title);
             }
         },
     )

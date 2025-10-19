@@ -9,6 +9,7 @@ use bae::library::LibraryManager;
 use bae::models::DiscogsAlbum;
 use std::sync::Arc;
 use tempfile::TempDir;
+use tracing::info;
 
 use super::MockCloudStorage;
 
@@ -26,10 +27,10 @@ pub async fn do_roundtrip<F, G>(
     F: FnOnce(&std::path::Path) -> Vec<Vec<u8>>,
     G: FnOnce(&[bae::database::DbTrack]),
 {
-    println!("\n=== {} ===\n", test_name);
+    info!("\n=== {} ===\n", test_name);
 
     // Setup directories
-    println!("Creating temp directories...");
+    info!("Creating temp directories...");
 
     let temp_root = TempDir::new().expect("Failed to create temp root");
     let album_dir = temp_root.path().join("album");
@@ -40,30 +41,30 @@ pub async fn do_roundtrip<F, G>(
     std::fs::create_dir_all(&db_dir).expect("Failed to create db dir");
     std::fs::create_dir_all(&cache_dir_path).expect("Failed to create cache dir");
 
-    println!("Directories created");
+    info!("Directories created");
 
     // Generate test files
-    println!("Generating test files...");
+    info!("Generating test files...");
 
     let file_data = generate_files(&album_dir);
 
-    println!("Generated {} files", file_data.len());
+    info!("Generated {} files", file_data.len());
 
     // Setup services
-    println!("Setting up services...");
+    info!("Setting up services...");
 
     let chunk_size_bytes = 1024 * 1024;
     let mock_storage = Arc::new(MockCloudStorage::new());
     let cloud_storage = CloudStorageManager::from_storage(mock_storage.clone());
 
-    println!("Creating database...");
+    info!("Creating database...");
 
     let db_file = db_dir.join("test.db");
     let database = Database::new(&format!("sqlite://{}", db_file.display()))
         .await
         .expect("Failed to create database");
 
-    println!("Creating encryption service...");
+    info!("Creating encryption service...");
 
     let encryption_service = EncryptionService::new_with_key(vec![0u8; 32]);
 
@@ -96,11 +97,11 @@ pub async fn do_roundtrip<F, G>(
         import_config,
     );
 
-    println!("Services initialized");
+    info!("Services initialized");
 
     // Import
-    println!("Starting import...");
-    println!("Sending import request...");
+    info!("Starting import...");
+    info!("Sending import request...");
 
     let album_id = import_handle
         .send_request(ImportRequest::FromFolder {
@@ -110,22 +111,22 @@ pub async fn do_roundtrip<F, G>(
         .await
         .expect("Failed to send import request");
 
-    println!("Request sent, got album_id: {}", album_id);
-    println!("Subscribing to album progress...");
+    info!("Request sent, got album_id: {}", album_id);
+    info!("Subscribing to album progress...");
 
     let mut progress_rx = import_handle.subscribe_album(album_id);
 
     // Wait for completion
-    println!("Waiting for import to complete...");
+    info!("Waiting for import to complete...");
 
     let mut progress_count = 0;
     while let Some(progress) = progress_rx.recv().await {
         progress_count += 1;
 
-        println!("[Progress {}] {:?}", progress_count, progress);
+        info!("[Progress {}] {:?}", progress_count, progress);
 
         if matches!(progress, bae::import::ImportProgress::Complete { .. }) {
-            println!("✅ Import completed!");
+            info!("✅ Import completed!");
             break;
         }
         if let bae::import::ImportProgress::Failed { error, .. } = progress {
@@ -133,13 +134,13 @@ pub async fn do_roundtrip<F, G>(
         }
     }
 
-    println!(
+    info!(
         "Progress monitoring ended (received {} events)",
         progress_count
     );
 
     // Verify database state
-    println!("Verifying database...");
+    info!("Verifying database...");
 
     let albums = library_manager
         .get_albums()
@@ -164,7 +165,7 @@ pub async fn do_roundtrip<F, G>(
     verify_tracks(&tracks);
 
     // Verify reassembly (spot check up to first 3 tracks)
-    println!("Verifying reassembly...");
+    info!("Verifying reassembly...");
 
     for (i, (track, expected_data)) in tracks.iter().zip(&file_data).take(3).enumerate() {
         let files = library_manager
@@ -204,5 +205,5 @@ pub async fn do_roundtrip<F, G>(
         );
     }
 
-    println!("✅ Test passed!\n");
+    info!("✅ Test passed!\n");
 }

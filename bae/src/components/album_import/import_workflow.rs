@@ -5,6 +5,7 @@ use crate::Route;
 use dioxus::prelude::*;
 use rfd::AsyncFileDialog;
 use std::path::{Path, PathBuf};
+use tracing::{error, info};
 
 /// Import workflow functions using the LibraryManager
 /// Callback for when user selects a folder for import
@@ -41,7 +42,7 @@ pub fn on_folder_selected(folder_path: String) -> Result<(), String> {
         return Err("No audio files found in selected folder".to_string());
     }
 
-    println!("Selected folder: {} (contains audio files)", folder_path);
+    info!("Selected folder: {} (contains audio files)", folder_path);
     Ok(())
 }
 
@@ -86,7 +87,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                 let folder = folder.clone();
 
                 spawn(async move {
-                    println!("Import started for {} from {}", item.title(), folder);
+                    info!("Import started for {} from {}", item.title(), folder);
 
                     // Send import request to service (validates and queues)
                     let request = ImportRequest::FromFolder {
@@ -96,10 +97,10 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
 
                     match import_service.send_request(request).await {
                         Ok(album_id) => {
-                            println!("Album queued for import with ID: {}", album_id);
+                            info!("Album queued for import with ID: {}", album_id);
                         }
                         Err(e) => {
-                            println!("Failed to validate/queue import: {}", e);
+                            error!("Failed to validate/queue import: {}", e);
                             current_step.set(ImportStep::ImportError(e));
                             return;
                         }

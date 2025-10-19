@@ -3,6 +3,7 @@ use aes_gcm::{
     Aes256Gcm, Key, Nonce,
 };
 use thiserror::Error;
+use tracing::{error, info};
 
 #[derive(Error, Debug)]
 pub enum EncryptionError {
@@ -38,7 +39,7 @@ impl std::fmt::Debug for EncryptionService {
 impl EncryptionService {
     /// Create a new encryption service, loading the key from config
     pub fn new(config: &crate::config::Config) -> Result<Self, EncryptionError> {
-        println!("EncryptionService: Loading master key...");
+        info!("Loading master key...");
 
         // Decode hex key
         let key_bytes = hex::decode(&config.encryption_key)
