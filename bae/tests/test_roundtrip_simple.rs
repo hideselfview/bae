@@ -110,5 +110,6 @@ fn generate_test_file(
     }
 
     fs::write(&file_path, &data).expect("Failed to write test file");
+
     (file_path, data)
 }
