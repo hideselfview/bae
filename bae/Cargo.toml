@@ -47,8 +47,13 @@ tempfile = "3.8"
 
 # Integration tests that need testing APIs
 [[test]]
-name = "import_reassembly_test"
-path = "tests/import_reassembly_test.rs"
+name = "test_roundtrip_simple"
+path = "tests/test_roundtrip_simple.rs"
+required-features = ["integration-test-utils"]
+
+[[test]]
+name = "test_roundtrip_vinyl"
+path = "tests/test_roundtrip_vinyl.rs"
 required-features = ["integration-test-utils"]
 
 [features]
