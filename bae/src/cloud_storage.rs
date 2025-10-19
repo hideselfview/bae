@@ -240,6 +240,7 @@ impl CloudStorageManager {
     }
 
     /// Create a cloud storage manager from any CloudStorage implementation (for testing)
+    #[cfg(feature = "integration-test-utils")]
     pub fn from_storage(storage: std::sync::Arc<dyn CloudStorage>) -> Self {
         CloudStorageManager { storage }
     }
@@ -259,74 +260,5 @@ impl CloudStorageManager {
         storage_location: &str,
     ) -> Result<Vec<u8>, CloudStorageError> {
         self.storage.download_chunk(storage_location).await
-    }
-}
-
-/// Mock cloud storage for testing (always available for integration tests)
-pub mod mock {
-    use super::*;
-    use std::collections::HashMap;
-    use std::sync::Mutex;
-
-    pub struct MockCloudStorage {
-        chunks: Mutex<HashMap<String, Vec<u8>>>,
-    }
-
-    impl MockCloudStorage {
-        pub fn new() -> Self {
-            MockCloudStorage {
-                chunks: Mutex::new(HashMap::new()),
-            }
-        }
-
-        pub fn chunk_count(&self) -> usize {
-            self.chunks.lock().unwrap().len()
-        }
-
-        pub fn get_chunk_by_location(&self, location: &str) -> Option<Vec<u8>> {
-            self.chunks.lock().unwrap().get(location).cloned()
-        }
-
-        pub fn list_all_chunks(&self) -> Vec<String> {
-            self.chunks.lock().unwrap().keys().cloned().collect()
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl CloudStorage for MockCloudStorage {
-        async fn upload_chunk(
-            &self,
-            chunk_id: &str,
-            data: &[u8],
-        ) -> Result<String, CloudStorageError> {
-            // Mimic the S3 storage location format: s3://bucket/chunks/{shard}/{chunk_id}.enc
-            let location = format!(
-                "s3://test-bucket/chunks/{}/{}/{}.enc",
-                &chunk_id[0..2],
-                &chunk_id[2..4],
-                chunk_id
-            );
-
-            self.chunks
-                .lock()
-                .unwrap()
-                .insert(location.clone(), data.to_vec());
-
-            Ok(location)
-        }
-
-        async fn download_chunk(
-            &self,
-            storage_location: &str,
-        ) -> Result<Vec<u8>, CloudStorageError> {
-            self.chunks
-                .lock()
-                .unwrap()
-                .get(storage_location)
-                .cloned()
-                .ok_or_else(|| {
-                    CloudStorageError::Download(format!("Chunk not found: {}", storage_location))
-                })
-        }
     }
 }

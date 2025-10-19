@@ -45,9 +45,16 @@ rodio = "0.21"
 [dev-dependencies]
 tempfile = "3.8"
 
+# Integration tests that need testing APIs
+[[test]]
+name = "import_reassembly_test"
+path = "tests/import_reassembly_test.rs"
+required-features = ["integration-test-utils"]
+
 [features]
 default = ["desktop"]
 desktop = ["dioxus/desktop"]
+integration-test-utils = []  # Feature for integration test helper APIs
 
 [profile]
 

@@ -7,30 +7,7 @@
 #[cfg(test)]
 use super::*;
 
-#[cfg(test)]
-mod chunk_reading {
-    // use super::*;
-
-    #[tokio::test]
-    #[ignore] // TODO: Implement
-    async fn test_produce_chunk_stream_single_file() {
-        // TODO: Test reading a single file into chunks
-        // Create temp file, read it via produce_chunk_stream, verify chunks
-    }
-
-    #[tokio::test]
-    #[ignore] // TODO: Implement
-    async fn test_produce_chunk_stream_multiple_files() {
-        // TODO: Test reading multiple files as continuous stream
-        // Verify chunks can span file boundaries
-    }
-
-    #[tokio::test]
-    #[ignore] // TODO: Implement
-    async fn test_finalize_chunk_creates_unique_ids() {
-        // TODO: Verify each chunk gets unique UUID
-    }
-}
+// Chunk reading tests moved to chunk_producer_test.rs
 
 #[cfg(test)]
 mod encryption {

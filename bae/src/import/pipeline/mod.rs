@@ -16,20 +16,23 @@ mod tests;
 #[cfg(test)]
 mod chunk_reader_test;
 
+#[cfg(test)]
+mod chunk_producer_test;
+
+pub mod chunk_producer;
+
 use crate::cloud_storage::CloudStorageManager;
 use crate::database::DbChunk;
 use crate::encryption::{EncryptedChunk, EncryptionService};
 use crate::import::album_layout::TrackProgressTracker;
-use crate::import::service::{DiscoveredFile, ImportConfig};
+use crate::import::service::ImportConfig;
 use crate::import::types::ImportProgress;
 use crate::library::LibraryManager;
 use futures::stream::{Stream, StreamExt};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
-use tokio::io::{AsyncReadExt, BufReader};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
-use uuid::Uuid;
 
 // ============================================================================
 // Public API
@@ -37,15 +40,17 @@ use uuid::Uuid;
 
 /// Build the complete streaming pipeline: read → encrypt → upload → persist.
 ///
-/// Returns a stream of results, one per chunk processed. Caller drives the stream
-/// by collecting or folding. This is the only public function in this module.
-/// All pipeline stages and data structures are private implementation details.
+/// Returns a tuple of (chunk_tx, stream) where:
+/// - chunk_tx: Sender for chunk data that should be spawned separately
+/// - stream: Stream of results, one per chunk processed
+///
+/// Caller is responsible for spawning the chunk producer task using the returned chunk_tx.
+/// This separation allows for better control over the producer lifecycle.
 ///
 /// Using `impl Stream` keeps everything stack-allocated with static dispatch,
 /// avoiding heap allocation and virtual calls that `BoxStream` would require.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_pipeline(
-    folder_files: Vec<DiscoveredFile>,
     config: ImportConfig,
     album_id: String,
     encryption_service: EncryptionService,
@@ -54,7 +59,10 @@ pub(super) fn build_pipeline(
     progress_tracker: Arc<TrackProgressTracker>,
     progress_tx: mpsc::UnboundedSender<ImportProgress>,
     total_chunks: usize,
-) -> impl Stream<Item = Result<(), String>> {
+) -> (
+    mpsc::Sender<Result<ChunkData, String>>,
+    impl Stream<Item = Result<(), String>>,
+) {
     // Shared state for tracking progress
     let completed_chunks = Arc::new(Mutex::new(HashSet::new()));
     let completed_tracks = Arc::new(Mutex::new(HashSet::new()));
@@ -62,15 +70,8 @@ pub(super) fn build_pipeline(
     // Stage 1: Read files and stream chunks (bounded channel for backpressure)
     let (chunk_tx, chunk_rx) = mpsc::channel::<Result<ChunkData, String>>(10);
 
-    // Spawn reader task that streams chunks as they're produced
-    tokio::spawn(produce_chunk_stream(
-        folder_files,
-        config.chunk_size_bytes,
-        chunk_tx,
-    ));
-
     // Stage 2: Consume chunks from channel and encrypt (bounded CPU via spawn_blocking)
-    ReceiverStream::new(chunk_rx)
+    let stream = ReceiverStream::new(chunk_rx)
         .map(move |chunk_data_result| {
             let encryption_service = encryption_service.clone();
             async move {
@@ -116,7 +117,9 @@ pub(super) fn build_pipeline(
                 .await
             }
         })
-        .buffer_unordered(10) // Allow some parallelism for DB writes
+        .buffer_unordered(10); // Allow some parallelism for DB writes
+
+    (chunk_tx, stream)
 }
 
 // ============================================================================
@@ -165,85 +168,6 @@ pub(super) struct UploadedChunk {
 // ============================================================================
 // Pipeline Stage Functions
 // ============================================================================
-
-/// Read files sequentially and stream chunks as they're produced.
-///
-/// Treats all files as a concatenated byte stream, dividing it into fixed-size chunks.
-/// Chunks are sent to the channel as soon as they're full, allowing downstream
-/// encryption and upload to start immediately without buffering the entire album.
-///
-/// Files don't align to chunk boundaries - a chunk may contain data from multiple files.
-pub(super) async fn produce_chunk_stream(
-    files: Vec<DiscoveredFile>,
-    chunk_size: usize,
-    chunk_tx: mpsc::Sender<Result<ChunkData, String>>,
-) {
-    let mut current_chunk_buffer = Vec::with_capacity(chunk_size);
-    let mut current_chunk_index = 0i32;
-
-    for file in files {
-        let file_handle = match tokio::fs::File::open(&file.path).await {
-            Ok(f) => f,
-            Err(e) => {
-                let _ = chunk_tx
-                    .send(Err(format!("Failed to open file {:?}: {}", file.path, e)))
-                    .await;
-                return;
-            }
-        };
-
-        let mut reader = BufReader::new(file_handle);
-
-        loop {
-            let space_remaining = chunk_size - current_chunk_buffer.len();
-            let mut temp_buffer = vec![0u8; space_remaining];
-
-            let bytes_read = match reader.read(&mut temp_buffer).await {
-                Ok(n) => n,
-                Err(e) => {
-                    let _ = chunk_tx
-                        .send(Err(format!("Failed to read from file: {}", e)))
-                        .await;
-                    return;
-                }
-            };
-
-            if bytes_read == 0 {
-                // EOF - move to next file
-                break;
-            }
-
-            // Add the bytes we read to current chunk
-            current_chunk_buffer.extend_from_slice(&temp_buffer[..bytes_read]);
-
-            // If chunk is full, send it and start a new one
-            if current_chunk_buffer.len() == chunk_size {
-                let chunk = finalize_chunk(current_chunk_index, current_chunk_buffer);
-                if chunk_tx.send(Ok(chunk)).await.is_err() {
-                    // Receiver dropped, stop reading
-                    return;
-                }
-                current_chunk_index += 1;
-                current_chunk_buffer = Vec::with_capacity(chunk_size);
-            }
-        }
-    }
-
-    // Send final partial chunk if any data remains
-    if !current_chunk_buffer.is_empty() {
-        let chunk = finalize_chunk(current_chunk_index, current_chunk_buffer);
-        let _ = chunk_tx.send(Ok(chunk)).await;
-    }
-}
-
-/// Finalize a chunk by creating ChunkData with a unique ID.
-pub(super) fn finalize_chunk(chunk_index: i32, data: Vec<u8>) -> ChunkData {
-    ChunkData {
-        chunk_id: Uuid::new_v4().to_string(),
-        chunk_index,
-        data,
-    }
-}
 
 /// Encrypt a chunk using AES-256-GCM.
 ///

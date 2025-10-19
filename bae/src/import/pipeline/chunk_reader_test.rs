@@ -1,5 +1,7 @@
 /// Unit tests specifically for chunk reading logic
 use super::*;
+use crate::import::pipeline::chunk_producer::produce_chunk_stream;
+use crate::import::service::DiscoveredFile;
 use std::fs;
 use tempfile::TempDir;
 
@@ -43,15 +45,15 @@ async fn test_produce_chunk_stream_exact_integration_test_scenario() {
     let files = vec![
         DiscoveredFile {
             path: file1_path,
-            size: 2_097_152,
+            size: 2_097_152u64,
         },
         DiscoveredFile {
             path: file2_path,
-            size: 3_145_728,
+            size: 3_145_728u64,
         },
         DiscoveredFile {
             path: file3_path,
-            size: 1_572_864,
+            size: 1_572_864u64,
         },
     ];
 
@@ -179,11 +181,11 @@ async fn test_chunk_reading_respects_file_boundaries() {
     let files = vec![
         DiscoveredFile {
             path: file1_path,
-            size: 1500,
+            size: 1500u64,
         },
         DiscoveredFile {
             path: file2_path,
-            size: 1200,
+            size: 1200u64,
         },
     ];
 

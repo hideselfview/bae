@@ -61,11 +61,11 @@ impl ImportHandle {
                 let (db_album, db_tracks) = album_track_creator::parse_discogs_album(&album)?;
 
                 // 2. Discover files
-                let folder_files = discover_folder_files(&folder)?;
+                let discovered_files = discover_folder_files(&folder)?;
 
                 // 3. Validate track-to-file mapping
                 let tracks_to_files =
-                    track_file_mapper::map_tracks_to_files(&db_tracks, &folder_files).await?;
+                    track_file_mapper::map_tracks_to_files(&db_tracks, &discovered_files).await?;
 
                 // 4. Insert album + tracks with status='queued'
                 library_manager
@@ -87,7 +87,7 @@ impl ImportHandle {
                     .send(ValidatedImport {
                         db_album,
                         tracks_to_files,
-                        folder_files,
+                        discovered_files,
                     })
                     .map_err(|_| "Failed to queue validated album for import".to_string())?;
 
@@ -131,7 +131,7 @@ pub struct ImportConfig {
 struct ValidatedImport {
     db_album: DbAlbum,
     tracks_to_files: Vec<TrackSourceFile>,
-    folder_files: Vec<DiscoveredFile>,
+    discovered_files: Vec<DiscoveredFile>,
 }
 
 /// Import service that orchestrates the import workflow on the shared runtime
@@ -221,7 +221,7 @@ impl ImportService {
         let ValidatedImport {
             db_album,
             tracks_to_files,
-            folder_files,
+            discovered_files,
         } = validated;
 
         // Mark album as importing now that pipeline is starting
@@ -239,7 +239,7 @@ impl ImportService {
 
         // Analyze album layout: files → chunks → tracks
         let layout = AlbumLayout::analyze(
-            &folder_files,
+            &discovered_files,
             &tracks_to_files,
             self.config.chunk_size_bytes,
         )?;
@@ -253,8 +253,7 @@ impl ImportService {
         // ========== STREAMING PIPELINE ==========
         // Read → Encrypt → Upload → Persist (bounded parallelism at each stage)
 
-        let results: Vec<_> = pipeline::build_pipeline(
-            folder_files.clone(),
+        let (chunk_tx, pipeline_stream) = pipeline::build_pipeline(
             self.config.clone(),
             db_album.id.clone(),
             self.encryption_service.clone(),
@@ -263,9 +262,17 @@ impl ImportService {
             Arc::new(layout.progress_tracker),
             self.progress_tx.clone(),
             layout.total_chunks,
-        )
-        .collect()
-        .await;
+        );
+
+        // Spawn chunk producer task
+        tokio::spawn(pipeline::chunk_producer::produce_chunk_stream(
+            discovered_files.clone(),
+            self.config.chunk_size_bytes,
+            chunk_tx,
+        ));
+
+        // Wait for the pipeline to complete
+        let results: Vec<_> = pipeline_stream.collect().await;
 
         // Check for errors (fail fast on first error)
         for result in results {
@@ -315,7 +322,7 @@ impl ImportService {
 // Validation Helper Functions
 // ============================================================================
 
-/// File discovered during initial filesystem scan.
+/// File discovered during scan of album source folder.
 ///
 /// Created during validation phase when we traverse the album folder once.
 /// Used to calculate chunk layout and feed the reader task.
