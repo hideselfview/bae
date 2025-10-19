@@ -1,58 +1,17 @@
 use bae::cache::CacheManager;
-use bae::cloud_storage::{CloudStorage, CloudStorageError, CloudStorageManager};
+use bae::cloud_storage::CloudStorageManager;
 use bae::database::Database;
 use bae::encryption::EncryptionService;
 use bae::import::{ImportConfig, ImportRequest, ImportService};
 use bae::library::LibraryManager;
 use bae::models::{DiscogsAlbum, DiscogsTrack};
-use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tempfile::TempDir;
 
-/// Mock cloud storage for integration tests
-struct MockCloudStorage {
-    chunks: Mutex<HashMap<String, Vec<u8>>>,
-}
-
-impl MockCloudStorage {
-    fn new() -> Self {
-        MockCloudStorage {
-            chunks: Mutex::new(HashMap::new()),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl CloudStorage for MockCloudStorage {
-    async fn upload_chunk(&self, chunk_id: &str, data: &[u8]) -> Result<String, CloudStorageError> {
-        let location = format!(
-            "s3://test-bucket/chunks/{}/{}/{}.enc",
-            &chunk_id[0..2],
-            &chunk_id[2..4],
-            chunk_id
-        );
-
-        self.chunks
-            .lock()
-            .unwrap()
-            .insert(location.clone(), data.to_vec());
-
-        Ok(location)
-    }
-
-    async fn download_chunk(&self, storage_location: &str) -> Result<Vec<u8>, CloudStorageError> {
-        self.chunks
-            .lock()
-            .unwrap()
-            .get(storage_location)
-            .cloned()
-            .ok_or_else(|| {
-                CloudStorageError::Download(format!("Chunk not found: {}", storage_location))
-            })
-    }
-}
+mod support;
+use support::MockCloudStorage;
 
 /// Generate a test file with a repeating byte pattern
 fn generate_test_file(
