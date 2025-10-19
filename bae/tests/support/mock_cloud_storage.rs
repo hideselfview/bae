@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 /// Mock cloud storage for integration tests
-/// 
+///
 /// Stores chunks in memory instead of uploading to S3.
 /// Useful for testing without external dependencies.
 pub struct MockCloudStorage {
