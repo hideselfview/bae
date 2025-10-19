@@ -58,10 +58,22 @@ impl AlbumLayout {
 /// Built before pipeline starts by mapping file ranges to chunk indices.
 /// Used during pipeline to determine when a track is complete (all its chunks uploaded).
 ///
-/// Example:
+/// Example structure:
 /// ```
-/// chunk_to_track: { 0 -> "track-id-1", 1 -> "track-id-1", 2 -> "track-id-2", ... }
-/// track_chunk_counts: { "track-id-1" -> 2, "track-id-2" -> 3, ... }
+/// use std::collections::HashMap;
+///
+/// // Maps chunk index to track ID
+/// let chunk_to_track: HashMap<i32, String> = [
+///     (0, "track-id-1".to_string()),
+///     (1, "track-id-1".to_string()),
+///     (2, "track-id-2".to_string()),
+/// ].into();
+///
+/// // Maps track ID to number of chunks
+/// let track_chunk_counts: HashMap<String, usize> = [
+///     ("track-id-1".to_string(), 2),
+///     ("track-id-2".to_string(), 3),
+/// ].into();
 /// ```
 pub struct TrackProgressTracker {
     pub chunk_to_track: HashMap<i32, String>,
