@@ -4,11 +4,13 @@ mod support;
 use std::fs;
 
 use bae::models::DiscogsAlbum;
-use support::do_roundtrip;
+use support::{do_roundtrip, tracing_init};
 use tracing::{error, info};
 
 #[tokio::test]
 async fn test_roundtrip_vinyl() {
+    tracing_init();
+
     do_roundtrip(
         "Vinyl Album with Side Notation (A1-A7, B1-B9)",
         load_vinyl_album_fixture(),

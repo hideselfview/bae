@@ -6,10 +6,12 @@ use std::{fs, path::PathBuf};
 use bae::models::{DiscogsAlbum, DiscogsTrack};
 use tracing::info;
 
-use crate::support::do_roundtrip;
+use crate::support::{do_roundtrip, tracing_init};
 
 #[tokio::test]
 async fn test_roundtrip_simple() {
+    tracing_init();
+
     do_roundtrip(
         "Simple 3-Track Album Test",
         create_test_discogs_album(),
