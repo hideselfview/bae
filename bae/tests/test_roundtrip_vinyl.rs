@@ -1,4 +1,4 @@
-#![cfg(feature = "integration-test-utils")]
+#![cfg(feature = "test-utils")]
 
 mod support;
 use std::fs;

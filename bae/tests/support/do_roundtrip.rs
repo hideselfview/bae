@@ -1,4 +1,4 @@
-#![cfg(feature = "integration-test-utils")]
+#![cfg(feature = "test-utils")]
 
 use bae::cache::CacheManager;
 use bae::cloud_storage::CloudStorageManager;

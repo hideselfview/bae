@@ -50,17 +50,17 @@ tempfile = "3.8"
 [[test]]
 name = "test_roundtrip_simple"
 path = "tests/test_roundtrip_simple.rs"
-required-features = ["integration-test-utils"]
+required-features = ["test-utils"]
 
 [[test]]
 name = "test_roundtrip_vinyl"
 path = "tests/test_roundtrip_vinyl.rs"
-required-features = ["integration-test-utils"]
+required-features = ["test-utils"]
 
 [features]
 default = ["desktop"]
 desktop = ["dioxus/desktop"]
-integration-test-utils = []  # Feature for integration test helper APIs
+test-utils = []  # Feature for test helper APIs
 
 [profile]
 
