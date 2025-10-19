@@ -26,7 +26,7 @@ async fn test_roundtrip_simple() {
 }
 
 /// Create mock Discogs metadata for testing
-pub fn create_test_discogs_album() -> DiscogsAlbum {
+fn create_test_discogs_album() -> DiscogsAlbum {
     use bae::models::DiscogsMaster;
 
     DiscogsAlbum::Master(DiscogsMaster {
@@ -57,7 +57,7 @@ pub fn create_test_discogs_album() -> DiscogsAlbum {
 }
 
 /// Generate simple test files
-pub fn generate_simple_test_files(dir: &std::path::Path) -> Vec<Vec<u8>> {
+fn generate_simple_test_files(dir: &std::path::Path) -> Vec<Vec<u8>> {
     let pattern_ascending: Vec<u8> = (0..=255).collect();
     let pattern_descending: Vec<u8> = (0..=255).rev().collect();
     let pattern_evens: Vec<u8> = (0..=127).map(|i| i * 2).collect();

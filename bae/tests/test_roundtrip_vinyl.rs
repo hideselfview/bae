@@ -43,7 +43,7 @@ async fn test_roundtrip_vinyl() {
 }
 
 /// Load vinyl album fixture with vinyl side notation (A1-A7, B1-B9)
-pub fn load_vinyl_album_fixture() -> DiscogsAlbum {
+fn load_vinyl_album_fixture() -> DiscogsAlbum {
     use bae::models::DiscogsMaster;
 
     let json = std::fs::read_to_string("tests/fixtures/vinyl_master_test.json")
@@ -54,7 +54,7 @@ pub fn load_vinyl_album_fixture() -> DiscogsAlbum {
 }
 
 /// Generate vinyl album test files (16 files with varied sizes + non-audio files)
-pub fn generate_vinyl_album_files(dir: &std::path::Path) -> Vec<Vec<u8>> {
+fn generate_vinyl_album_files(dir: &std::path::Path) -> Vec<Vec<u8>> {
     let files = vec![
         ("01 Track A1.flac", 14_832_725),
         ("02 Track A2.flac", 36_482_083),
