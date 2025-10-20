@@ -24,13 +24,10 @@ pub mod chunk_producer;
 use crate::cloud_storage::CloudStorageManager;
 use crate::database::DbChunk;
 use crate::encryption::{EncryptedChunk, EncryptionService};
-use crate::import::album_layout::TrackProgressTracker;
+use crate::import::progress_emitter::ImportProgressEmitter;
 use crate::import::service::ImportConfig;
-use crate::import::types::ImportProgress;
 use crate::library::LibraryManager;
 use futures::stream::{Stream, StreamExt};
-use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -49,24 +46,17 @@ use tokio_stream::wrappers::ReceiverStream;
 ///
 /// Using `impl Stream` keeps everything stack-allocated with static dispatch,
 /// avoiding heap allocation and virtual calls that `BoxStream` would require.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn build_pipeline(
     config: ImportConfig,
     album_id: String,
     encryption_service: EncryptionService,
     cloud_storage: CloudStorageManager,
     library_manager: LibraryManager,
-    progress_tracker: Arc<TrackProgressTracker>,
-    progress_tx: mpsc::UnboundedSender<ImportProgress>,
-    total_chunks: usize,
+    progress_emitter: ImportProgressEmitter,
 ) -> (
     mpsc::Sender<Result<ChunkData, String>>,
     impl Stream<Item = Result<(), String>>,
 ) {
-    // Shared state for tracking progress
-    let completed_chunks = Arc::new(Mutex::new(HashSet::new()));
-    let completed_tracks = Arc::new(Mutex::new(HashSet::new()));
-
     // Stage 1: Read files and stream chunks (bounded channel for backpressure)
     let (chunk_tx, chunk_rx) = mpsc::channel::<Result<ChunkData, String>>(10);
 
@@ -98,21 +88,14 @@ pub(super) fn build_pipeline(
         .map(move |upload_result| {
             let album_id = album_id.clone();
             let library_manager = library_manager.clone();
-            let progress_tracker = progress_tracker.clone();
-            let completed_chunks = completed_chunks.clone();
-            let completed_tracks = completed_tracks.clone();
-            let progress_tx = progress_tx.clone();
+            let progress_emitter = progress_emitter.clone();
 
             async move {
                 persist_and_track_progress(
                     upload_result,
                     &album_id,
                     &library_manager,
-                    &progress_tracker,
-                    &completed_chunks,
-                    &completed_tracks,
-                    &progress_tx,
-                    total_chunks,
+                    &progress_emitter,
                 )
                 .await
             }
@@ -246,102 +229,32 @@ pub(super) async fn persist_chunk(
 /// Final stage of the pipeline. Saves chunk metadata to DB and emits progress events.
 /// Checks if this chunk completes a track, marking it playable and emitting TrackComplete.
 /// This is where the streaming pipeline meets the database and UI.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn persist_and_track_progress(
     upload_result: Result<UploadedChunk, String>,
     album_id: &str,
     library_manager: &LibraryManager,
-    progress_tracker: &TrackProgressTracker,
-    completed_chunks: &Arc<Mutex<HashSet<i32>>>,
-    completed_tracks: &Arc<Mutex<HashSet<String>>>,
-    progress_tx: &mpsc::UnboundedSender<ImportProgress>,
-    total_chunks: usize,
+    progress_emitter: &ImportProgressEmitter,
 ) -> Result<(), String> {
     let uploaded_chunk = upload_result?;
 
     // Persist chunk to database
     persist_chunk(&uploaded_chunk, album_id, library_manager).await?;
 
-    // Track completion - check ALL tracks since buffer_unordered means any track could complete
-    let (newly_completed_tracks, progress_update) = {
-        let mut completed = completed_chunks.lock().unwrap();
-        let mut already_completed = completed_tracks.lock().unwrap();
+    // Track progress and get newly completed tracks
+    let newly_completed_tracks = progress_emitter.on_chunk_complete(uploaded_chunk.chunk_index);
 
-        completed.insert(uploaded_chunk.chunk_index);
-
-        // Check all tracks for completion (not just the current chunk's track)
-        let newly_completed =
-            check_all_tracks_for_completion(progress_tracker, &completed, &already_completed);
-
-        // Mark these tracks as completed so we don't check them again
-        for track_id in &newly_completed {
-            already_completed.insert(track_id.clone());
-        }
-
-        let percent = calculate_progress(completed.len(), total_chunks);
-        (newly_completed, (completed.len(), percent))
-    };
-
-    // Mark newly completed tracks
+    // Mark newly completed tracks in the database
     for track_id in newly_completed_tracks {
         library_manager
             .mark_track_complete(&track_id)
             .await
             .map_err(|e| format!("Failed to mark track complete: {}", e))?;
-        let _ = progress_tx.send(ImportProgress::TrackComplete {
+
+        progress_emitter.emit(crate::import::types::ImportProgress::TrackComplete {
             album_id: album_id.to_string(),
             track_id,
         });
     }
 
-    // Send progress update
-    let _ = progress_tx.send(ImportProgress::ProcessingProgress {
-        album_id: album_id.to_string(),
-        percent: progress_update.1,
-        current: progress_update.0,
-        total: total_chunks,
-    });
-
     Ok(())
-}
-
-/// Check all tracks for completion and return newly completed ones.
-///
-/// Called after each chunk upload to detect any tracks that have all their chunks done.
-/// Skips tracks that are already marked as complete.
-fn check_all_tracks_for_completion(
-    progress_tracker: &TrackProgressTracker,
-    completed_chunks: &HashSet<i32>,
-    already_completed: &HashSet<String>,
-) -> Vec<String> {
-    let mut newly_completed = Vec::new();
-
-    for (track_id, &total_for_track) in &progress_tracker.track_chunk_counts {
-        // Skip if already marked complete
-        if already_completed.contains(track_id) {
-            continue;
-        }
-
-        // Count how many of this track's chunks are complete
-        let completed_for_track = progress_tracker
-            .chunk_to_track
-            .iter()
-            .filter(|(idx, tid)| *tid == track_id && completed_chunks.contains(idx))
-            .count();
-
-        if completed_for_track == total_for_track {
-            newly_completed.push(track_id.clone());
-        }
-    }
-
-    newly_completed
-}
-
-/// Calculate progress percentage
-pub(super) fn calculate_progress(completed: usize, total: usize) -> u8 {
-    if total == 0 {
-        100
-    } else {
-        ((completed as f64 / total as f64) * 100.0).min(100.0) as u8
-    }
 }

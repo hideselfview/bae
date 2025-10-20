@@ -26,13 +26,13 @@ use crate::import::album_layout::AlbumLayout;
 use crate::import::album_track_creator;
 use crate::import::metadata_persister::MetadataPersister;
 use crate::import::pipeline;
-use crate::import::progress_service::ImportProgressService;
+use crate::import::progress_emitter::ImportProgressEmitter;
+use crate::import::progress_handle::ImportProgressHandle;
 use crate::import::track_file_mapper;
 use crate::import::types::{ImportProgress, ImportRequest, TrackSourceFile};
 use crate::library_context::SharedLibraryManager;
 use futures::stream::StreamExt;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
@@ -40,7 +40,7 @@ use tracing::{error, info};
 #[derive(Clone)]
 pub struct ImportHandle {
     validated_tx: mpsc::UnboundedSender<ValidatedImport>,
-    progress_service: ImportProgressService,
+    progress_service: ImportProgressHandle,
     library_manager: SharedLibraryManager,
 }
 
@@ -60,6 +60,15 @@ impl ImportHandle {
 
                 // 1. Parse Discogs album into database models
                 let (db_album, db_tracks) = album_track_creator::parse_discogs_album(&album)?;
+
+                info!(
+                    "Parsed Discogs album into database models:\n{:#?}",
+                    db_album
+                );
+                info!(
+                    "Parsed Discogs tracks into database models:\n{:#?}",
+                    db_tracks
+                );
 
                 // 2. Discover files
                 let discovered_files = discover_folder_files(&folder)?;
@@ -174,8 +183,8 @@ impl ImportService {
         // Spawn worker task that imports validated albums sequentially
         runtime_handle.spawn(service.run_import_worker());
 
-        // Create ProgressService, used to broadcast progress updates to external subscribers
-        let progress_service = ImportProgressService::new(progress_rx, runtime_handle.clone());
+        // Create progress handle, used to broadcast progress updates to external subscribers
+        let progress_service = ImportProgressHandle::new(progress_rx, runtime_handle.clone());
 
         ImportHandle {
             validated_tx,
@@ -251,15 +260,21 @@ impl ImportService {
         // ========== STREAMING PIPELINE ==========
         // Read → Encrypt → Upload → Persist (bounded parallelism at each stage)
 
+        let progress_emitter = ImportProgressEmitter::new(
+            db_album.id.clone(),
+            layout.chunk_to_track,
+            layout.track_chunk_counts,
+            self.progress_tx.clone(),
+            layout.total_chunks,
+        );
+
         let (chunk_tx, pipeline_stream) = pipeline::build_pipeline(
             self.config.clone(),
             db_album.id.clone(),
             self.encryption_service.clone(),
             self.cloud_storage.clone(),
             library_manager.clone(),
-            Arc::new(layout.progress_tracker),
-            self.progress_tx.clone(),
-            layout.total_chunks,
+            progress_emitter,
         );
 
         // Spawn chunk producer task

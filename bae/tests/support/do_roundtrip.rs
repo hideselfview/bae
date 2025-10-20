@@ -83,6 +83,7 @@ pub async fn do_roundtrip<F, G>(
     let library_manager = Arc::new(library_manager);
 
     let runtime_handle = tokio::runtime::Handle::current();
+
     let import_config = ImportConfig {
         chunk_size_bytes,
         max_encrypt_workers: 4,

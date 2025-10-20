@@ -46,15 +46,15 @@ struct Subscription {
     tx: tokio_mpsc::UnboundedSender<ImportProgress>,
 }
 
-/// Progress service that broadcasts import progress updates
+/// Handle for subscribing to import progress updates
 #[derive(Clone)]
-pub struct ImportProgressService {
+pub struct ImportProgressHandle {
     subscriptions: Arc<Mutex<HashMap<SubscriptionId, Subscription>>>,
     next_id: Arc<AtomicU64>,
 }
 
-impl ImportProgressService {
-    /// Create a new progress service and spawn background task to process progress updates
+impl ImportProgressHandle {
+    /// Create a new progress handle and spawn background task to process progress updates
     pub fn new(
         mut progress_rx: tokio_mpsc::UnboundedReceiver<ImportProgress>,
         runtime_handle: tokio::runtime::Handle,

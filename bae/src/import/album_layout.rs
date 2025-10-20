@@ -20,7 +20,8 @@ use std::path::PathBuf;
 pub struct AlbumLayout {
     pub file_mappings: Vec<FileChunkMapping>,
     pub total_chunks: usize,
-    pub progress_tracker: TrackProgressTracker,
+    pub chunk_to_track: HashMap<i32, String>,
+    pub track_chunk_counts: HashMap<String, usize>,
 }
 
 impl AlbumLayout {
@@ -43,41 +44,16 @@ impl AlbumLayout {
             .unwrap_or(0);
 
         // Calculate how chunks map to tracks (for progress)
-        let progress_tracker = build_progress_tracker(&file_mappings, tracks_to_files);
+        let (chunk_to_track, track_chunk_counts) =
+            build_chunk_track_mappings(&file_mappings, tracks_to_files);
 
         Ok(AlbumLayout {
             file_mappings,
             total_chunks,
-            progress_tracker,
+            chunk_to_track,
+            track_chunk_counts,
         })
     }
-}
-
-/// Tracks which chunks belong to which tracks for progress updates.
-///
-/// Built before pipeline starts by mapping file ranges to chunk indices.
-/// Used during pipeline to determine when a track is complete (all its chunks uploaded).
-///
-/// Example structure:
-/// ```
-/// use std::collections::HashMap;
-///
-/// // Maps chunk index to track ID
-/// let chunk_to_track: HashMap<i32, String> = [
-///     (0, "track-id-1".to_string()),
-///     (1, "track-id-1".to_string()),
-///     (2, "track-id-2".to_string()),
-/// ].into();
-///
-/// // Maps track ID to number of chunks
-/// let track_chunk_counts: HashMap<String, usize> = [
-///     ("track-id-1".to_string(), 2),
-///     ("track-id-2".to_string(), 3),
-/// ].into();
-/// ```
-pub struct TrackProgressTracker {
-    pub chunk_to_track: HashMap<i32, String>,
-    pub track_chunk_counts: HashMap<String, usize>,
 }
 
 /// Calculate file mappings from already-discovered files.
@@ -110,17 +86,19 @@ fn calculate_file_mappings(files: &[DiscoveredFile], chunk_size: usize) -> Vec<F
     file_mappings
 }
 
-/// Build progress tracker for tracks during import.
+/// Build chunk→track mappings for progress tracking during import.
 ///
 /// Creates reverse mappings from chunks to tracks so we can:
 /// 1. Identify which track a chunk belongs to when it completes
 /// 2. Count how many chunks each track needs to mark it complete
 ///
 /// This enables progressive UI updates as tracks finish, rather than waiting for the entire album.
-fn build_progress_tracker(
+///
+/// Returns (chunk_to_track, track_chunk_counts)
+fn build_chunk_track_mappings(
     file_mappings: &[FileChunkMapping],
     track_files: &[TrackSourceFile],
-) -> TrackProgressTracker {
+) -> (HashMap<i32, String>, HashMap<String, usize>) {
     let mut file_to_track: HashMap<PathBuf, String> = HashMap::new();
     for track_file in track_files {
         file_to_track.insert(track_file.file_path.clone(), track_file.db_track_id.clone());
@@ -142,10 +120,7 @@ fn build_progress_tracker(
         }
     }
 
-    TrackProgressTracker {
-        chunk_to_track,
-        track_chunk_counts,
-    }
+    (chunk_to_track, track_chunk_counts)
 }
 
 #[cfg(test)]

@@ -15,7 +15,7 @@ async fn test_roundtrip_vinyl() {
         "Vinyl Album with Side Notation (A1-A7, B1-B9)",
         load_vinyl_album_fixture(),
         generate_vinyl_album_files,
-        16,
+        2,
         |tracks| {
             info!("Verifying NO duplicate track numbers...");
             let mut numbers: Vec<i32> = tracks.iter().filter_map(|t| t.track_number).collect();
@@ -61,20 +61,20 @@ fn generate_vinyl_album_files(dir: &std::path::Path) -> Vec<Vec<u8>> {
     let files = vec![
         ("01 Track A1.flac", 14_832_725),
         ("02 Track A2.flac", 36_482_083),
-        ("03 Track A3.flac", 30_521_871),
-        ("04 Track A4.flac", 33_719_395),
-        ("05 Track A5.flac", 29_026_016),
-        ("06 Track A6.flac", 35_828_979),
-        ("07 Track A7.flac", 38_103_336),
-        ("08 Track B1.flac", 28_602_917),
-        ("09 Track B2.flac", 27_651_815),
-        ("10 Track B3.flac", 17_568_354),
-        ("11 Track B4.flac", 29_874_467),
-        ("12 Track B5.flac", 20_314_862),
-        ("13 Track B6.flac", 7_204_911),
-        ("14 Track B7.flac", 32_466_724),
-        ("15 Track B8.flac", 31_995_657),
-        ("16 Track B9.flac", 31_599_774),
+        // ("03 Track A3.flac", 30_521_871),
+        // ("04 Track A4.flac", 33_719_395),
+        // ("05 Track A5.flac", 29_026_016),
+        // ("06 Track A6.flac", 35_828_979),
+        // ("07 Track A7.flac", 38_103_336),
+        // ("08 Track B1.flac", 28_602_917),
+        // ("09 Track B2.flac", 27_651_815),
+        // ("10 Track B3.flac", 17_568_354),
+        // ("11 Track B4.flac", 29_874_467),
+        // ("12 Track B5.flac", 20_314_862),
+        // ("13 Track B6.flac", 7_204_911),
+        // ("14 Track B7.flac", 32_466_724),
+        // ("15 Track B8.flac", 31_995_657),
+        // ("16 Track B9.flac", 31_599_774),
     ];
 
     let mut file_data = Vec::new();

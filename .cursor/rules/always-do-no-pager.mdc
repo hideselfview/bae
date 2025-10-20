@@ -1,0 +1,5 @@
+---
+alwaysApply: true
+---
+ALWAYS RUN COMMANDS WITH --no-pager OR EQUIVALENT FLAGS. IF
+NO SUCH FLAG EXISTS, DO | cat
