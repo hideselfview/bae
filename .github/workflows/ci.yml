@@ -67,7 +67,8 @@ jobs:
       working-directory: ./bae
       run: cargo fmt -- --check
 
-    - name: Run Clippy
+    - name: Run Clippy (Linux/macOS)
+      if: runner.os != 'Windows'
       working-directory: ./bae
       run: |
         cargo clippy --lib -- -D warnings
@@ -84,6 +85,25 @@ jobs:
             cargo clippy --test "$test_name" --features test-utils -- -D warnings
           fi
         done
+
+    - name: Run Clippy (Windows)
+      if: runner.os == 'Windows'
+      working-directory: ./bae
+      shell: cmd
+      run: |
+        cargo clippy --lib -- -D warnings
+        cargo clippy --bin bae -- -D warnings
+        REM Run clippy on each integration test individually
+        REM Why: `cargo clippy --tests` compiles the binary target in test mode,
+        REM which causes dead_code warnings for test-utils feature methods that
+        REM the binary doesn't use. By checking each test separately, we avoid
+        REM compiling the binary target while still checking all integration tests.
+        for %%f in (tests\*.rs) do (
+          for %%n in ("%%~nf") do (
+            echo Checking integration test: %%~n
+            cargo clippy --test "%%~n" --features test-utils -- -D warnings
+          )
+        )
 
     - name: Run tests
       working-directory: ./bae
