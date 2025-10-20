@@ -112,6 +112,9 @@ fn configure_logging() {
                     "bae=info,sqlx=warn,aws_config=warn,aws_smithy=warn,aws_sdk_s3=warn,hyper=warn",
                 ),
         )
+        .with_line_number(true)
+        .with_target(false)
+        .with_file(true)
         .init();
 }
 
