@@ -69,7 +69,21 @@ jobs:
 
     - name: Run Clippy
       working-directory: ./bae
-      run: cargo clippy --all-targets --all-features -- -D warnings
+      run: |
+        cargo clippy --lib -- -D warnings
+        cargo clippy --bin bae -- -D warnings
+        # Run clippy on each integration test individually
+        # Why: `cargo clippy --tests` compiles the binary target in test mode,
+        # which causes dead_code warnings for test-utils feature methods that
+        # the binary doesn't use. By checking each test separately, we avoid
+        # compiling the binary target while still checking all integration tests.
+        for test_file in tests/*.rs; do
+          if [ -f "$test_file" ]; then
+            test_name=$(basename "$test_file" .rs)
+            echo "Checking integration test: $test_name"
+            cargo clippy --test "$test_name" --features test-utils -- -D warnings
+          fi
+        done
 
     - name: Run tests
       working-directory: ./bae
