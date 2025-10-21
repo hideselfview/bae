@@ -86,8 +86,10 @@ pub async fn do_roundtrip<F, G>(
 
     let import_config = ImportConfig {
         chunk_size_bytes,
-        max_encrypt_workers: 4,
-        max_upload_workers: 4,
+        max_encrypt_workers: std::thread::available_parallelism()
+            .map(|n| n.get() * 2)
+            .unwrap_or(4),
+        max_upload_workers: 20,
     };
 
     let import_handle = ImportService::start(
