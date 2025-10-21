@@ -51,7 +51,10 @@ impl ImportHandle {
     /// Returns the database album ID for progress subscription.
     pub async fn send_request(&self, params: SendRequestParams) -> Result<String, String> {
         match params {
-            SendRequestParams::FromFolder { album, folder } => {
+            SendRequestParams::FromFolder {
+                discogs_album: album,
+                folder,
+            } => {
                 let library_manager = self.library_manager.get();
 
                 // ========== VALIDATION (before queueing) ==========

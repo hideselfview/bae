@@ -48,7 +48,7 @@ pub fn on_folder_selected(folder_path: String) -> Result<(), String> {
 
 #[derive(Props, PartialEq, Clone)]
 pub struct ImportWorkflowProps {
-    pub item: DiscogsAlbum,
+    pub discogs_album: DiscogsAlbum,
     pub on_back: EventHandler<()>,
 }
 
@@ -77,21 +77,25 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
     };
 
     let on_start_import = {
-        let item = props.item.clone();
+        let discogs_album = props.discogs_album.clone();
         let import_service = import_service.clone();
 
         move |_| {
             if let Some(folder) = selected_folder.read().as_ref() {
-                let item = item.clone();
+                let discogs_album = discogs_album.clone();
                 let import_service = import_service.clone();
                 let folder = folder.clone();
 
                 spawn(async move {
-                    info!("Import started for {} from {}", item.title(), folder);
+                    info!(
+                        "Import started for {} from {}",
+                        discogs_album.title(),
+                        folder
+                    );
 
                     // Send import request to service (validates and queues)
                     let request = SendRequestParams::FromFolder {
-                        album: item.clone(),
+                        discogs_album: discogs_album.clone(),
                         folder: PathBuf::from(folder),
                     };
 
@@ -144,7 +148,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                         class: "bg-white rounded-lg shadow p-6 mb-6",
                         div {
                             class: "flex items-start space-x-4",
-                            if let Some(thumb) = props.item.thumb() {
+                            if let Some(thumb) = props.discogs_album.thumb() {
                                 img {
                                     class: "w-24 h-24 object-cover rounded",
                                     src: "{thumb}",
@@ -160,30 +164,30 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                                 class: "flex-1",
                                 h2 {
                                     class: "text-xl font-semibold text-gray-900",
-                                    "{props.item.title()}"
+                                    "{props.discogs_album.title()}"
                                 }
-                                if props.item.is_master() {
+                                if props.discogs_album.is_master() {
                                     div {
                                         class: "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mb-2",
                                         "Master Release"
                                     }
                                 }
-                                if let Some(year) = props.item.year() {
+                                if let Some(year) = props.discogs_album.year() {
                                     p {
                                         class: "text-gray-600",
                                         "Released: {year}"
                                     }
                                 }
-                                if !props.item.format().is_empty() {
+                                if !props.discogs_album.format().is_empty() {
                                     p {
                                         class: "text-gray-600",
-                                        "Format: {props.item.format().join(\", \")}"
+                                        "Format: {props.discogs_album.format().join(\", \")}"
                                     }
                                 }
-                                if !props.item.label().is_empty() {
+                                if !props.discogs_album.label().is_empty() {
                                     p {
                                         class: "text-gray-600",
-                                        "Label: {props.item.label().join(\", \")}"
+                                        "Label: {props.discogs_album.label().join(\", \")}"
                                     }
                                 }
                             }

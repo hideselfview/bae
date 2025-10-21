@@ -64,7 +64,7 @@ pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandle
     if let Some(item) = selected_import_item.read().as_ref() {
         return rsx! {
             ImportWorkflow {
-                item: item.clone(),
+                discogs_album: item.clone(),
                 on_back: on_back_from_import
             }
         };

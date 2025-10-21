@@ -5,7 +5,7 @@ use std::path::PathBuf;
 #[derive(Debug)]
 pub enum SendRequestParams {
     FromFolder {
-        album: DiscogsAlbum,
+        discogs_album: DiscogsAlbum,
         folder: PathBuf,
     },
 }

@@ -108,7 +108,7 @@ pub async fn do_roundtrip<F, G>(
 
     let album_id = import_handle
         .send_request(SendRequestParams::FromFolder {
-            album: discogs_album,
+            discogs_album,
             folder: album_dir.clone(),
         })
         .await

@@ -31,7 +31,7 @@ pub fn SearchMastersList() -> Element {
     if let Some(item) = selected_import_item.read().as_ref() {
         return rsx! {
             ImportWorkflow {
-                item: item.clone(),
+                discogs_album: item.clone(),
                 on_back: move |_| selected_import_item.set(None)
             }
         };
