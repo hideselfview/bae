@@ -1,7 +1,7 @@
 // # Import Service
 //
-// Single-instance queue-based service that imports albums sequentially.
-// One worker task handles import requests one at a time from a queue.
+// Single-instance queue-based service that imports albums.
+// One worker task handles import requests sequentially from a queue.
 //
 // Flow:
 // 1. Validation & Queueing (synchronous per request):
@@ -20,7 +20,7 @@
 
 use crate::cloud_storage::CloudStorageManager;
 use crate::encryption::EncryptionService;
-use crate::import::album_layout::AlbumLayout;
+use crate::import::album_chunk_layout::AlbumChunkLayout;
 use crate::import::handle::{ImportHandle, ImportRequest};
 use crate::import::metadata_persister::MetadataPersister;
 use crate::import::pipeline;
@@ -42,13 +42,19 @@ pub struct ImportConfig {
     pub chunk_size_bytes: usize,
 }
 
-/// Import service that orchestrates the import workflow on the shared runtime
+/// Import service that orchestrates the album import workflow
 pub struct ImportService {
+    /// Configuration for the import service
     config: ImportConfig,
-    progress_tx: mpsc::UnboundedSender<ImportProgress>,
+    /// Channel for receiving import requests from clients
     requests_rx: mpsc::UnboundedReceiver<ImportRequest>,
+    /// Channel for sending progress updates to subscribers
+    progress_tx: mpsc::UnboundedSender<ImportProgress>,
+    /// Service for encrypting files before upload
     encryption_service: EncryptionService,
+    /// Service for uploading encrypted chunks to cloud storage
     cloud_storage: CloudStorageManager,
+    /// Shared manager for library database operations
     library_manager: SharedLibraryManager,
 }
 
@@ -68,20 +74,17 @@ impl ImportService {
         let (requests_tx, requests_rx) = mpsc::unbounded_channel();
         let (progress_tx, progress_rx) = mpsc::unbounded_channel();
 
-        // Create the import service worker
         let service = ImportService {
             config,
-            progress_tx,
             requests_rx,
+            progress_tx,
             library_manager: library_manager.clone(),
             encryption_service,
             cloud_storage,
         };
 
-        // Spawn import worker task
         runtime_handle.spawn(service.run_import_worker());
 
-        // Create handle for making import requests and broadcasting progress updates to external subscribers
         ImportHandle::new(requests_tx, progress_rx, library_manager, runtime_handle)
     }
 
@@ -137,7 +140,7 @@ impl ImportService {
         });
 
         // Analyze album layout: files → chunks → tracks
-        let layout = AlbumLayout::analyze(
+        let chunk_layout = AlbumChunkLayout::build(
             &discovered_files,
             &tracks_to_files,
             self.config.chunk_size_bytes,
@@ -145,8 +148,8 @@ impl ImportService {
 
         info!(
             "Will stream {} chunks across {} files",
-            layout.total_chunks,
-            layout.file_mappings.len()
+            chunk_layout.total_chunks,
+            chunk_layout.file_mappings.len()
         );
 
         // ========== STREAMING PIPELINE ==========
@@ -154,13 +157,13 @@ impl ImportService {
 
         let progress_emitter = ImportProgressEmitter::new(
             db_album.id.clone(),
-            layout.chunk_to_track,
-            layout.track_chunk_counts,
+            chunk_layout.chunk_to_track,
+            chunk_layout.track_chunk_counts,
             self.progress_tx.clone(),
-            layout.total_chunks,
+            chunk_layout.total_chunks,
         );
 
-        let (chunk_tx, pipeline_stream) = pipeline::build_pipeline(
+        let (pipeline, chunk_tx) = pipeline::build_pipeline(
             self.config.clone(),
             db_album.id.clone(),
             self.encryption_service.clone(),
@@ -177,15 +180,15 @@ impl ImportService {
         ));
 
         // Wait for the pipeline to complete
-        let results: Vec<_> = pipeline_stream.collect().await;
+        let results: Vec<_> = pipeline.collect().await;
 
         // Check for errors (fail fast on first error)
         for result in results {
             result?;
         }
 
-        let file_mappings = layout.file_mappings;
-        let total_chunks = layout.total_chunks;
+        let file_mappings = chunk_layout.file_mappings;
+        let total_chunks = chunk_layout.total_chunks;
 
         info!("All {} chunks uploaded successfully", total_chunks);
 

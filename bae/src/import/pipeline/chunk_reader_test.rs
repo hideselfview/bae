@@ -1,7 +1,7 @@
 /// Unit tests specifically for chunk reading logic
 use super::*;
 use crate::import::pipeline::chunk_producer::produce_chunk_stream;
-use crate::import::service::DiscoveredFile;
+use crate::import::types::DiscoveredFile;
 use std::fs;
 use tempfile::TempDir;
 use tracing::info;

@@ -10,12 +10,13 @@ use tokio::sync::mpsc as tokio_mpsc;
 /// - Completion state (which chunks/tracks are done)
 /// - Progress event transmission
 ///
+/// A chunk can contain data from multiple tracks (when small files share a chunk).
 /// Used by the import pipeline to emit progress events as chunks complete.
 #[derive(Clone)]
 pub struct ImportProgressEmitter {
     album_id: String,
-    // Chunk→track mappings
-    chunk_to_track: Arc<HashMap<i32, String>>,
+    // Chunk→track mappings (a chunk can belong to multiple tracks)
+    chunk_to_track: Arc<HashMap<i32, Vec<String>>>,
     track_chunk_counts: Arc<HashMap<String, usize>>,
     // Progress channel
     tx: tokio_mpsc::UnboundedSender<ImportProgress>,
@@ -29,7 +30,7 @@ impl ImportProgressEmitter {
     /// Create a new progress emitter for an album import.
     pub fn new(
         album_id: String,
-        chunk_to_track: HashMap<i32, String>,
+        chunk_to_track: HashMap<i32, Vec<String>>,
         track_chunk_counts: HashMap<String, usize>,
         tx: tokio_mpsc::UnboundedSender<ImportProgress>,
         total_chunks: usize,
@@ -89,6 +90,9 @@ impl ImportProgressEmitter {
     ///
     /// Called after each chunk upload to detect any tracks that have all their chunks done.
     /// Skips tracks that are already marked as complete.
+    ///
+    /// A track is complete when all chunks containing that track's data have been uploaded.
+    /// Since chunks can contain multiple tracks, we check each track independently.
     fn check_all_tracks_for_completion(
         &self,
         completed_chunks: &HashSet<i32>,
@@ -103,10 +107,13 @@ impl ImportProgressEmitter {
             }
 
             // Count how many of this track's chunks are complete
+            // A chunk belongs to this track if the track ID appears in the chunk's Vec<String>
             let completed_for_track = self
                 .chunk_to_track
                 .iter()
-                .filter(|(idx, tid)| *tid == track_id && completed_chunks.contains(idx))
+                .filter(|(idx, track_ids)| {
+                    track_ids.contains(track_id) && completed_chunks.contains(idx)
+                })
                 .count();
 
             if completed_for_track == total_for_track {

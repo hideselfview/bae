@@ -54,8 +54,8 @@ pub(super) fn build_pipeline(
     library_manager: LibraryManager,
     progress_emitter: ImportProgressEmitter,
 ) -> (
-    mpsc::Sender<Result<ChunkData, String>>,
     impl Stream<Item = Result<(), String>>,
+    mpsc::Sender<Result<ChunkData, String>>,
 ) {
     // Stage 1: Read files and stream chunks (bounded channel for backpressure)
     let (chunk_tx, chunk_rx) = mpsc::channel::<Result<ChunkData, String>>(10);
@@ -102,7 +102,7 @@ pub(super) fn build_pipeline(
         })
         .buffer_unordered(10); // Allow some parallelism for DB writes
 
-    (chunk_tx, stream)
+    (stream, chunk_tx)
 }
 
 // ============================================================================

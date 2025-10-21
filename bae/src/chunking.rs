@@ -1,4 +1,6 @@
-/// Represents the mapping of a file to chunks within an album
+/// Maps each file to its chunk range and byte offsets within those chunks.
+/// Used by the chunk producer to efficiently stream files in sequence.
+/// A file can represent either a single track or a complete disc image containing multiple tracks.
 #[derive(Debug, Clone)]
 pub struct FileChunkMapping {
     pub file_path: std::path::PathBuf,

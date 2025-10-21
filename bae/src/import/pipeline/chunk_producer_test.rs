@@ -4,7 +4,7 @@
 // They test file reading, chunking, and error handling scenarios.
 
 use super::chunk_producer::*;
-use crate::import::service::DiscoveredFile;
+use crate::import::types::DiscoveredFile;
 use std::fs;
 use tempfile::TempDir;
 use tokio::sync::mpsc;
