@@ -45,3 +45,15 @@ pub struct TrackSourceFile {
     /// Path to the source audio file on disk (FLAC, MP3, etc.)
     pub file_path: PathBuf,
 }
+
+/// File discovered during scan of album source folder.
+///
+/// Created during validation phase when we traverse the album folder once.
+/// Used to calculate chunk layout and feed the reader task.
+///
+/// Example: `{ path: "/music/album/track01.flac", size: 45_821_345 }`
+#[derive(Clone)]
+pub struct DiscoveredFile {
+    pub path: PathBuf,
+    pub size: u64,
+}

@@ -8,8 +8,7 @@
 // This is the "planning" phase before the streaming pipeline starts.
 
 use crate::chunking::FileChunkMapping;
-use crate::import::service::DiscoveredFile;
-use crate::import::types::TrackSourceFile;
+use crate::import::types::{DiscoveredFile, TrackSourceFile};
 use std::collections::HashMap;
 use std::path::PathBuf;
 

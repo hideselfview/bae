@@ -16,6 +16,7 @@
 
 mod album_layout;
 mod album_track_creator;
+mod handle;
 mod metadata_persister;
 mod pipeline;
 mod progress_emitter;
@@ -25,5 +26,6 @@ mod track_file_mapper;
 mod types;
 
 // Public API exports
-pub use service::{ImportConfig, ImportHandle, ImportService};
+pub use handle::ImportHandle;
+pub use service::{ImportConfig, ImportService};
 pub use types::{ImportProgress, SendRequestParams};

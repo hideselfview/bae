@@ -91,11 +91,11 @@ pub async fn do_roundtrip<F, G>(
     };
 
     let import_handle = ImportService::start(
+        import_config,
         runtime_handle,
         shared_library_manager,
         encryption_service.clone(),
         cloud_storage.clone(),
-        import_config,
     );
 
     info!("Services initialized");

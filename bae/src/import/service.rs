@@ -7,7 +7,6 @@
 // 1. Validation & Queueing (synchronous per request):
 //    - Validate track-to-file mapping
 //    - Insert album/tracks with status='queued'
-//    - Returns immediately so next request can be validated
 //
 // 2. Pipeline Execution (async per import):
 //    - Mark album as 'importing'
@@ -20,113 +19,17 @@
 // - ProgressService: Broadcasts real-time progress updates to UI subscribers
 
 use crate::cloud_storage::CloudStorageManager;
-use crate::database::DbAlbum;
 use crate::encryption::EncryptionService;
 use crate::import::album_layout::AlbumLayout;
-use crate::import::album_track_creator;
+use crate::import::handle::{ImportHandle, ImportRequest};
 use crate::import::metadata_persister::MetadataPersister;
 use crate::import::pipeline;
 use crate::import::progress_emitter::ImportProgressEmitter;
-use crate::import::progress_handle::ImportProgressHandle;
-use crate::import::track_file_mapper;
-use crate::import::types::{ImportProgress, SendRequestParams, TrackSourceFile};
+use crate::import::types::ImportProgress;
 use crate::library_context::SharedLibraryManager;
 use futures::stream::StreamExt;
-use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
 use tracing::{error, info};
-
-/// Handle for sending import requests and subscribing to progress updates
-#[derive(Clone)]
-pub struct ImportHandle {
-    requests_rx: mpsc::UnboundedSender<ImportRequest>,
-    progress_handle: ImportProgressHandle,
-    library_manager: SharedLibraryManager,
-}
-
-impl ImportHandle {
-    /// Validate and queue an import request.
-    ///
-    /// Performs validation (track-to-file mapping) and DB insertion synchronously.
-    /// If validation fails, returns error immediately with no side effects.
-    /// If successful, album is inserted with status='queued' and an import
-    /// request is sent to the import worker.  
-    ///
-    /// Returns the database album ID for progress subscription.
-    pub async fn send_request(&self, params: SendRequestParams) -> Result<String, String> {
-        match params {
-            SendRequestParams::FromFolder { album, folder } => {
-                let library_manager = self.library_manager.get();
-
-                // ========== VALIDATION (before queueing) ==========
-
-                // 1. Parse Discogs album into database models
-                let (db_album, db_tracks) = album_track_creator::parse_discogs_album(&album)?;
-
-                info!(
-                    "Parsed Discogs album into database models:\n{:#?}",
-                    db_album
-                );
-                info!(
-                    "Parsed Discogs tracks into database models:\n{:#?}",
-                    db_tracks
-                );
-
-                // 2. Discover files
-                let discovered_files = discover_folder_files(&folder)?;
-
-                // 3. Validate track-to-file mapping
-                let tracks_to_files =
-                    track_file_mapper::map_tracks_to_files(&db_tracks, &discovered_files).await?;
-
-                // 4. Insert album + tracks with status='queued'
-                library_manager
-                    .insert_album_with_tracks(&db_album, &db_tracks)
-                    .await
-                    .map_err(|e| format!("Database error: {}", e))?;
-
-                info!(
-                    "Validated and queued album '{}' with {} tracks",
-                    db_album.title,
-                    db_tracks.len()
-                );
-
-                // ========== QUEUE FOR PIPELINE ==========
-
-                let album_id = db_album.id.clone();
-
-                self.requests_rx
-                    .send(ImportRequest {
-                        db_album,
-                        tracks_to_files,
-                        discovered_files,
-                    })
-                    .map_err(|_| "Failed to queue validated album for import".to_string())?;
-
-                Ok(album_id)
-            }
-        }
-    }
-
-    /// Subscribe to progress updates for a specific album
-    /// Returns a filtered receiver that yields only updates for the specified album
-    pub fn subscribe_album(
-        &self,
-        album_id: String,
-    ) -> tokio::sync::mpsc::UnboundedReceiver<ImportProgress> {
-        self.progress_handle.subscribe_album(album_id)
-    }
-
-    /// Subscribe to progress updates for a specific track
-    /// Returns a filtered receiver that yields only updates for the specified track
-    pub fn subscribe_track(
-        &self,
-        album_id: String,
-        track_id: String,
-    ) -> tokio::sync::mpsc::UnboundedReceiver<ImportProgress> {
-        self.progress_handle.subscribe_track(album_id, track_id)
-    }
-}
 
 /// Configuration for import service
 #[derive(Clone)]
@@ -139,21 +42,14 @@ pub struct ImportConfig {
     pub chunk_size_bytes: usize,
 }
 
-/// Validated import ready for pipeline execution
-struct ImportRequest {
-    db_album: DbAlbum,
-    tracks_to_files: Vec<TrackSourceFile>,
-    discovered_files: Vec<DiscoveredFile>,
-}
-
 /// Import service that orchestrates the import workflow on the shared runtime
 pub struct ImportService {
-    library_manager: SharedLibraryManager,
-    encryption_service: EncryptionService,
-    cloud_storage: CloudStorageManager,
+    config: ImportConfig,
     progress_tx: mpsc::UnboundedSender<ImportProgress>,
     requests_rx: mpsc::UnboundedReceiver<ImportRequest>,
-    config: ImportConfig,
+    encryption_service: EncryptionService,
+    cloud_storage: CloudStorageManager,
+    library_manager: SharedLibraryManager,
 }
 
 impl ImportService {
@@ -163,36 +59,30 @@ impl ImportService {
     /// Multiple imports will be queued and handled one at a time, not concurrently.
     /// Returns a handle that can be cloned and used throughout the app to submit import requests.
     pub fn start(
+        config: ImportConfig,
         runtime_handle: tokio::runtime::Handle,
         library_manager: SharedLibraryManager,
         encryption_service: EncryptionService,
         cloud_storage: CloudStorageManager,
-        config: ImportConfig,
     ) -> ImportHandle {
         let (requests_tx, requests_rx) = mpsc::unbounded_channel();
         let (progress_tx, progress_rx) = mpsc::unbounded_channel();
 
         // Create the import service worker
         let service = ImportService {
+            config,
+            progress_tx,
+            requests_rx,
             library_manager: library_manager.clone(),
             encryption_service,
             cloud_storage,
-            progress_tx,
-            requests_rx,
-            config,
         };
 
         // Spawn import worker task
         runtime_handle.spawn(service.run_import_worker());
 
-        // Create handle for making import requetsts and broadcasting progress updates to external subscribers
-        let progress_service = ImportProgressHandle::new(progress_rx, runtime_handle.clone());
-
-        ImportHandle {
-            requests_rx: requests_tx,
-            progress_handle: progress_service,
-            library_manager,
-        }
+        // Create handle for making import requests and broadcasting progress updates to external subscribers
+        ImportHandle::new(requests_tx, progress_rx, library_manager, runtime_handle)
     }
 
     async fn run_import_worker(mut self) {
@@ -330,43 +220,3 @@ impl ImportService {
 // ============================================================================
 // Validation Helper Functions
 // ============================================================================
-
-/// File discovered during scan of album source folder.
-///
-/// Created during validation phase when we traverse the album folder once.
-/// Used to calculate chunk layout and feed the reader task.
-///
-/// Example: `{ path: "/music/album/track01.flac", size: 45_821_345 }`
-#[derive(Clone)]
-pub struct DiscoveredFile {
-    pub path: PathBuf,
-    pub size: u64,
-}
-
-/// Discover all files in folder with metadata.
-///
-/// Single filesystem traversal to gather file paths and sizes upfront.
-/// This avoids redundant directory reads later for CUE detection and chunk calculations.
-/// Files are sorted by path for consistent ordering across runs.
-fn discover_folder_files(folder: &Path) -> Result<Vec<DiscoveredFile>, String> {
-    let mut files = Vec::new();
-
-    for entry in std::fs::read_dir(folder).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let path = entry.path();
-
-        if path.is_file() {
-            let size = entry
-                .metadata()
-                .map_err(|e| format!("Failed to read metadata for {:?}: {}", path, e))?
-                .len();
-
-            files.push(DiscoveredFile { path, size });
-        }
-    }
-
-    // Sort by path for consistent ordering
-    files.sort_by(|a, b| a.path.cmp(&b.path));
-
-    Ok(files)
-}

@@ -157,11 +157,11 @@ fn main() {
 
     // Create import service with shared runtime handle
     let import_service_handle = import::ImportService::start(
+        import_config,
         runtime_handle.clone(),
         library_manager.clone(),
         encryption_service.clone(),
         cloud_storage.clone(),
-        import_config,
     );
 
     // Create playback service

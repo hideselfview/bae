@@ -5,7 +5,7 @@
 // files sequentially and streaming chunks as they're produced.
 
 use crate::import::pipeline::ChunkData;
-use crate::import::service::DiscoveredFile;
+use crate::import::types::DiscoveredFile;
 use tokio::io::{AsyncReadExt, BufReader};
 use tokio::sync::mpsc;
 use uuid::Uuid;

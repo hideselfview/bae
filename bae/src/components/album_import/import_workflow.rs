@@ -1,4 +1,4 @@
-use crate::import::ImportRequest;
+use crate::import::SendRequestParams;
 use crate::library_context::use_import_service;
 use crate::models::DiscogsAlbum;
 use crate::Route;
@@ -90,7 +90,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                     info!("Import started for {} from {}", item.title(), folder);
 
                     // Send import request to service (validates and queues)
-                    let request = ImportRequest::FromFolder {
+                    let request = SendRequestParams::FromFolder {
                         album: item.clone(),
                         folder: PathBuf::from(folder),
                     };
