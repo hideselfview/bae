@@ -1,21 +1,35 @@
-// Album Import Stats
+// Album Chunker
 //
-// Analyzes an album's physical file structure to determine:
-// - How files map to chunk ranges (for metadata persistence)
-// - How chunks map to tracks (for progress updates)
-// - Total chunk count (for progress calculation)
+// Analyzes an album's physical file structure and produces chunks for the import pipeline.
 //
-// This is the "planning" phase before the streaming pipeline starts.
+// Responsibilities:
+// - Calculate how files map to chunk ranges (for metadata persistence)
+// - Calculate how chunks map to tracks (for progress updates)
+// - Stream chunks from files during import
+//
+// This is both the "planning" phase (building the layout) and the "execution" phase
+// (streaming chunks through the pipeline).
 
 use crate::chunking::FileChunkMapping;
+use crate::import::pipeline::ChunkData;
 use crate::import::types::{DiscoveredFile, TrackSourceFile};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use tokio::io::{AsyncReadExt, BufReader};
+use tokio::sync::mpsc;
+use uuid::Uuid;
 
-/// Analysis of album's physical layout for chunking and progress tracking during import.
+/// Analyzes album layout and produces chunks for the import pipeline.
 ///
 /// Built before pipeline starts from discovered files and track mappings.
-pub struct AlbumChunkLayout {
+/// Contains both layout analysis and chunk production logic.
+pub struct AlbumChunker {
+    /// Files to chunk and stream
+    discovered_files: Vec<DiscoveredFile>,
+
+    /// Size of each chunk in bytes
+    chunk_size: usize,
+
     /// Maps each file to its chunk range and byte offsets within those chunks.
     /// Used by the chunk producer to efficiently stream files in sequence.
     /// A file can represent either a single track or a complete disc image containing multiple tracks.
@@ -37,18 +51,18 @@ pub struct AlbumChunkLayout {
     pub track_chunk_counts: HashMap<String, usize>,
 }
 
-impl AlbumChunkLayout {
-    /// Analyze discovered files and build complete chunk/track layout.
+impl AlbumChunker {
+    /// Analyze discovered files and build chunker with complete chunk/track layout.
     ///
     /// This is the "planning" phase - we figure out the entire chunk structure
     /// before streaming any data, so we can track progress and persist metadata correctly.
     pub fn build(
-        discovered_files: &[DiscoveredFile],
+        discovered_files: Vec<DiscoveredFile>,
         tracks_to_files: &[TrackSourceFile],
         chunk_size: usize,
     ) -> Result<Self, String> {
         // Calculate how files map to chunks
-        let file_mappings = calculate_file_mappings(discovered_files, chunk_size);
+        let file_mappings = calculate_file_mappings(&discovered_files, chunk_size);
 
         // Total chunks = last chunk index + 1 (chunks are 0-indexed)
         let total_chunks = file_mappings
@@ -60,12 +74,89 @@ impl AlbumChunkLayout {
         let (chunk_to_track, track_chunk_counts) =
             build_chunk_track_mappings(&file_mappings, tracks_to_files);
 
-        Ok(AlbumChunkLayout {
+        Ok(AlbumChunker {
+            discovered_files,
+            chunk_size,
             file_mappings,
             total_chunks,
             chunk_to_track,
             track_chunk_counts,
         })
+    }
+
+    /// Read files sequentially and stream chunks as they're produced.
+    ///
+    /// Treats all files as a concatenated byte stream, dividing it into fixed-size chunks.
+    /// Chunks are sent to the channel as soon as they're full, allowing downstream
+    /// encryption and upload to start immediately without buffering the entire album.
+    ///
+    /// Files don't align to chunk boundaries - a chunk may contain data from multiple files.
+    pub async fn produce_chunk_stream(self, chunk_tx: mpsc::Sender<Result<ChunkData, String>>) {
+        let mut current_chunk_buffer = Vec::with_capacity(self.chunk_size);
+        let mut current_chunk_index = 0i32;
+
+        for file in self.discovered_files {
+            let file_handle = match tokio::fs::File::open(&file.path).await {
+                Ok(f) => f,
+                Err(e) => {
+                    let _ = chunk_tx
+                        .send(Err(format!("Failed to open file {:?}: {}", file.path, e)))
+                        .await;
+                    return;
+                }
+            };
+
+            let mut reader = BufReader::new(file_handle);
+
+            loop {
+                let space_remaining = self.chunk_size - current_chunk_buffer.len();
+                let mut temp_buffer = vec![0u8; space_remaining];
+
+                let bytes_read = match reader.read(&mut temp_buffer).await {
+                    Ok(n) => n,
+                    Err(e) => {
+                        let _ = chunk_tx
+                            .send(Err(format!("Failed to read from file: {}", e)))
+                            .await;
+                        return;
+                    }
+                };
+
+                if bytes_read == 0 {
+                    // EOF - move to next file
+                    break;
+                }
+
+                // Add the bytes we read to current chunk
+                current_chunk_buffer.extend_from_slice(&temp_buffer[..bytes_read]);
+
+                // If chunk is full, send it and start a new one
+                if current_chunk_buffer.len() == self.chunk_size {
+                    let chunk = finalize_chunk(current_chunk_index, current_chunk_buffer);
+                    if chunk_tx.send(Ok(chunk)).await.is_err() {
+                        // Receiver dropped, stop reading
+                        return;
+                    }
+                    current_chunk_index += 1;
+                    current_chunk_buffer = Vec::with_capacity(self.chunk_size);
+                }
+            }
+        }
+
+        // Send final partial chunk if any data remains
+        if !current_chunk_buffer.is_empty() {
+            let chunk = finalize_chunk(current_chunk_index, current_chunk_buffer);
+            let _ = chunk_tx.send(Ok(chunk)).await;
+        }
+    }
+}
+
+/// Finalize a chunk by creating ChunkData with a unique ID.
+fn finalize_chunk(chunk_index: i32, data: Vec<u8>) -> ChunkData {
+    ChunkData {
+        chunk_id: Uuid::new_v4().to_string(),
+        chunk_index,
+        data,
     }
 }
 
@@ -178,40 +269,63 @@ mod tests {
             },
         ];
 
-        let mappings = calculate_file_mappings(&files, chunk_size);
+        let tracks = vec![
+            TrackSourceFile {
+                db_track_id: "track-1".to_string(),
+                file_path: PathBuf::from("file1.flac"),
+            },
+            TrackSourceFile {
+                db_track_id: "track-2".to_string(),
+                file_path: PathBuf::from("file2.flac"),
+            },
+            TrackSourceFile {
+                db_track_id: "track-3".to_string(),
+                file_path: PathBuf::from("file3.flac"),
+            },
+        ];
+
+        let chunker = AlbumChunker::build(files, &tracks, chunk_size).unwrap();
 
         // Verify we got 3 mappings
-        assert_eq!(mappings.len(), 3);
+        assert_eq!(chunker.file_mappings.len(), 3);
 
         // File 1: 2MB = 2 chunks (0-1)
-        assert_eq!(mappings[0].file_path, PathBuf::from("file1.flac"));
-        assert_eq!(mappings[0].start_chunk_index, 0);
-        assert_eq!(mappings[0].end_chunk_index, 1);
-        assert_eq!(mappings[0].start_byte_offset, 0);
+        assert_eq!(
+            chunker.file_mappings[0].file_path,
+            PathBuf::from("file1.flac")
+        );
+        assert_eq!(chunker.file_mappings[0].start_chunk_index, 0);
+        assert_eq!(chunker.file_mappings[0].end_chunk_index, 1);
+        assert_eq!(chunker.file_mappings[0].start_byte_offset, 0);
 
         // File 2: 3MB = 3 chunks (2-4)
-        assert_eq!(mappings[1].file_path, PathBuf::from("file2.flac"));
-        assert_eq!(mappings[1].start_chunk_index, 2);
-        assert_eq!(mappings[1].end_chunk_index, 4);
+        assert_eq!(
+            chunker.file_mappings[1].file_path,
+            PathBuf::from("file2.flac")
+        );
+        assert_eq!(chunker.file_mappings[1].start_chunk_index, 2);
+        assert_eq!(chunker.file_mappings[1].end_chunk_index, 4);
 
         // File 3: 1.5MB = 2 chunks (5-6)
-        assert_eq!(mappings[2].file_path, PathBuf::from("file3.flac"));
-        assert_eq!(mappings[2].start_chunk_index, 5);
-        assert_eq!(mappings[2].end_chunk_index, 6);
+        assert_eq!(
+            chunker.file_mappings[2].file_path,
+            PathBuf::from("file3.flac")
+        );
+        assert_eq!(chunker.file_mappings[2].start_chunk_index, 5);
+        assert_eq!(chunker.file_mappings[2].end_chunk_index, 6);
 
         // Verify ranges are consecutive with no gaps or overlaps
         assert_eq!(
-            mappings[0].end_chunk_index + 1,
-            mappings[1].start_chunk_index
+            chunker.file_mappings[0].end_chunk_index + 1,
+            chunker.file_mappings[1].start_chunk_index
         );
         assert_eq!(
-            mappings[1].end_chunk_index + 1,
-            mappings[2].start_chunk_index
+            chunker.file_mappings[1].end_chunk_index + 1,
+            chunker.file_mappings[2].start_chunk_index
         );
 
         // Total should be 7 chunks (0-6)
-        let total_chunks = (mappings[2].end_chunk_index + 1) as usize;
-        assert_eq!(total_chunks, 7);
+        assert_eq!(chunker.total_chunks, 7);
     }
 
     #[test]
@@ -282,7 +396,7 @@ mod tests {
             },
         ];
 
-        let layout = AlbumChunkLayout::build(&files, &tracks, chunk_size).unwrap();
+        let layout = AlbumChunker::build(files, &tracks, chunk_size).unwrap();
 
         // All three files together = 1.2MB = 2 chunks (0 and 1)
         assert_eq!(layout.total_chunks, 2);
@@ -335,7 +449,7 @@ mod tests {
             file_path: PathBuf::from("track1.flac"),
         }];
 
-        let layout = AlbumChunkLayout::build(&files, &tracks, chunk_size).unwrap();
+        let layout = AlbumChunker::build(files, &tracks, chunk_size).unwrap();
 
         // cover.jpg (200KB) + track1.flac (900KB) = 1.1MB = 2 chunks
         // album.cue (5KB) continues in chunk 1
@@ -381,7 +495,7 @@ mod tests {
             },
         ];
 
-        let layout = AlbumChunkLayout::build(&files, &tracks, chunk_size).unwrap();
+        let layout = AlbumChunker::build(files, &tracks, chunk_size).unwrap();
 
         // 3MB = 3 chunks
         assert_eq!(layout.total_chunks, 3);
@@ -439,7 +553,7 @@ mod tests {
             },
         ];
 
-        let layout = AlbumChunkLayout::build(&files, &tracks, chunk_size).unwrap();
+        let layout = AlbumChunker::build(files, &tracks, chunk_size).unwrap();
 
         // Total: 100KB + 200KB + 800KB + 2MB = 3.1MB = 3 chunks
         assert_eq!(layout.total_chunks, 3);

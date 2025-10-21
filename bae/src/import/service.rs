@@ -20,7 +20,7 @@
 
 use crate::cloud_storage::CloudStorageManager;
 use crate::encryption::EncryptionService;
-use crate::import::album_chunk_layout::AlbumChunkLayout;
+use crate::import::album_chunk_layout::AlbumChunker;
 use crate::import::handle::{ImportHandle, ImportRequest};
 use crate::import::metadata_persister::MetadataPersister;
 use crate::import::pipeline;
@@ -139,28 +139,34 @@ impl ImportService {
             album_id: db_album.id.clone(),
         });
 
-        // Analyze album layout: files → chunks → tracks
-        let chunk_layout = AlbumChunkLayout::build(
-            &discovered_files,
+        // Build album chunker: analyzes layout and will produce chunks
+        let chunker = AlbumChunker::build(
+            discovered_files,
             &tracks_to_files,
             self.config.chunk_size_bytes,
         )?;
 
         info!(
             "Will stream {} chunks across {} files",
-            chunk_layout.total_chunks,
-            chunk_layout.file_mappings.len()
+            chunker.total_chunks,
+            chunker.file_mappings.len()
         );
+
+        // Extract layout info before consuming chunker
+        let file_mappings = chunker.file_mappings.clone();
+        let total_chunks = chunker.total_chunks;
+        let chunk_to_track = chunker.chunk_to_track.clone();
+        let track_chunk_counts = chunker.track_chunk_counts.clone();
 
         // ========== STREAMING PIPELINE ==========
         // Read → Encrypt → Upload → Persist (bounded parallelism at each stage)
 
         let progress_emitter = ImportProgressEmitter::new(
             db_album.id.clone(),
-            chunk_layout.chunk_to_track,
-            chunk_layout.track_chunk_counts,
+            chunk_to_track,
+            track_chunk_counts,
             self.progress_tx.clone(),
-            chunk_layout.total_chunks,
+            total_chunks,
         );
 
         let (pipeline, chunk_tx) = pipeline::build_pipeline(
@@ -172,12 +178,8 @@ impl ImportService {
             progress_emitter,
         );
 
-        // Spawn chunk producer task
-        tokio::spawn(pipeline::chunk_producer::produce_chunk_stream(
-            discovered_files.clone(),
-            self.config.chunk_size_bytes,
-            chunk_tx,
-        ));
+        // Spawn chunk producer task - chunker consumes itself to produce chunks
+        tokio::spawn(chunker.produce_chunk_stream(chunk_tx));
 
         // Wait for the pipeline to complete
         let results: Vec<_> = pipeline.collect().await;
@@ -186,9 +188,6 @@ impl ImportService {
         for result in results {
             result?;
         }
-
-        let file_mappings = chunk_layout.file_mappings;
-        let total_chunks = chunk_layout.total_chunks;
 
         info!("All {} chunks uploaded successfully", total_chunks);
 
