@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 /// Request to import an album
 #[derive(Debug)]
-pub enum ImportRequest {
+pub enum SendRequestParams {
     FromFolder {
         album: DiscogsAlbum,
         folder: PathBuf,

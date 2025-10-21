@@ -29,7 +29,7 @@ use crate::import::pipeline;
 use crate::import::progress_emitter::ImportProgressEmitter;
 use crate::import::progress_handle::ImportProgressHandle;
 use crate::import::track_file_mapper;
-use crate::import::types::{ImportProgress, ImportRequest, TrackSourceFile};
+use crate::import::types::{ImportProgress, SendRequestParams, TrackSourceFile};
 use crate::library_context::SharedLibraryManager;
 use futures::stream::StreamExt;
 use std::path::{Path, PathBuf};
@@ -39,8 +39,8 @@ use tracing::{error, info};
 /// Handle for sending import requests and subscribing to progress updates
 #[derive(Clone)]
 pub struct ImportHandle {
-    validated_tx: mpsc::UnboundedSender<ValidatedImport>,
-    progress_service: ImportProgressHandle,
+    requests_rx: mpsc::UnboundedSender<ImportRequest>,
+    progress_handle: ImportProgressHandle,
     library_manager: SharedLibraryManager,
 }
 
@@ -49,11 +49,13 @@ impl ImportHandle {
     ///
     /// Performs validation (track-to-file mapping) and DB insertion synchronously.
     /// If validation fails, returns error immediately with no side effects.
-    /// If successful, album is inserted with status='queued' and sent to import worker.
+    /// If successful, album is inserted with status='queued' and an import
+    /// request is sent to the import worker.  
+    ///
     /// Returns the database album ID for progress subscription.
-    pub async fn send_request(&self, request: ImportRequest) -> Result<String, String> {
-        match request {
-            ImportRequest::FromFolder { album, folder } => {
+    pub async fn send_request(&self, params: SendRequestParams) -> Result<String, String> {
+        match params {
+            SendRequestParams::FromFolder { album, folder } => {
                 let library_manager = self.library_manager.get();
 
                 // ========== VALIDATION (before queueing) ==========
@@ -93,8 +95,8 @@ impl ImportHandle {
 
                 let album_id = db_album.id.clone();
 
-                self.validated_tx
-                    .send(ValidatedImport {
+                self.requests_rx
+                    .send(ImportRequest {
                         db_album,
                         tracks_to_files,
                         discovered_files,
@@ -112,7 +114,7 @@ impl ImportHandle {
         &self,
         album_id: String,
     ) -> tokio::sync::mpsc::UnboundedReceiver<ImportProgress> {
-        self.progress_service.subscribe_album(album_id)
+        self.progress_handle.subscribe_album(album_id)
     }
 
     /// Subscribe to progress updates for a specific track
@@ -122,7 +124,7 @@ impl ImportHandle {
         album_id: String,
         track_id: String,
     ) -> tokio::sync::mpsc::UnboundedReceiver<ImportProgress> {
-        self.progress_service.subscribe_track(album_id, track_id)
+        self.progress_handle.subscribe_track(album_id, track_id)
     }
 }
 
@@ -138,7 +140,7 @@ pub struct ImportConfig {
 }
 
 /// Validated import ready for pipeline execution
-struct ValidatedImport {
+struct ImportRequest {
     db_album: DbAlbum,
     tracks_to_files: Vec<TrackSourceFile>,
     discovered_files: Vec<DiscoveredFile>,
@@ -150,7 +152,7 @@ pub struct ImportService {
     encryption_service: EncryptionService,
     cloud_storage: CloudStorageManager,
     progress_tx: mpsc::UnboundedSender<ImportProgress>,
-    validated_rx: mpsc::UnboundedReceiver<ValidatedImport>,
+    requests_rx: mpsc::UnboundedReceiver<ImportRequest>,
     config: ImportConfig,
 }
 
@@ -167,7 +169,7 @@ impl ImportService {
         cloud_storage: CloudStorageManager,
         config: ImportConfig,
     ) -> ImportHandle {
-        let (validated_tx, validated_rx) = mpsc::unbounded_channel();
+        let (requests_tx, requests_rx) = mpsc::unbounded_channel();
         let (progress_tx, progress_rx) = mpsc::unbounded_channel();
 
         // Create the import service worker
@@ -176,19 +178,19 @@ impl ImportService {
             encryption_service,
             cloud_storage,
             progress_tx,
-            validated_rx,
+            requests_rx,
             config,
         };
 
-        // Spawn worker task that imports validated albums sequentially
+        // Spawn import worker task
         runtime_handle.spawn(service.run_import_worker());
 
-        // Create progress handle, used to broadcast progress updates to external subscribers
+        // Create handle for making import requetsts and broadcasting progress updates to external subscribers
         let progress_service = ImportProgressHandle::new(progress_rx, runtime_handle.clone());
 
         ImportHandle {
-            validated_tx,
-            progress_service,
+            requests_rx: requests_tx,
+            progress_handle: progress_service,
             library_manager,
         }
     }
@@ -198,7 +200,7 @@ impl ImportService {
 
         // Import validated albums sequentially from the queue.
         loop {
-            match self.validated_rx.recv().await {
+            match self.requests_rx.recv().await {
                 Some(validated) => {
                     info!("Starting pipeline for '{}'", validated.db_album.title);
 
@@ -222,10 +224,10 @@ impl ImportService {
     /// 2. Calculates chunk layout and track progress
     /// 3. Streams files → encrypts → uploads → persists
     /// 4. Persists metadata and marks album complete.
-    async fn import_from_folder(&self, validated: ValidatedImport) -> Result<(), String> {
+    async fn import_from_folder(&self, validated: ImportRequest) -> Result<(), String> {
         let library_manager = self.library_manager.get();
 
-        let ValidatedImport {
+        let ImportRequest {
             db_album,
             tracks_to_files,
             discovered_files,

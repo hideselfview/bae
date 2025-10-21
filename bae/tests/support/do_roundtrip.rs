@@ -4,7 +4,7 @@ use bae::cache::CacheManager;
 use bae::cloud_storage::CloudStorageManager;
 use bae::database::Database;
 use bae::encryption::EncryptionService;
-use bae::import::{ImportConfig, ImportRequest, ImportService};
+use bae::import::{ImportConfig, ImportService, SendRequestParams};
 use bae::library::LibraryManager;
 use bae::models::DiscogsAlbum;
 use std::sync::Arc;
@@ -105,7 +105,7 @@ pub async fn do_roundtrip<F, G>(
     info!("Sending import request...");
 
     let album_id = import_handle
-        .send_request(ImportRequest::FromFolder {
+        .send_request(SendRequestParams::FromFolder {
             album: discogs_album,
             folder: album_dir.clone(),
         })

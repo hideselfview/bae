@@ -1,0 +1,6 @@
+---
+description: Useful for writing commit messages
+alwaysApply: false
+---
+Commit messages should be brief and focused on why more than what. There is no
+need to enumerate changes that can be discerned by looking at the diff. 
