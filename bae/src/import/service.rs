@@ -20,7 +20,7 @@
 
 use crate::cloud_storage::CloudStorageManager;
 use crate::encryption::EncryptionService;
-use crate::import::album_chunk_layout::AlbumChunker;
+use crate::import::album_chunk_layout::AlbumDataLayout;
 use crate::import::handle::{ImportHandle, ImportRequest};
 use crate::import::metadata_persister::MetadataPersister;
 use crate::import::pipeline;
@@ -139,8 +139,8 @@ impl ImportService {
             album_id: db_album.id.clone(),
         });
 
-        // Build album chunker: analyzes layout and will produce chunks
-        let chunker = AlbumChunker::build(
+        // Analyze album layout: files → chunks → tracks
+        let layout = AlbumDataLayout::build(
             discovered_files,
             &tracks_to_files,
             self.config.chunk_size_bytes,
@@ -148,15 +148,17 @@ impl ImportService {
 
         info!(
             "Will stream {} chunks across {} files",
-            chunker.total_chunks,
-            chunker.file_mappings.len()
+            layout.total_chunks,
+            layout.file_mappings.len()
         );
 
-        // Extract layout info before consuming chunker
-        let file_mappings = chunker.file_mappings.clone();
-        let total_chunks = chunker.total_chunks;
-        let chunk_to_track = chunker.chunk_to_track.clone();
-        let track_chunk_counts = chunker.track_chunk_counts.clone();
+        // Destructure layout to move ownership of each piece to where it's needed
+        let AlbumDataLayout {
+            file_mappings,
+            total_chunks,
+            chunk_to_track,
+            track_chunk_counts,
+        } = layout;
 
         // ========== STREAMING PIPELINE ==========
         // Read → Encrypt → Upload → Persist (bounded parallelism at each stage)
@@ -178,8 +180,12 @@ impl ImportService {
             progress_emitter,
         );
 
-        // Spawn chunk producer task - chunker consumes itself to produce chunks
-        tokio::spawn(chunker.produce_chunk_stream(chunk_tx));
+        // Spawn chunk producer task with file_mappings that tell it exactly what to read
+        tokio::spawn(pipeline::chunk_producer::produce_chunk_stream(
+            file_mappings.clone(), // Clone needed since we use it later for metadata
+            self.config.chunk_size_bytes,
+            chunk_tx,
+        ));
 
         // Wait for the pipeline to complete
         let results: Vec<_> = pipeline.collect().await;
@@ -198,7 +204,7 @@ impl ImportService {
         persister
             .persist_album_metadata(
                 &tracks_to_files,
-                &file_mappings,
+                file_mappings,
                 self.config.chunk_size_bytes,
             )
             .await?;

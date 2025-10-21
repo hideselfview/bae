@@ -28,7 +28,7 @@ impl<'a> MetadataPersister<'a> {
     pub async fn persist_album_metadata(
         &self,
         track_files: &[TrackSourceFile],
-        chunk_mappings: &[FileChunkMapping],
+        chunk_mappings: Vec<FileChunkMapping>,
         chunk_size_bytes: usize,
     ) -> Result<(), String> {
         // Create a lookup map for chunk mappings by file path
