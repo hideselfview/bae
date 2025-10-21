@@ -60,7 +60,7 @@ pub async fn do_roundtrip<F, G>(
     info!("Creating database...");
 
     let db_file = db_dir.join("test.db");
-    let database = Database::new(&format!("sqlite://{}", db_file.display()))
+    let database = Database::new(db_file.to_str().unwrap())
         .await
         .expect("Failed to create database");
 
