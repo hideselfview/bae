@@ -91,10 +91,10 @@ impl ImportService {
         // Import validated albums sequentially from the queue.
         loop {
             match self.requests_rx.recv().await {
-                Some(validated) => {
-                    info!("Starting pipeline for '{}'", validated.db_album.title);
+                Some(request) => {
+                    info!("Starting pipeline for '{}'", request.db_album.title);
 
-                    if let Err(e) = self.import_from_folder(validated).await {
+                    if let Err(e) = self.import_from_folder(request).await {
                         error!("Pipeline failed: {}", e);
                         // TODO: Mark album as failed
                     }
@@ -114,14 +114,14 @@ impl ImportService {
     /// 2. Calculates chunk layout and track progress
     /// 3. Streams files → encrypts → uploads → persists
     /// 4. Persists metadata and marks album complete.
-    async fn import_from_folder(&self, validated: ImportRequest) -> Result<(), String> {
+    async fn import_from_folder(&self, request: ImportRequest) -> Result<(), String> {
         let library_manager = self.library_manager.get();
 
         let ImportRequest {
             db_album,
             tracks_to_files,
             discovered_files,
-        } = validated;
+        } = request;
 
         // Mark album as importing now that pipeline is starting
         library_manager

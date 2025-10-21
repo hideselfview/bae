@@ -30,6 +30,7 @@ pub async fn do_roundtrip<F, G>(
     info!("\n=== {} ===\n", test_name);
 
     // Setup directories
+    //////////////////////////////////////////////////////////////
     info!("Creating temp directories...");
 
     let temp_root = TempDir::new().expect("Failed to create temp root");
@@ -44,6 +45,7 @@ pub async fn do_roundtrip<F, G>(
     info!("Directories created");
 
     // Generate test files
+    //////////////////////////////////////////////////////////////
     info!("Generating test files...");
 
     let file_data = generate_files(&album_dir);
@@ -51,6 +53,7 @@ pub async fn do_roundtrip<F, G>(
     info!("Generated {} files", file_data.len());
 
     // Setup services
+    //////////////////////////////////////////////////////////////
     info!("Setting up services...");
 
     let chunk_size_bytes = 1024 * 1024;
@@ -92,6 +95,8 @@ pub async fn do_roundtrip<F, G>(
         max_upload_workers: 20,
     };
 
+    info!("Starting import service...");
+
     let import_handle = ImportService::start(
         import_config,
         runtime_handle,
@@ -102,7 +107,8 @@ pub async fn do_roundtrip<F, G>(
 
     info!("Services initialized");
 
-    // Import
+    // Send import request and subscribe for updates
+    //////////////////////////////////////////////////////////////
     info!("Starting import...");
     info!("Sending import request...");
 
