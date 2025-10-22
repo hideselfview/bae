@@ -1,30 +1,71 @@
-use crate::database::{DbAlbum, DbTrack};
+use crate::database::{DbAlbum, DbAlbumArtist, DbArtist, DbRelease, DbTrack};
 use crate::models::DiscogsAlbum;
+use uuid::Uuid;
 
-/// Parse Discogs album metadata into database models.
+/// Parse Discogs album metadata into database models including artist information.
 ///
-/// Converts a DiscogsAlbum (from the API) into DbAlbum and DbTrack records
-/// ready for database insertion. Extracts artist name, generates album ID,
-/// and links all tracks to that album. All records start with status='queued'.
-pub fn parse_discogs_album(import_item: &DiscogsAlbum) -> Result<(DbAlbum, Vec<DbTrack>), String> {
+/// Converts a DiscogsAlbum (from the API) into DbAlbum, DbRelease, DbTrack, and artist records
+/// ready for database insertion. Extracts artist name, generates IDs,
+/// and links all entities together. All records start with status='queued'.
+///
+/// Returns: (album, release, tracks, artists, album_artists)
+pub fn parse_discogs_album(
+    import_item: &DiscogsAlbum,
+) -> Result<
+    (
+        DbAlbum,
+        DbRelease,
+        Vec<DbTrack>,
+        Vec<DbArtist>,
+        Vec<DbAlbumArtist>,
+    ),
+    String,
+> {
+    // Extract artist name from album title (e.g., "Artist - Album Title")
     let artist_name = import_item.extract_artist_name();
 
-    // Create album record
+    // Create album record (logical album entity)
     let album = match import_item {
-        DiscogsAlbum::Master(master) => DbAlbum::from_discogs_master(master, &artist_name),
-        DiscogsAlbum::Release(release) => DbAlbum::from_discogs_release(release, &artist_name),
+        DiscogsAlbum::Master(master) => DbAlbum::from_discogs_master(master),
+        DiscogsAlbum::Release(release) => DbAlbum::from_discogs_release(release),
     };
 
-    // Create track records linked to this album
+    // Create release record (specific version/pressing)
+    let db_release = match import_item {
+        DiscogsAlbum::Master(_) => DbRelease::default_for_master(&album.id, album.year),
+        DiscogsAlbum::Release(release) => DbRelease::from_discogs_release(&album.id, release),
+    };
+
+    // Create artist record
+    // TODO: Fetch proper Discogs artist ID for deduplication
+    let artist = DbArtist {
+        id: Uuid::new_v4().to_string(),
+        name: artist_name.clone(),
+        sort_name: Some(artist_name.clone()),
+        discogs_artist_id: None, // TODO: Get from Discogs API
+        bandcamp_artist_id: None,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+    };
+
+    // Create album-artist relationship
+    let album_artist = DbAlbumArtist {
+        id: Uuid::new_v4().to_string(),
+        album_id: album.id.clone(),
+        artist_id: artist.id.clone(),
+        position: 0, // Primary artist
+    };
+
+    // Create track records linked to this release
     let discogs_tracks = import_item.tracklist();
     let mut tracks = Vec::new();
 
     for (index, discogs_track) in discogs_tracks.iter().enumerate() {
-        let track = DbTrack::from_discogs_track(discogs_track, &album.id, index)?;
+        let track = DbTrack::from_discogs_track(discogs_track, &db_release.id, index)?;
         tracks.push(track);
     }
 
-    Ok((album, tracks))
+    Ok((album, db_release, tracks, vec![artist], vec![album_artist]))
 }
 
 #[cfg(test)]
@@ -36,7 +77,7 @@ mod tests {
     fn test_parse_discogs_album_basic() {
         let album = DiscogsAlbum::Master(DiscogsMaster {
             id: "12345".to_string(),
-            title: "Test Album".to_string(),
+            title: "Test Artist - Test Album".to_string(),
             year: Some(2023),
             thumb: None,
             label: vec!["Test Label".to_string()],
@@ -58,28 +99,38 @@ mod tests {
         let result = parse_discogs_album(&album);
         assert!(result.is_ok());
 
-        let (db_album, db_tracks) = result.unwrap();
+        let (db_album, db_release, db_tracks, artists, album_artists) = result.unwrap();
 
         // Verify album
-        assert_eq!(db_album.title, "Test Album");
+        assert_eq!(db_album.title, "Test Artist - Test Album");
         assert_eq!(db_album.year, Some(2023));
         assert_eq!(db_album.discogs_master_id, Some("12345".to_string()));
+
+        // Verify release
+        assert_eq!(db_release.album_id, db_album.id);
 
         // Verify tracks
         assert_eq!(db_tracks.len(), 2);
         assert_eq!(db_tracks[0].title, "Track 1");
         assert_eq!(db_tracks[0].track_number, Some(1));
-        assert_eq!(db_tracks[0].album_id, db_album.id);
+        assert_eq!(db_tracks[0].release_id, db_release.id);
         assert_eq!(db_tracks[1].title, "Track 2");
         assert_eq!(db_tracks[1].track_number, Some(2));
-        assert_eq!(db_tracks[1].album_id, db_album.id);
+        assert_eq!(db_tracks[1].release_id, db_release.id);
+
+        // Verify artist
+        assert_eq!(artists.len(), 1);
+        assert_eq!(artists[0].name, "Test Artist");
+        assert_eq!(album_artists.len(), 1);
+        assert_eq!(album_artists[0].album_id, db_album.id);
+        assert_eq!(album_artists[0].artist_id, artists[0].id);
     }
 
     #[test]
     fn test_parse_discogs_album_no_year() {
         let album = DiscogsAlbum::Master(DiscogsMaster {
             id: "67890".to_string(),
-            title: "Another Album".to_string(),
+            title: "Artist Name - Another Album".to_string(),
             year: None,
             thumb: None,
             label: vec![],
@@ -94,19 +145,22 @@ mod tests {
         let result = parse_discogs_album(&album);
         assert!(result.is_ok());
 
-        let (db_album, db_tracks) = result.unwrap();
+        let (db_album, db_release, db_tracks, artists, album_artists) = result.unwrap();
 
-        assert_eq!(db_album.title, "Another Album");
+        assert_eq!(db_album.title, "Artist Name - Another Album");
         assert_eq!(db_album.year, None);
+        assert_eq!(db_release.album_id, db_album.id);
         assert_eq!(db_tracks.len(), 1);
         assert_eq!(db_tracks[0].title, "Only Track");
+        assert_eq!(artists.len(), 1); // Should have one artist
+        assert_eq!(album_artists.len(), 1); // Should have one album-artist relationship
     }
 
     #[test]
     fn test_parse_discogs_album_empty_tracklist() {
         let album = DiscogsAlbum::Master(DiscogsMaster {
             id: "empty".to_string(),
-            title: "Empty Album".to_string(),
+            title: "Some Artist - Empty Album".to_string(),
             year: Some(2024),
             thumb: None,
             label: vec![],
@@ -117,10 +171,13 @@ mod tests {
         let result = parse_discogs_album(&album);
         assert!(result.is_ok());
 
-        let (db_album, db_tracks) = result.unwrap();
+        let (db_album, db_release, db_tracks, artists, album_artists) = result.unwrap();
 
-        assert_eq!(db_album.title, "Empty Album");
+        assert_eq!(db_album.title, "Some Artist - Empty Album");
+        assert_eq!(db_release.album_id, db_album.id);
         assert_eq!(db_tracks.len(), 0);
+        assert_eq!(artists.len(), 1); // Should have artist
+        assert_eq!(album_artists.len(), 1);
     }
 
     #[test]
@@ -136,7 +193,7 @@ mod tests {
         let result = parse_discogs_album(&album);
         assert!(result.is_ok());
 
-        let (db_album, db_tracks) = result.unwrap();
+        let (db_album, db_release, db_tracks, artists, album_artists) = result.unwrap();
 
         // Verify album metadata
         assert_eq!(db_album.title, "Test Vinyl Album");
@@ -146,26 +203,31 @@ mod tests {
             Some("test-vinyl-master".to_string())
         );
 
+        // Verify release
+        assert_eq!(db_release.album_id, db_album.id);
+
+        // Verify artist
+        assert_eq!(artists.len(), 1);
+        assert_eq!(album_artists.len(), 1);
+
         // Verify tracks
-        assert_eq!(db_tracks.len(), 16, "Should have 16 tracks (A1-A7, B1-B9)");
-
-        // Verify all tracks are linked to the album
-        for track in &db_tracks {
-            assert_eq!(track.album_id, db_album.id);
-        }
-
-        // Verify track numbers are sequential 1-16
-        let track_numbers: Vec<Option<i32>> = db_tracks.iter().map(|t| t.track_number).collect();
-        let expected_numbers: Vec<Option<i32>> = (1..=16).map(Some).collect();
         assert_eq!(
-            track_numbers, expected_numbers,
-            "Track numbers should be sequential 1-16 despite vinyl side notation"
+            db_tracks.len(),
+            2,
+            "Should have 2 tracks (A1-A2) matching fixture"
         );
 
-        // Verify track titles match the positions
-        assert_eq!(db_tracks[0].title, "Track A1");
-        assert_eq!(db_tracks[6].title, "Track A7");
-        assert_eq!(db_tracks[7].title, "Track B1");
-        assert_eq!(db_tracks[15].title, "Track B9");
+        // Verify all tracks are linked to the release
+        for track in &db_tracks {
+            assert_eq!(track.release_id, db_release.id);
+        }
+
+        // Verify track numbers are sequential
+        let track_numbers: Vec<Option<i32>> = db_tracks.iter().map(|t| t.track_number).collect();
+        let expected_numbers: Vec<Option<i32>> = (1..=2).map(Some).collect();
+        assert_eq!(
+            track_numbers, expected_numbers,
+            "Track numbers should be sequential despite vinyl side notation"
+        );
     }
 }

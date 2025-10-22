@@ -1,5 +1,8 @@
 use crate::cloud_storage::CloudStorageError;
-use crate::database::{Database, DbAlbum, DbChunk, DbCueSheet, DbFile, DbTrack, DbTrackPosition};
+use crate::database::{
+    Database, DbAlbum, DbAlbumArtist, DbArtist, DbChunk, DbCueSheet, DbFile, DbRelease, DbTrack,
+    DbTrackArtist, DbTrackPosition,
+};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -33,22 +36,23 @@ impl LibraryManager {
         LibraryManager { database }
     }
 
-    /// Insert album and tracks into database in a transaction
-    pub async fn insert_album_with_tracks(
+    /// Insert album, release, and tracks into database in a transaction
+    pub async fn insert_album_with_release_and_tracks(
         &self,
         album: &DbAlbum,
+        release: &DbRelease,
         tracks: &[DbTrack],
     ) -> Result<(), LibraryError> {
         self.database
-            .insert_album_with_tracks(album, tracks)
+            .insert_album_with_release_and_tracks(album, release, tracks)
             .await?;
         Ok(())
     }
 
-    /// Mark album as importing when pipeline starts processing
-    pub async fn mark_album_importing(&self, album_id: &str) -> Result<(), LibraryError> {
+    /// Mark release as importing when pipeline starts processing
+    pub async fn mark_release_importing(&self, release_id: &str) -> Result<(), LibraryError> {
         self.database
-            .update_album_status(album_id, crate::database::ImportStatus::Importing)
+            .update_release_status(release_id, crate::database::ImportStatus::Importing)
             .await?;
         Ok(())
     }
@@ -69,18 +73,18 @@ impl LibraryManager {
         Ok(())
     }
 
-    /// Mark album as complete after successful import
-    pub async fn mark_album_complete(&self, album_id: &str) -> Result<(), LibraryError> {
+    /// Mark release as complete after successful import
+    pub async fn mark_release_complete(&self, release_id: &str) -> Result<(), LibraryError> {
         self.database
-            .update_album_status(album_id, crate::database::ImportStatus::Complete)
+            .update_release_status(release_id, crate::database::ImportStatus::Complete)
             .await?;
         Ok(())
     }
 
-    /// Mark album as failed if import errors
-    pub async fn mark_album_failed(&self, album_id: &str) -> Result<(), LibraryError> {
+    /// Mark release as failed if import errors
+    pub async fn mark_release_failed(&self, release_id: &str) -> Result<(), LibraryError> {
         self.database
-            .update_album_status(album_id, crate::database::ImportStatus::Failed)
+            .update_release_status(release_id, crate::database::ImportStatus::Failed)
             .await?;
         Ok(())
     }
@@ -126,9 +130,17 @@ impl LibraryManager {
         Ok(self.database.get_albums().await?)
     }
 
-    /// Get tracks for a specific album
-    pub async fn get_tracks(&self, album_id: &str) -> Result<Vec<DbTrack>, LibraryError> {
-        Ok(self.database.get_tracks_for_album(album_id).await?)
+    /// Get all releases for a specific album
+    pub async fn get_releases_for_album(
+        &self,
+        album_id: &str,
+    ) -> Result<Vec<DbRelease>, LibraryError> {
+        Ok(self.database.get_releases_for_album(album_id).await?)
+    }
+
+    /// Get tracks for a specific release
+    pub async fn get_tracks(&self, release_id: &str) -> Result<Vec<DbTrack>, LibraryError> {
+        Ok(self.database.get_tracks_for_release(release_id).await?)
     }
 
     /// Get a single track by ID
@@ -136,13 +148,16 @@ impl LibraryManager {
         Ok(self.database.get_track_by_id(track_id).await?)
     }
 
-    /// Get all files for a specific album
+    /// Get all files for a specific release
     ///
-    /// Files belong to albums (not tracks). This includes both:
+    /// Files belong to releases (not albums or tracks). This includes both:
     /// - Audio files (linked to tracks via db_track_position)
     /// - Metadata files (cover art, CUE sheets, etc.)
-    pub async fn get_files_for_album(&self, album_id: &str) -> Result<Vec<DbFile>, LibraryError> {
-        Ok(self.database.get_files_for_album(album_id).await?)
+    pub async fn get_files_for_release(
+        &self,
+        release_id: &str,
+    ) -> Result<Vec<DbFile>, LibraryError> {
+        Ok(self.database.get_files_for_release(release_id).await?)
     }
 
     /// Get a specific file by ID
@@ -158,9 +173,12 @@ impl LibraryManager {
         Ok(self.database.get_chunks_for_file(file_id).await?)
     }
 
-    /// Get all chunks for an album (for testing/verification)
-    pub async fn get_chunks_for_album(&self, album_id: &str) -> Result<Vec<DbChunk>, LibraryError> {
-        Ok(self.database.get_chunks_for_album(album_id).await?)
+    /// Get all chunks for a release (for testing/verification)
+    pub async fn get_chunks_for_release(
+        &self,
+        release_id: &str,
+    ) -> Result<Vec<DbChunk>, LibraryError> {
+        Ok(self.database.get_chunks_for_release(release_id).await?)
     }
 
     /// Get track position for CUE/FLAC tracks
@@ -174,28 +192,73 @@ impl LibraryManager {
     /// Get chunks in a specific range for CUE/FLAC streaming
     pub async fn get_chunks_in_range(
         &self,
-        album_id: &str,
+        release_id: &str,
         chunk_range: std::ops::RangeInclusive<i32>,
     ) -> Result<Vec<DbChunk>, LibraryError> {
         Ok(self
             .database
-            .get_chunks_in_range(album_id, chunk_range)
+            .get_chunks_in_range(release_id, chunk_range)
             .await?)
     }
 
-    /// Get album ID for a track
-    pub async fn get_album_id_for_track(&self, track_id: &str) -> Result<String, LibraryError> {
-        // TODO: Add a proper database method to lookup album_id by track_id directly
-        // For now, iterate through all albums to find the track
-        let albums = self.database.get_albums().await?;
-        for album in albums {
-            let tracks = self.database.get_tracks_for_album(&album.id).await?;
-            if tracks.iter().any(|t| t.id == track_id) {
-                return Ok(album.id);
-            }
-        }
-        Err(LibraryError::TrackMapping(
-            "Track not found in any album".to_string(),
-        ))
+    /// Get release ID for a track
+    pub async fn get_release_id_for_track(&self, track_id: &str) -> Result<String, LibraryError> {
+        let track = self
+            .database
+            .get_track_by_id(track_id)
+            .await?
+            .ok_or_else(|| LibraryError::TrackMapping("Track not found".to_string()))?;
+        Ok(track.release_id)
+    }
+
+    /// Insert an artist
+    pub async fn insert_artist(&self, artist: &DbArtist) -> Result<(), LibraryError> {
+        self.database.insert_artist(artist).await?;
+        Ok(())
+    }
+
+    /// Get artist by Discogs ID (for deduplication)
+    pub async fn get_artist_by_discogs_id(
+        &self,
+        discogs_artist_id: &str,
+    ) -> Result<Option<DbArtist>, LibraryError> {
+        Ok(self
+            .database
+            .get_artist_by_discogs_id(discogs_artist_id)
+            .await?)
+    }
+
+    /// Insert album-artist relationship
+    pub async fn insert_album_artist(
+        &self,
+        album_artist: &DbAlbumArtist,
+    ) -> Result<(), LibraryError> {
+        self.database.insert_album_artist(album_artist).await?;
+        Ok(())
+    }
+
+    /// Insert track-artist relationship
+    pub async fn insert_track_artist(
+        &self,
+        track_artist: &DbTrackArtist,
+    ) -> Result<(), LibraryError> {
+        self.database.insert_track_artist(track_artist).await?;
+        Ok(())
+    }
+
+    /// Get artists for an album
+    pub async fn get_artists_for_album(
+        &self,
+        album_id: &str,
+    ) -> Result<Vec<DbArtist>, LibraryError> {
+        Ok(self.database.get_artists_for_album(album_id).await?)
+    }
+
+    /// Get artists for a track
+    pub async fn get_artists_for_track(
+        &self,
+        track_id: &str,
+    ) -> Result<Vec<DbArtist>, LibraryError> {
+        Ok(self.database.get_artists_for_track(track_id).await?)
     }
 }

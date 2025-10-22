@@ -165,7 +165,7 @@ async fn reassemble_cue_track(
     // Get only the chunks we need for this track (efficient!)
     let chunk_range = track_position.start_chunk_index..=track_position.end_chunk_index;
     let chunks = library_manager
-        .get_chunks_in_range(&file.album_id, chunk_range)
+        .get_chunks_in_range(&file.release_id, chunk_range)
         .await
         .map_err(|e| format!("Failed to get chunk range: {}", e))?;
 

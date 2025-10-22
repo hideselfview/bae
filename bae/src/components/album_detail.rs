@@ -1,4 +1,4 @@
-use crate::database::{DbAlbum, DbTrack};
+use crate::database::{DbAlbum, DbArtist, DbTrack};
 use crate::library::LibraryError;
 use crate::library_context::use_library_manager;
 use crate::Route;
@@ -88,7 +88,36 @@ pub fn AlbumDetail(album_id: String) -> Element {
 /// Album detail view component
 #[component]
 fn AlbumDetailView(album: DbAlbum, tracks: Vec<DbTrack>) -> Element {
+    let library_manager = use_library_manager();
     let playback = use_playback_service();
+    let mut artist_name = use_signal(|| "Loading...".to_string());
+
+    // Load artists for this album
+    use_effect({
+        let album_id = album.id.clone();
+        move || {
+            let library_manager = library_manager.clone();
+            let album_id = album_id.clone();
+            spawn(async move {
+                match library_manager.get().get_artists_for_album(&album_id).await {
+                    Ok(artists) => {
+                        if artists.is_empty() {
+                            artist_name.set("Unknown Artist".to_string());
+                        } else if artists.len() == 1 {
+                            artist_name.set(artists[0].name.clone());
+                        } else {
+                            // Multiple artists: join with commas
+                            let names: Vec<_> = artists.iter().map(|a| a.name.as_str()).collect();
+                            artist_name.set(names.join(", "));
+                        }
+                    }
+                    Err(_) => {
+                        artist_name.set("Unknown Artist".to_string());
+                    }
+                }
+            });
+        }
+    });
 
     rsx! {
         div {
@@ -125,7 +154,7 @@ fn AlbumDetailView(album: DbAlbum, tracks: Vec<DbTrack>) -> Element {
                         }
                         p {
                             class: "text-lg text-gray-300 mb-4",
-                            "{album.artist_name}"
+                            "{artist_name()}"
                         }
 
                         div {
@@ -136,14 +165,10 @@ fn AlbumDetailView(album: DbAlbum, tracks: Vec<DbTrack>) -> Element {
                                     span { "{year}" }
                                 }
                             }
-                            div {
-                                span { class: "font-medium", "Discogs Master ID: " }
-                                span { "{album.discogs_master_id}" }
-                            }
-                            if let Some(release_id) = &album.discogs_release_id {
+                            if let Some(master_id) = &album.discogs_master_id {
                                 div {
-                                    span { class: "font-medium", "Discogs Release ID: " }
-                                    span { "{release_id}" }
+                                    span { class: "font-medium", "Discogs Master ID: " }
+                                    span { "{master_id}" }
                                 }
                             }
                             div {
@@ -200,7 +225,23 @@ fn AlbumDetailView(album: DbAlbum, tracks: Vec<DbTrack>) -> Element {
 /// Individual track row component
 #[component]
 fn TrackRow(track: DbTrack) -> Element {
+    let library_manager = use_library_manager();
     let playback = use_playback_service();
+    let mut track_artists = use_signal(Vec::<DbArtist>::new);
+
+    // Load artists for this track (for compilations/features)
+    use_effect({
+        let track_id = track.id.clone();
+        move || {
+            let library_manager = library_manager.clone();
+            let track_id = track_id.clone();
+            spawn(async move {
+                if let Ok(artists) = library_manager.get().get_artists_for_track(&track_id).await {
+                    track_artists.set(artists);
+                }
+            });
+        }
+    });
 
     rsx! {
         div {
@@ -232,10 +273,18 @@ fn TrackRow(track: DbTrack) -> Element {
                     class: "text-white font-medium group-hover:text-blue-300 transition-colors",
                     "{track.title}"
                 }
-                if let Some(artist) = &track.artist_name {
+                // Show track artists if any (for compilations/features)
+                if !track_artists().is_empty() {
                     p {
                         class: "text-gray-400 text-sm",
-                        "{artist}"
+                        {
+                            let artists = track_artists();
+                            if artists.len() == 1 {
+                                artists[0].name.clone()
+                            } else {
+                                artists.iter().map(|a| a.name.as_str()).collect::<Vec<_>>().join(", ")
+                            }
+                        }
                     }
                 }
             }

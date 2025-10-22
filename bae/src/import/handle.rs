@@ -20,6 +20,7 @@ pub struct ImportHandle {
 /// Validated import ready for pipeline execution
 pub struct ImportRequest {
     pub db_album: crate::database::DbAlbum,
+    pub db_release: crate::database::DbRelease,
     pub tracks_to_files: Vec<crate::import::types::TrackSourceFile>,
     pub discovered_files: Vec<DiscoveredFile>,
 }
@@ -60,7 +61,7 @@ impl ImportHandle {
                 // ========== VALIDATION (before queueing) ==========
 
                 // 1. Parse Discogs album into database models
-                let (db_album, db_tracks) =
+                let (db_album, db_release, db_tracks, artists, album_artists) =
                     crate::import::album_track_creator::parse_discogs_album(&album)?;
 
                 tracing::info!(
@@ -68,8 +69,17 @@ impl ImportHandle {
                     db_album
                 );
                 tracing::info!(
+                    "Parsed Discogs release into database models:\n{:#?}",
+                    db_release
+                );
+                tracing::info!(
                     "Parsed Discogs tracks into database models:\n{:#?}",
                     db_tracks
+                );
+                tracing::info!(
+                    "Parsed {} artists and {} album-artist relationships",
+                    artists.len(),
+                    album_artists.len()
                 );
 
                 // 2. Discover files
@@ -82,15 +92,47 @@ impl ImportHandle {
                 )
                 .await?;
 
-                // 4. Insert album + tracks with status='queued'
+                // 4. Insert or lookup artists (deduplicate across imports)
+                for artist in &artists {
+                    // Check if artist already exists by Discogs ID
+                    let existing = if let Some(ref discogs_id) = artist.discogs_artist_id {
+                        library_manager
+                            .get_artist_by_discogs_id(discogs_id)
+                            .await
+                            .map_err(|e| format!("Database error: {}", e))?
+                    } else {
+                        None
+                    };
+
+                    // Insert only if artist doesn't exist
+                    if existing.is_none() {
+                        library_manager
+                            .insert_artist(artist)
+                            .await
+                            .map_err(|e| format!("Failed to insert artist: {}", e))?;
+                    }
+                }
+
+                // 5. Insert album + release + tracks with status='queued'
                 library_manager
-                    .insert_album_with_tracks(&db_album, &db_tracks)
+                    .insert_album_with_release_and_tracks(&db_album, &db_release, &db_tracks)
                     .await
                     .map_err(|e| format!("Database error: {}", e))?;
 
+                // 6. Insert album-artist relationships
+                for album_artist in &album_artists {
+                    library_manager
+                        .insert_album_artist(album_artist)
+                        .await
+                        .map_err(|e| {
+                            format!("Failed to insert album-artist relationship: {}", e)
+                        })?;
+                }
+
                 tracing::info!(
-                    "Validated and queued album '{}' with {} tracks",
+                    "Validated and queued album '{}' (release: {}) with {} tracks",
                     db_album.title,
+                    db_release.id,
                     db_tracks.len()
                 );
 
@@ -101,6 +143,7 @@ impl ImportHandle {
                 self.requests_tx
                     .send(ImportRequest {
                         db_album,
+                        db_release,
                         tracks_to_files,
                         discovered_files,
                     })

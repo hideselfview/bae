@@ -1,8 +1,9 @@
 use crate::components::album_card::AlbumCard;
-use crate::database::DbAlbum;
+use crate::database::{DbAlbum, DbArtist};
 use crate::library_context::use_library_manager;
 use crate::Route;
 use dioxus::prelude::*;
+use std::collections::HashMap;
 use tracing::debug;
 
 /// Library browser page
@@ -12,11 +13,12 @@ pub fn Library() -> Element {
     let library_manager = use_library_manager();
     let mut albums = use_signal(Vec::<DbAlbum>::new);
     let mut filtered_albums = use_signal(Vec::<DbAlbum>::new);
+    let mut album_artists = use_signal(HashMap::<String, Vec<DbArtist>>::new);
     let mut loading = use_signal(|| true);
     let mut error = use_signal(|| None::<String>);
     let mut search_query = use_signal(String::new);
 
-    // Load albums on component mount
+    // Load albums and their artists on component mount
     use_effect(move || {
         debug!("Starting load_albums effect");
         let library_manager = library_manager.clone();
@@ -27,6 +29,17 @@ pub fn Library() -> Element {
 
             match library_manager.get().get_albums().await {
                 Ok(album_list) => {
+                    // Load artists for each album
+                    let mut artists_map = HashMap::new();
+                    for album in &album_list {
+                        if let Ok(artists) =
+                            library_manager.get().get_artists_for_album(&album.id).await
+                        {
+                            artists_map.insert(album.id.clone(), artists);
+                        }
+                    }
+
+                    album_artists.set(artists_map);
                     albums.set(album_list.clone());
                     filtered_albums.set(album_list);
                     loading.set(false);
@@ -46,11 +59,21 @@ pub fn Library() -> Element {
             if query.is_empty() {
                 filtered_albums.set(albums());
             } else {
+                let artists_map = album_artists();
                 let filtered = albums()
                     .into_iter()
                     .filter(|album| {
-                        album.title.to_lowercase().contains(&query)
-                            || album.artist_name.to_lowercase().contains(&query)
+                        // Search in album title
+                        if album.title.to_lowercase().contains(&query) {
+                            return true;
+                        }
+                        // Search in artist names
+                        if let Some(artists) = artists_map.get(&album.id) {
+                            return artists
+                                .iter()
+                                .any(|artist| artist.name.to_lowercase().contains(&query));
+                        }
+                        false
                     })
                     .collect();
                 filtered_albums.set(filtered);
@@ -160,7 +183,10 @@ pub fn Library() -> Element {
                             )}
                         }
                     }
-                    AlbumGrid { albums: filtered_albums() }
+                    AlbumGrid {
+                        albums: filtered_albums(),
+                        album_artists: album_artists()
+                    }
                 }
             }
         }
@@ -169,12 +195,15 @@ pub fn Library() -> Element {
 
 /// Grid component to display albums
 #[component]
-fn AlbumGrid(albums: Vec<DbAlbum>) -> Element {
+fn AlbumGrid(albums: Vec<DbAlbum>, album_artists: HashMap<String, Vec<DbArtist>>) -> Element {
     rsx! {
         div {
             class: "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6",
             for album in albums {
-                AlbumCard { album }
+                AlbumCard {
+                    album: album.clone(),
+                    artists: album_artists.get(&album.id).cloned().unwrap_or_default()
+                }
             }
         }
     }

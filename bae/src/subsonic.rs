@@ -358,20 +358,28 @@ async fn load_artists(
 ) -> Result<ArtistsResponse, LibraryError> {
     let albums = library_manager.get().get_albums().await?;
 
-    // Group artists by first letter
+    // Group artists by first letter, counting album appearances
     let mut artist_map: HashMap<String, HashMap<String, u32>> = HashMap::new();
 
-    for album in albums {
-        let first_letter = album
-            .artist_name
-            .chars()
-            .next()
-            .unwrap_or('A')
-            .to_uppercase()
-            .to_string();
+    for album in &albums {
+        // Get artists for this album
+        let artists = library_manager
+            .get()
+            .get_artists_for_album(&album.id)
+            .await?;
 
-        let artists = artist_map.entry(first_letter).or_default();
-        *artists.entry(album.artist_name).or_insert(0) += 1;
+        for artist in artists {
+            let first_letter = artist
+                .name
+                .chars()
+                .next()
+                .unwrap_or('A')
+                .to_uppercase()
+                .to_string();
+
+            let artist_map_entry = artist_map.entry(first_letter).or_default();
+            *artist_map_entry.entry(artist.name).or_insert(0) += 1;
+        }
     }
 
     let mut indices = Vec::new();
@@ -379,7 +387,7 @@ async fn load_artists(
         let artist_list: Vec<Artist> = artists
             .into_iter()
             .map(|(name, count)| Artist {
-                id: format!("artist_{}", name.replace(" ", "_")),
+                id: format!("artist_{}", name.replace(' ', "_")),
                 name,
                 album_count: count,
             })
@@ -411,11 +419,26 @@ async fn load_albums(
     for db_album in db_albums {
         let tracks = library_manager.get().get_tracks(&db_album.id).await?;
 
+        // Get artists for this album
+        let artists = library_manager
+            .get()
+            .get_artists_for_album(&db_album.id)
+            .await?;
+        let artist_name = if artists.is_empty() {
+            "Unknown Artist".to_string()
+        } else {
+            artists
+                .iter()
+                .map(|a| a.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+
         albums.push(Album {
             id: db_album.id.clone(),
             name: db_album.title,
-            artist: db_album.artist_name.clone(),
-            artist_id: format!("artist_{}", db_album.artist_name.replace(" ", "_")),
+            artist: artist_name.clone(),
+            artist_id: format!("artist_{}", artist_name.replace(' ', "_")),
             song_count: tracks.len() as u32,
             duration: 0, // TODO: Calculate from tracks
             year: db_album.year,
@@ -442,19 +465,45 @@ async fn load_album_with_songs(
 
     let tracks = library_manager.get().get_tracks(album_id).await?;
 
-    let songs: Vec<Song> = tracks
-        .into_iter()
-        .map(|track| Song {
+    // Get album artists
+    let album_artists = library_manager
+        .get()
+        .get_artists_for_album(&db_album.id)
+        .await?;
+    let album_artist_name = if album_artists.is_empty() {
+        "Unknown Artist".to_string()
+    } else {
+        album_artists
+            .iter()
+            .map(|a| a.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    let mut songs = Vec::new();
+    for track in tracks {
+        // Get track artists (for compilations/features)
+        let track_artists = library_manager
+            .get()
+            .get_artists_for_track(&track.id)
+            .await?;
+        let track_artist_name = if track_artists.is_empty() {
+            album_artist_name.clone()
+        } else {
+            track_artists
+                .iter()
+                .map(|a| a.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+
+        songs.push(Song {
             id: track.id,
             title: track.title,
             album: db_album.title.clone(),
-            artist: track
-                .artist_name
-                .as_ref()
-                .unwrap_or(&db_album.artist_name)
-                .clone(),
+            artist: track_artist_name.clone(),
             album_id: db_album.id.clone(),
-            artist_id: format!("artist_{}", db_album.artist_name.replace(" ", "_")),
+            artist_id: format!("artist_{}", track_artist_name.replace(' ', "_")),
             track: track.track_number,
             year: db_album.year,
             genre: None,
@@ -464,15 +513,15 @@ async fn load_album_with_songs(
             suffix: "flac".to_string(),
             duration: track.duration_ms.map(|ms| (ms / 1000) as i32),
             bit_rate: None,
-            path: format!("{}/{}", db_album.artist_name, db_album.title),
-        })
-        .collect();
+            path: format!("{}/{}", album_artist_name, db_album.title),
+        });
+    }
 
     let album = Album {
         id: db_album.id.clone(),
         name: db_album.title,
-        artist: db_album.artist_name.clone(),
-        artist_id: format!("artist_{}", db_album.artist_name.replace(" ", "_")),
+        artist: album_artist_name.clone(),
+        artist_id: format!("artist_{}", album_artist_name.replace(' ', "_")),
         song_count: songs.len() as u32,
         duration: songs.iter().map(|s| s.duration.unwrap_or(0) as u32).sum(),
         year: db_album.year,
@@ -641,7 +690,7 @@ async fn stream_cue_track_chunks(
     let chunk_range = track_position.start_chunk_index..=track_position.end_chunk_index;
     let chunks = library_manager
         .get()
-        .get_chunks_in_range(&file.album_id, chunk_range)
+        .get_chunks_in_range(&file.release_id, chunk_range)
         .await
         .map_err(|e| format!("Failed to get chunk range: {}", e))?;
 

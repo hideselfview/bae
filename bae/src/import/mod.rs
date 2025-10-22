@@ -28,4 +28,4 @@ mod types;
 // Public API exports
 pub use handle::ImportHandle;
 pub use service::{ImportConfig, ImportService};
-pub use types::{ImportProgress, SendRequestParams};
+pub use types::SendRequestParams;

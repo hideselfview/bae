@@ -122,17 +122,18 @@ impl ImportService {
 
         let ImportRequest {
             db_album,
+            db_release,
             tracks_to_files,
             discovered_files,
         } = request;
 
-        // Mark album as importing now that pipeline is starting
+        // Mark release as importing now that pipeline is starting
         library_manager
-            .mark_album_importing(&db_album.id)
+            .mark_release_importing(&db_release.id)
             .await
-            .map_err(|e| format!("Failed to mark album as importing: {}", e))?;
+            .map_err(|e| format!("Failed to mark release as importing: {}", e))?;
 
-        info!("Marked album as 'importing' - starting pipeline");
+        info!("Marked release as 'importing' - starting pipeline");
 
         // Send started progress
         let _ = self.progress_tx.send(ImportProgress::Started {
@@ -173,7 +174,7 @@ impl ImportService {
 
         let (pipeline, chunk_tx) = pipeline::build_pipeline(
             self.config.clone(),
-            db_album.id.clone(),
+            db_release.id.clone(),
             self.encryption_service.clone(),
             self.cloud_storage.clone(),
             library_manager.clone(),
@@ -203,18 +204,18 @@ impl ImportService {
         let persister = MetadataPersister::new(library_manager);
         persister
             .persist_album_metadata(
-                &db_album.id,
+                &db_release.id,
                 &tracks_to_files,
                 file_mappings,
                 self.config.chunk_size_bytes,
             )
             .await?;
 
-        // Mark album complete
+        // Mark release complete
         library_manager
-            .mark_album_complete(&db_album.id)
+            .mark_release_complete(&db_release.id)
             .await
-            .map_err(|e| format!("Failed to mark album complete: {}", e))?;
+            .map_err(|e| format!("Failed to mark release complete: {}", e))?;
 
         // Send completion event
         let _ = self.progress_tx.send(ImportProgress::Complete {

@@ -39,51 +39,142 @@ impl ImportStatus {
     }
 }
 
-/// Album metadata
+/// Artist metadata
 ///
-/// Represents the logical album entity. Currently imported from Discogs,
-/// but designed to support multiple metadata sources in the future.
-/// The discogs_master_id serves as the canonical album identifier for now.
+/// Represents an individual artist or band. Artists are linked to albums and tracks
+/// via junction tables (album_artists, track_artists) to support:
+/// - Multiple artists per album (collaborations)
+/// - Different artists per track (compilations, features)
+/// - Artist deduplication across imports
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DbArtist {
+    pub id: String,
+    pub name: String,
+    /// Sort name for alphabetical ordering (e.g., "Beatles, The")
+    pub sort_name: Option<String>,
+    /// Artist ID from Discogs (for deduplication across imports)
+    pub discogs_artist_id: Option<String>,
+    /// Artist ID from Bandcamp (for future multi-source support)
+    pub bandcamp_artist_id: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Links artists to albums (many-to-many)
+///
+/// Supports albums with multiple artists (e.g., collaborations).
+/// Position field maintains the order of artists for display.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbAlbumArtist {
+    pub id: String,
+    pub album_id: String,
+    pub artist_id: String,
+    /// Order of this artist in multi-artist albums (0-indexed)
+    pub position: i32,
+}
+
+/// Links artists to tracks (many-to-many)
+///
+/// Supports tracks with multiple artists (features, remixes, etc.).
+/// Role field distinguishes between main artist, featured artist, remixer, etc.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbTrackArtist {
+    pub id: String,
+    pub track_id: String,
+    pub artist_id: String,
+    /// Order of this artist in multi-artist tracks (0-indexed)
+    pub position: i32,
+    /// Role: "main", "featuring", "remixer", etc.
+    pub role: Option<String>,
+}
+
+/// Album metadata - represents a logical album (the "master")
+///
+/// A logical album can have multiple physical releases (e.g., "1973 Original", "2016 Remaster").
+/// This table stores the high-level album information that's common across all releases.
+/// Specific release details and import status are tracked in the `releases` table.
+///
+/// Artists are linked via the `album_artists` junction table to support multiple artists.
+///
+/// Supports multiple metadata sources:
+/// - Discogs: discogs_master_id links to the Discogs master release
+/// - Bandcamp: bandcamp_album_id would link to the Bandcamp album
+/// - Other sources can be added as needed
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DbAlbum {
     pub id: String,
     pub title: String,
-    pub artist_name: String,
     pub year: Option<i32>,
-    /// Master ID from metadata source (currently Discogs master ID)
-    pub discogs_master_id: String,
-    /// Specific release ID if user selected a particular pressing/version
-    pub discogs_release_id: Option<String>,
+    /// Master ID from Discogs (optional to support other metadata sources)
+    pub discogs_master_id: Option<String>,
+    /// Album ID from Bandcamp (optional, for future multi-source support)
+    pub bandcamp_album_id: Option<String>,
     pub cover_art_url: Option<String>,
+    /// True for "Various Artists" compilation albums
+    pub is_compilation: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Release metadata - represents a specific version/pressing of an album
+///
+/// A release is a physical or digital version of a logical album.
+/// Examples: "1973 Original Pressing", "2016 Remaster", "180g Vinyl", "Digital Release"
+///
+/// Files, tracks, and chunks belong to releases (not albums), because:
+/// - Users import specific releases, not abstract albums
+/// - Each release has its own audio files and metadata
+/// - Multiple releases of the same album can coexist in the library
+///
+/// The release_name field distinguishes between versions (e.g., "2016 Remaster").
+/// If the user doesn't specify a release, we create one with release_name=None.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DbRelease {
+    pub id: String,
+    /// Links to the logical album (DbAlbum)
+    pub album_id: String,
+    /// Human-readable release name (e.g., "2016 Remaster", "180g Vinyl")
+    pub release_name: Option<String>,
+    /// Release-specific year (may differ from album year)
+    pub year: Option<i32>,
+    /// Discogs release ID (optional)
+    pub discogs_release_id: Option<String>,
+    /// Bandcamp release ID (optional, for future multi-source support)
+    pub bandcamp_release_id: Option<String>,
     pub import_status: ImportStatus,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
-/// Track metadata within an album
+/// Track metadata within a release
 ///
-/// Represents a single track on an album. Tracks are linked to albums
-/// and may have their own artist (different from album artist).
+/// Represents a single track on a specific release. Tracks are linked to releases
+/// (not logical albums) because track listings can vary between releases.
+///
+/// Track artists are linked via the `track_artists` junction table to support:
+/// - Multiple artists per track (features, collaborations)
+/// - Different artists than the album artist (compilations)
+///
 /// The discogs_position field stores the track position from metadata
 /// (e.g., "A1", "1", "1-1" for vinyl sides).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DbTrack {
     pub id: String,
-    pub album_id: String,
+    /// Links to the specific release (DbRelease), not the logical album
+    pub release_id: String,
     pub title: String,
     pub track_number: Option<i32>,
     pub duration_ms: Option<i64>,
-    /// Track artist (may differ from album artist)
-    pub artist_name: Option<String>,
     /// Position from metadata source (e.g., "A1", "1", "1-1")
     pub discogs_position: Option<String>,
     pub import_status: ImportStatus,
     pub created_at: DateTime<Utc>,
 }
 
-/// Physical file belonging to an album
+/// Physical file belonging to a release
 ///
-/// Files are linked to albums, not tracks, because:
+/// Files are linked to releases (not logical albums or tracks), because:
+/// - Files are part of a specific release (e.g., "2016 Remaster" has different files than "1973 Original")
 /// - Some files are metadata (cover.jpg, .cue sheets) not associated with any track
 /// - Some files contain multiple tracks (CUE/FLAC: one FLAC file = entire album)
 /// - The file→track relationship is tracked via `db_track_position` table
@@ -93,8 +184,8 @@ pub struct DbTrack {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbFile {
     pub id: String,
-    /// Album this file belongs to
-    pub album_id: String,
+    /// Release this file belongs to
+    pub release_id: String,
     pub original_filename: String,
     pub file_size: i64,
     pub format: String,                // "flac", "mp3", etc.
@@ -104,15 +195,19 @@ pub struct DbFile {
     pub created_at: DateTime<Utc>,
 }
 
-/// Encrypted chunk of an album's data
+/// Encrypted chunk of a release's data
 ///
-/// Albums are split into encrypted chunks for cloud storage.
+/// Releases are split into encrypted chunks for cloud storage.
 /// Each chunk is stored separately and can be cached/streamed independently.
 /// The storage_location points to the encrypted chunk in cloud storage.
+///
+/// Chunks belong to releases (not logical albums) because each release has
+/// its own set of files and therefore its own chunks.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbChunk {
     pub id: String,
-    pub album_id: String,
+    /// Release this chunk belongs to
+    pub release_id: String,
     pub chunk_index: i32,
     pub encrypted_size: i64,
     /// Cloud storage URI (e.g., s3://bucket/chunks/{shard}/{chunk_id}.enc)
@@ -197,20 +292,73 @@ impl Database {
 
     /// Create all necessary tables
     async fn create_tables(&self) -> Result<(), sqlx::Error> {
-        // Albums table
-        sqlx::query(&format!(
+        // Artists table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS artists (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                sort_name TEXT,
+                discogs_artist_id TEXT,
+                bandcamp_artist_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Albums table (logical albums)
+        sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS albums (
                 id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
-                artist_name TEXT NOT NULL,
                 year INTEGER,
-                discogs_master_id TEXT NOT NULL,
-                discogs_release_id TEXT,
+                discogs_master_id TEXT,
+                bandcamp_album_id TEXT,
                 cover_art_url TEXT,
-                import_status TEXT NOT NULL DEFAULT '{}',
+                is_compilation BOOLEAN NOT NULL DEFAULT FALSE,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Album-Artist junction table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS album_artists (
+                id TEXT PRIMARY KEY,
+                album_id TEXT NOT NULL,
+                artist_id TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                FOREIGN KEY (album_id) REFERENCES albums (id) ON DELETE CASCADE,
+                FOREIGN KEY (artist_id) REFERENCES artists (id) ON DELETE CASCADE,
+                UNIQUE(album_id, artist_id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Releases table (specific versions/pressings of albums)
+        sqlx::query(&format!(
+            r#"
+            CREATE TABLE IF NOT EXISTS releases (
+                id TEXT PRIMARY KEY,
+                album_id TEXT NOT NULL,
+                release_name TEXT,
+                year INTEGER,
+                discogs_release_id TEXT,
+                bandcamp_release_id TEXT,
+                import_status TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (album_id) REFERENCES albums (id) ON DELETE CASCADE
             )
             "#,
             IMPORT_STATUS_QUEUED
@@ -223,15 +371,14 @@ impl Database {
             r#"
             CREATE TABLE IF NOT EXISTS tracks (
                 id TEXT PRIMARY KEY,
-                album_id TEXT NOT NULL,
+                release_id TEXT NOT NULL,
                 title TEXT NOT NULL,
                 track_number INTEGER,
                 duration_ms INTEGER,
-                artist_name TEXT,
                 discogs_position TEXT,
                 import_status TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
-                FOREIGN KEY (album_id) REFERENCES albums (id) ON DELETE CASCADE
+                FOREIGN KEY (release_id) REFERENCES releases (id) ON DELETE CASCADE
             )
             "#,
             IMPORT_STATUS_QUEUED
@@ -239,8 +386,25 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
-        // Files table (maps albums to actual files - audio or metadata)
-        // Files belong to albums, not tracks, because:
+        // Track-Artist junction table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS track_artists (
+                id TEXT PRIMARY KEY,
+                track_id TEXT NOT NULL,
+                artist_id TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                role TEXT,
+                FOREIGN KEY (track_id) REFERENCES tracks (id) ON DELETE CASCADE,
+                FOREIGN KEY (artist_id) REFERENCES artists (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Files table (maps releases to actual files - audio or metadata)
+        // Files belong to releases, not tracks, because:
         // - Metadata files (cover.jpg, .cue) aren't tied to specific tracks
         // - CUE/FLAC files contain multiple tracks in one file
         // Track→file relationship is tracked via track_positions table
@@ -248,7 +412,7 @@ impl Database {
             r#"
             CREATE TABLE IF NOT EXISTS files (
                 id TEXT PRIMARY KEY,
-                album_id TEXT NOT NULL,
+                release_id TEXT NOT NULL,
                 original_filename TEXT NOT NULL,
                 file_size INTEGER NOT NULL,
                 format TEXT NOT NULL,
@@ -256,25 +420,25 @@ impl Database {
                 audio_start_byte INTEGER,
                 has_cue_sheet BOOLEAN NOT NULL DEFAULT FALSE,
                 created_at TEXT NOT NULL,
-                FOREIGN KEY (album_id) REFERENCES albums (id) ON DELETE CASCADE
+                FOREIGN KEY (release_id) REFERENCES releases (id) ON DELETE CASCADE
             )
             "#,
         )
         .execute(&self.pool)
         .await?;
 
-        // Chunks table (encrypted album chunks for cloud storage)
+        // Chunks table (encrypted release chunks for cloud storage)
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS chunks (
                 id TEXT PRIMARY KEY,
-                album_id TEXT NOT NULL,
+                release_id TEXT NOT NULL,
                 chunk_index INTEGER NOT NULL,
                 encrypted_size INTEGER NOT NULL,
                 storage_location TEXT NOT NULL,
                 last_accessed TEXT,
                 created_at TEXT NOT NULL,
-                FOREIGN KEY (album_id) REFERENCES albums (id) ON DELETE CASCADE
+                FOREIGN KEY (release_id) REFERENCES releases (id) ON DELETE CASCADE
             )
             "#,
         )
@@ -338,15 +502,49 @@ impl Database {
         .await?;
 
         // Create indexes for performance
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_tracks_album_id ON tracks (album_id)")
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_artists_discogs_id ON artists (discogs_artist_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_album_artists_album_id ON album_artists (album_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_album_artists_artist_id ON album_artists (artist_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_track_artists_track_id ON track_artists (track_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_track_artists_artist_id ON track_artists (artist_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_releases_album_id ON releases (album_id)")
             .execute(&self.pool)
             .await?;
 
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_files_album_id ON files (album_id)")
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_tracks_release_id ON tracks (release_id)")
             .execute(&self.pool)
             .await?;
 
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_chunks_album_id ON chunks (album_id)")
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_files_release_id ON files (release_id)")
+            .execute(&self.pool)
+            .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_chunks_release_id ON chunks (release_id)")
             .execute(&self.pool)
             .await?;
 
@@ -379,26 +577,219 @@ impl Database {
         Ok(())
     }
 
+    /// Insert a new artist
+    pub async fn insert_artist(&self, artist: &DbArtist) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO artists (
+                id, name, sort_name, discogs_artist_id, 
+                bandcamp_artist_id, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&artist.id)
+        .bind(&artist.name)
+        .bind(&artist.sort_name)
+        .bind(&artist.discogs_artist_id)
+        .bind(&artist.bandcamp_artist_id)
+        .bind(artist.created_at.to_rfc3339())
+        .bind(artist.updated_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Get artist by Discogs artist ID (for deduplication)
+    pub async fn get_artist_by_discogs_id(
+        &self,
+        discogs_artist_id: &str,
+    ) -> Result<Option<DbArtist>, sqlx::Error> {
+        let row = sqlx::query("SELECT * FROM artists WHERE discogs_artist_id = ?")
+            .bind(discogs_artist_id)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        if let Some(row) = row {
+            Ok(Some(DbArtist {
+                id: row.get("id"),
+                name: row.get("name"),
+                sort_name: row.get("sort_name"),
+                discogs_artist_id: row.get("discogs_artist_id"),
+                bandcamp_artist_id: row.get("bandcamp_artist_id"),
+                created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
+                    .unwrap()
+                    .with_timezone(&Utc),
+                updated_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("updated_at"))
+                    .unwrap()
+                    .with_timezone(&Utc),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Insert album-artist relationship
+    pub async fn insert_album_artist(
+        &self,
+        album_artist: &DbAlbumArtist,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO album_artists (id, album_id, artist_id, position)
+            VALUES (?, ?, ?, ?)
+            "#,
+        )
+        .bind(&album_artist.id)
+        .bind(&album_artist.album_id)
+        .bind(&album_artist.artist_id)
+        .bind(album_artist.position)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Insert track-artist relationship
+    pub async fn insert_track_artist(
+        &self,
+        track_artist: &DbTrackArtist,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO track_artists (id, track_id, artist_id, position, role)
+            VALUES (?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&track_artist.id)
+        .bind(&track_artist.track_id)
+        .bind(&track_artist.artist_id)
+        .bind(track_artist.position)
+        .bind(&track_artist.role)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Get artists for an album (ordered by position)
+    pub async fn get_artists_for_album(
+        &self,
+        album_id: &str,
+    ) -> Result<Vec<DbArtist>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT a.* FROM artists a
+            JOIN album_artists aa ON a.id = aa.artist_id
+            WHERE aa.album_id = ?
+            ORDER BY aa.position
+            "#,
+        )
+        .bind(album_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut artists = Vec::new();
+        for row in rows {
+            artists.push(DbArtist {
+                id: row.get("id"),
+                name: row.get("name"),
+                sort_name: row.get("sort_name"),
+                discogs_artist_id: row.get("discogs_artist_id"),
+                bandcamp_artist_id: row.get("bandcamp_artist_id"),
+                created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
+                    .unwrap()
+                    .with_timezone(&Utc),
+                updated_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("updated_at"))
+                    .unwrap()
+                    .with_timezone(&Utc),
+            });
+        }
+
+        Ok(artists)
+    }
+
+    /// Get artists for a track (ordered by position)
+    pub async fn get_artists_for_track(
+        &self,
+        track_id: &str,
+    ) -> Result<Vec<DbArtist>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT a.* FROM artists a
+            JOIN track_artists ta ON a.id = ta.artist_id
+            WHERE ta.track_id = ?
+            ORDER BY ta.position
+            "#,
+        )
+        .bind(track_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut artists = Vec::new();
+        for row in rows {
+            artists.push(DbArtist {
+                id: row.get("id"),
+                name: row.get("name"),
+                sort_name: row.get("sort_name"),
+                discogs_artist_id: row.get("discogs_artist_id"),
+                bandcamp_artist_id: row.get("bandcamp_artist_id"),
+                created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
+                    .unwrap()
+                    .with_timezone(&Utc),
+                updated_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("updated_at"))
+                    .unwrap()
+                    .with_timezone(&Utc),
+            });
+        }
+
+        Ok(artists)
+    }
+
     /// Insert a new album
     pub async fn insert_album(&self, album: &DbAlbum) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
             INSERT INTO albums (
-                id, title, artist_name, year, discogs_master_id, 
-                discogs_release_id, cover_art_url, import_status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, title, year, discogs_master_id, 
+                bandcamp_album_id, cover_art_url, is_compilation, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&album.id)
         .bind(&album.title)
-        .bind(&album.artist_name)
         .bind(album.year)
         .bind(&album.discogs_master_id)
-        .bind(&album.discogs_release_id)
+        .bind(&album.bandcamp_album_id)
         .bind(&album.cover_art_url)
-        .bind(album.import_status)
+        .bind(album.is_compilation)
         .bind(album.created_at.to_rfc3339())
         .bind(album.updated_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Insert a new release
+    pub async fn insert_release(&self, release: &DbRelease) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO releases (
+                id, album_id, release_name, year, discogs_release_id,
+                bandcamp_release_id, import_status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&release.id)
+        .bind(&release.album_id)
+        .bind(&release.release_name)
+        .bind(release.year)
+        .bind(&release.discogs_release_id)
+        .bind(&release.bandcamp_release_id)
+        .bind(release.import_status)
+        .bind(release.created_at.to_rfc3339())
+        .bind(release.updated_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
 
@@ -410,17 +801,16 @@ impl Database {
         sqlx::query(
             r#"
             INSERT INTO tracks (
-                id, album_id, title, track_number, duration_ms, 
-                artist_name, discogs_position, import_status, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, release_id, title, track_number, duration_ms, 
+                discogs_position, import_status, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&track.id)
-        .bind(&track.album_id)
+        .bind(&track.release_id)
         .bind(&track.title)
         .bind(track.track_number)
         .bind(track.duration_ms)
-        .bind(&track.artist_name)
         .bind(&track.discogs_position)
         .bind(track.import_status)
         .bind(track.created_at.to_rfc3339())
@@ -430,10 +820,12 @@ impl Database {
         Ok(())
     }
 
-    /// Insert album and tracks in a single transaction
-    pub async fn insert_album_with_tracks(
+    /// Insert album, release, and tracks in a single transaction
+    /// Note: Artists and artist relationships should be inserted separately before calling this
+    pub async fn insert_album_with_release_and_tracks(
         &self,
         album: &DbAlbum,
+        release: &DbRelease,
         tracks: &[DbTrack],
     ) -> Result<(), sqlx::Error> {
         let mut tx = self.pool.begin().await?;
@@ -442,21 +834,41 @@ impl Database {
         sqlx::query(
             r#"
             INSERT INTO albums (
-                id, title, artist_name, year, discogs_master_id, 
-                discogs_release_id, cover_art_url, import_status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, title, year, discogs_master_id, 
+                bandcamp_album_id, cover_art_url, is_compilation, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&album.id)
         .bind(&album.title)
-        .bind(&album.artist_name)
         .bind(album.year)
         .bind(&album.discogs_master_id)
-        .bind(&album.discogs_release_id)
+        .bind(&album.bandcamp_album_id)
         .bind(&album.cover_art_url)
-        .bind(album.import_status)
+        .bind(album.is_compilation)
         .bind(album.created_at.to_rfc3339())
         .bind(album.updated_at.to_rfc3339())
+        .execute(&mut *tx)
+        .await?;
+
+        // Insert release
+        sqlx::query(
+            r#"
+            INSERT INTO releases (
+                id, album_id, release_name, year, discogs_release_id,
+                bandcamp_release_id, import_status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&release.id)
+        .bind(&release.album_id)
+        .bind(&release.release_name)
+        .bind(release.year)
+        .bind(&release.discogs_release_id)
+        .bind(&release.bandcamp_release_id)
+        .bind(release.import_status)
+        .bind(release.created_at.to_rfc3339())
+        .bind(release.updated_at.to_rfc3339())
         .execute(&mut *tx)
         .await?;
 
@@ -465,17 +877,16 @@ impl Database {
             sqlx::query(
                 r#"
                 INSERT INTO tracks (
-                    id, album_id, title, track_number, duration_ms, 
-                    artist_name, discogs_position, import_status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    id, release_id, title, track_number, duration_ms, 
+                    discogs_position, import_status, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 "#,
             )
             .bind(&track.id)
-            .bind(&track.album_id)
+            .bind(&track.release_id)
             .bind(&track.title)
             .bind(track.track_number)
             .bind(track.duration_ms)
-            .bind(&track.artist_name)
             .bind(&track.discogs_position)
             .bind(track.import_status)
             .bind(track.created_at.to_rfc3339())
@@ -501,24 +912,24 @@ impl Database {
         Ok(())
     }
 
-    /// Update album import status
-    pub async fn update_album_status(
+    /// Update release import status
+    pub async fn update_release_status(
         &self,
-        album_id: &str,
+        release_id: &str,
         status: ImportStatus,
     ) -> Result<(), sqlx::Error> {
-        sqlx::query("UPDATE albums SET import_status = ?, updated_at = ? WHERE id = ?")
+        sqlx::query("UPDATE releases SET import_status = ?, updated_at = ? WHERE id = ?")
             .bind(status)
             .bind(Utc::now().to_rfc3339())
-            .bind(album_id)
+            .bind(release_id)
             .execute(&self.pool)
             .await?;
         Ok(())
     }
 
-    /// Get all albums regardless of import status
+    /// Get all albums
     pub async fn get_albums(&self) -> Result<Vec<DbAlbum>, sqlx::Error> {
-        let rows = sqlx::query("SELECT * FROM albums ORDER BY artist_name, title")
+        let rows = sqlx::query("SELECT * FROM albums ORDER BY title")
             .fetch_all(&self.pool)
             .await?;
 
@@ -527,12 +938,11 @@ impl Database {
             albums.push(DbAlbum {
                 id: row.get("id"),
                 title: row.get("title"),
-                artist_name: row.get("artist_name"),
                 year: row.get("year"),
                 discogs_master_id: row.get("discogs_master_id"),
-                discogs_release_id: row.get("discogs_release_id"),
+                bandcamp_album_id: row.get("bandcamp_album_id"),
                 cover_art_url: row.get("cover_art_url"),
-                import_status: row.get("import_status"),
+                is_compilation: row.get("is_compilation"),
                 created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
                     .unwrap()
                     .with_timezone(&Utc),
@@ -545,7 +955,39 @@ impl Database {
         Ok(albums)
     }
 
-    /// Get tracks for an album
+    /// Get all releases for an album
+    pub async fn get_releases_for_album(
+        &self,
+        album_id: &str,
+    ) -> Result<Vec<DbRelease>, sqlx::Error> {
+        let rows = sqlx::query("SELECT * FROM releases WHERE album_id = ? ORDER BY created_at")
+            .bind(album_id)
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut releases = Vec::new();
+        for row in rows {
+            releases.push(DbRelease {
+                id: row.get("id"),
+                album_id: row.get("album_id"),
+                release_name: row.get("release_name"),
+                year: row.get("year"),
+                discogs_release_id: row.get("discogs_release_id"),
+                bandcamp_release_id: row.get("bandcamp_release_id"),
+                import_status: row.get("import_status"),
+                created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
+                    .unwrap()
+                    .with_timezone(&Utc),
+                updated_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("updated_at"))
+                    .unwrap()
+                    .with_timezone(&Utc),
+            });
+        }
+
+        Ok(releases)
+    }
+
+    /// Get a track by ID
     pub async fn get_track_by_id(&self, track_id: &str) -> Result<Option<DbTrack>, sqlx::Error> {
         let row = sqlx::query("SELECT * FROM tracks WHERE id = ?")
             .bind(track_id)
@@ -555,11 +997,10 @@ impl Database {
         if let Some(row) = row {
             Ok(Some(DbTrack {
                 id: row.get("id"),
-                album_id: row.get("album_id"),
+                release_id: row.get("release_id"),
                 title: row.get("title"),
                 track_number: row.get("track_number"),
                 duration_ms: row.get("duration_ms"),
-                artist_name: row.get("artist_name"),
                 discogs_position: row.get("discogs_position"),
                 import_status: row.get("import_status"),
                 created_at: row.get("created_at"),
@@ -569,9 +1010,13 @@ impl Database {
         }
     }
 
-    pub async fn get_tracks_for_album(&self, album_id: &str) -> Result<Vec<DbTrack>, sqlx::Error> {
-        let rows = sqlx::query("SELECT * FROM tracks WHERE album_id = ? ORDER BY track_number")
-            .bind(album_id)
+    /// Get tracks for a release
+    pub async fn get_tracks_for_release(
+        &self,
+        release_id: &str,
+    ) -> Result<Vec<DbTrack>, sqlx::Error> {
+        let rows = sqlx::query("SELECT * FROM tracks WHERE release_id = ? ORDER BY track_number")
+            .bind(release_id)
             .fetch_all(&self.pool)
             .await?;
 
@@ -579,11 +1024,10 @@ impl Database {
         for row in rows {
             tracks.push(DbTrack {
                 id: row.get("id"),
-                album_id: row.get("album_id"),
+                release_id: row.get("release_id"),
                 title: row.get("title"),
                 track_number: row.get("track_number"),
                 duration_ms: row.get("duration_ms"),
-                artist_name: row.get("artist_name"),
                 discogs_position: row.get("discogs_position"),
                 import_status: row.get("import_status"),
                 created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
@@ -600,13 +1044,13 @@ impl Database {
         sqlx::query(
             r#"
             INSERT INTO files (
-                id, album_id, original_filename, file_size, format, 
+                id, release_id, original_filename, file_size, format, 
                 flac_headers, audio_start_byte, has_cue_sheet, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&file.id)
-        .bind(&file.album_id)
+        .bind(&file.release_id)
         .bind(&file.original_filename)
         .bind(file.file_size)
         .bind(&file.format)
@@ -625,13 +1069,13 @@ impl Database {
         sqlx::query(
             r#"
             INSERT INTO chunks (
-                id, album_id, chunk_index, encrypted_size, 
+                id, release_id, chunk_index, encrypted_size, 
                 storage_location, last_accessed, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&chunk.id)
-        .bind(&chunk.album_id)
+        .bind(&chunk.release_id)
         .bind(chunk.chunk_index)
         .bind(chunk.encrypted_size)
         .bind(&chunk.storage_location)
@@ -666,16 +1110,19 @@ impl Database {
         Ok(())
     }
 
-    /// Get all chunks for an album (for testing/verification)
-    pub async fn get_chunks_for_album(&self, album_id: &str) -> Result<Vec<DbChunk>, sqlx::Error> {
+    /// Get all chunks for a release (for testing/verification)
+    pub async fn get_chunks_for_release(
+        &self,
+        release_id: &str,
+    ) -> Result<Vec<DbChunk>, sqlx::Error> {
         let rows = sqlx::query(
             r#"
             SELECT * FROM chunks
-            WHERE album_id = ?
+            WHERE release_id = ?
             ORDER BY chunk_index
             "#,
         )
-        .bind(album_id)
+        .bind(release_id)
         .fetch_all(&self.pool)
         .await?;
 
@@ -683,7 +1130,7 @@ impl Database {
         for row in rows {
             chunks.push(DbChunk {
                 id: row.get("id"),
-                album_id: row.get("album_id"),
+                release_id: row.get("release_id"),
                 chunk_index: row.get("chunk_index"),
                 encrypted_size: row.get("encrypted_size"),
                 storage_location: row.get("storage_location"),
@@ -696,7 +1143,7 @@ impl Database {
 
     /// Get chunks for a file (via file_chunks mapping)
     ///
-    /// Since files now belong to albums directly, we can join more simply.
+    /// Since files belong to releases, we join through the release_id.
     /// The file_chunks table tells us which chunk range this file spans.
     pub async fn get_chunks_for_file(&self, file_id: &str) -> Result<Vec<DbChunk>, sqlx::Error> {
         let rows = sqlx::query(
@@ -704,7 +1151,7 @@ impl Database {
             SELECT c.* FROM chunks c
             JOIN file_chunks fc ON c.chunk_index >= fc.start_chunk_index 
                 AND c.chunk_index <= fc.end_chunk_index
-                AND c.album_id = (SELECT album_id FROM files WHERE id = ?)
+                AND c.release_id = (SELECT release_id FROM files WHERE id = ?)
             WHERE fc.file_id = ?
             ORDER BY c.chunk_index
             "#,
@@ -718,7 +1165,7 @@ impl Database {
         for row in rows {
             chunks.push(DbChunk {
                 id: row.get("id"),
-                album_id: row.get("album_id"),
+                release_id: row.get("release_id"),
                 chunk_index: row.get("chunk_index"),
                 encrypted_size: row.get("encrypted_size"),
                 storage_location: row.get("storage_location"),
@@ -736,10 +1183,13 @@ impl Database {
         Ok(chunks)
     }
 
-    /// Get files for an album
-    pub async fn get_files_for_album(&self, album_id: &str) -> Result<Vec<DbFile>, sqlx::Error> {
-        let rows = sqlx::query("SELECT * FROM files WHERE album_id = ?")
-            .bind(album_id)
+    /// Get files for a release
+    pub async fn get_files_for_release(
+        &self,
+        release_id: &str,
+    ) -> Result<Vec<DbFile>, sqlx::Error> {
+        let rows = sqlx::query("SELECT * FROM files WHERE release_id = ?")
+            .bind(release_id)
             .fetch_all(&self.pool)
             .await?;
 
@@ -747,7 +1197,7 @@ impl Database {
         for row in rows {
             files.push(DbFile {
                 id: row.get("id"),
-                album_id: row.get("album_id"),
+                release_id: row.get("release_id"),
                 original_filename: row.get("original_filename"),
                 file_size: row.get("file_size"),
                 format: row.get("format"),
@@ -773,7 +1223,7 @@ impl Database {
         if let Some(row) = row {
             Ok(Some(DbFile {
                 id: row.get("id"),
-                album_id: row.get("album_id"),
+                release_id: row.get("release_id"),
                 original_filename: row.get("original_filename"),
                 file_size: row.get("file_size"),
                 format: row.get("format"),
@@ -863,16 +1313,16 @@ impl Database {
         }
     }
 
-    /// Get chunks in a specific range for an album (for CUE track streaming)
+    /// Get chunks in a specific range for a release (for CUE track streaming)
     pub async fn get_chunks_in_range(
         &self,
-        album_id: &str,
+        release_id: &str,
         chunk_range: std::ops::RangeInclusive<i32>,
     ) -> Result<Vec<DbChunk>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT * FROM chunks WHERE album_id = ? AND chunk_index >= ? AND chunk_index <= ? ORDER BY chunk_index"
+            "SELECT * FROM chunks WHERE release_id = ? AND chunk_index >= ? AND chunk_index <= ? ORDER BY chunk_index"
         )
-        .bind(album_id)
+        .bind(release_id)
         .bind(*chunk_range.start())
         .bind(*chunk_range.end())
         .fetch_all(&self.pool)
@@ -882,7 +1332,7 @@ impl Database {
         for row in rows {
             chunks.push(DbChunk {
                 id: row.get("id"),
-                album_id: row.get("album_id"),
+                release_id: row.get("release_id"),
                 chunk_index: row.get("chunk_index"),
                 encrypted_size: row.get("encrypted_size"),
                 storage_location: row.get("storage_location"),
@@ -902,39 +1352,108 @@ impl Database {
 }
 
 /// Helper functions for creating database records from Discogs data
+impl DbArtist {
+    /// Create an artist from Discogs artist data
+    pub fn from_discogs_artist(discogs_artist_id: &str, name: &str) -> Self {
+        let now = Utc::now();
+        DbArtist {
+            id: Uuid::new_v4().to_string(),
+            name: name.to_string(),
+            sort_name: None, // Could be computed from name (e.g., "Beatles, The")
+            discogs_artist_id: Some(discogs_artist_id.to_string()),
+            bandcamp_artist_id: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+}
+
+impl DbAlbumArtist {
+    pub fn new(album_id: &str, artist_id: &str, position: i32) -> Self {
+        DbAlbumArtist {
+            id: Uuid::new_v4().to_string(),
+            album_id: album_id.to_string(),
+            artist_id: artist_id.to_string(),
+            position,
+        }
+    }
+}
+
+impl DbTrackArtist {
+    pub fn new(track_id: &str, artist_id: &str, position: i32, role: Option<String>) -> Self {
+        DbTrackArtist {
+            id: Uuid::new_v4().to_string(),
+            track_id: track_id.to_string(),
+            artist_id: artist_id.to_string(),
+            position,
+            role,
+        }
+    }
+}
+
 impl DbAlbum {
-    pub fn from_discogs_master(master: &crate::models::DiscogsMaster, artist_name: &str) -> Self {
+    /// Create a logical album from a Discogs master
+    /// Note: Artists should be created separately and linked via DbAlbumArtist
+    pub fn from_discogs_master(master: &crate::models::DiscogsMaster) -> Self {
         let now = Utc::now();
         DbAlbum {
             id: Uuid::new_v4().to_string(),
             title: master.title.clone(),
-            artist_name: artist_name.to_string(),
             year: master.year.map(|y| y as i32),
-            discogs_master_id: master.id.clone(),
-            discogs_release_id: None,
+            discogs_master_id: Some(master.id.clone()),
+            bandcamp_album_id: None,
             cover_art_url: master.thumb.clone(),
+            is_compilation: false, // Will be set based on artist analysis
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    /// Create a logical album from a Discogs release
+    /// Note: Artists should be created separately and linked via DbAlbumArtist
+    pub fn from_discogs_release(release: &crate::models::DiscogsRelease) -> Self {
+        let now = Utc::now();
+        DbAlbum {
+            id: Uuid::new_v4().to_string(),
+            title: release.title.clone(),
+            year: release.year.map(|y| y as i32),
+            discogs_master_id: release.master_id.clone(),
+            bandcamp_album_id: None,
+            cover_art_url: release.thumb.clone(),
+            is_compilation: false, // Will be set based on artist analysis
+            created_at: now,
+            updated_at: now,
+        }
+    }
+}
+
+impl DbRelease {
+    /// Create a release from a Discogs release
+    pub fn from_discogs_release(album_id: &str, release: &crate::models::DiscogsRelease) -> Self {
+        let now = Utc::now();
+        DbRelease {
+            id: Uuid::new_v4().to_string(),
+            album_id: album_id.to_string(),
+            release_name: None, // Could parse from release title if needed
+            year: release.year.map(|y| y as i32),
+            discogs_release_id: Some(release.id.clone()),
+            bandcamp_release_id: None,
             import_status: ImportStatus::Queued,
             created_at: now,
             updated_at: now,
         }
     }
 
-    pub fn from_discogs_release(
-        release: &crate::models::DiscogsRelease,
-        artist_name: &str,
-    ) -> Self {
+    /// Create a default release when user only selects a master (no specific release)
+    pub fn default_for_master(album_id: &str, year: Option<i32>) -> Self {
         let now = Utc::now();
-        DbAlbum {
+        DbRelease {
             id: Uuid::new_v4().to_string(),
-            title: release.title.clone(),
-            artist_name: artist_name.to_string(),
-            year: release.year.map(|y| y as i32),
-            discogs_master_id: release.master_id.clone().unwrap_or_else(|| {
-                // If release doesn't have master_id, use release_id as fallback
-                release.id.clone()
-            }),
-            discogs_release_id: Some(release.id.clone()),
-            cover_art_url: release.thumb.clone(),
+            album_id: album_id.to_string(),
+            release_name: None,
+            year,
+            discogs_release_id: None,
+            bandcamp_release_id: None,
             import_status: ImportStatus::Queued,
             created_at: now,
             updated_at: now,
@@ -945,16 +1464,15 @@ impl DbAlbum {
 impl DbTrack {
     pub fn from_discogs_track(
         discogs_track: &crate::models::DiscogsTrack,
-        album_id: &str,
+        release_id: &str,
         track_index: usize,
     ) -> Result<Self, String> {
         Ok(DbTrack {
             id: Uuid::new_v4().to_string(),
-            album_id: album_id.to_string(),
+            release_id: release_id.to_string(),
             title: discogs_track.title.clone(),
             track_number: Some((track_index + 1) as i32),
             duration_ms: None, // Will be filled in during track mapping
-            artist_name: None, // Will be filled in during track mapping
             discogs_position: Some(discogs_track.position.clone()),
             import_status: ImportStatus::Queued,
             created_at: Utc::now(),
@@ -965,12 +1483,12 @@ impl DbTrack {
 impl DbFile {
     /// Create a regular file record (one file = one track)
     ///
-    /// The file is linked to the album, not a specific track.
+    /// The file is linked to the release, not a specific track.
     /// Track→file relationship is established via db_track_position.
-    pub fn new(album_id: &str, original_filename: &str, file_size: i64, format: &str) -> Self {
+    pub fn new(release_id: &str, original_filename: &str, file_size: i64, format: &str) -> Self {
         DbFile {
             id: Uuid::new_v4().to_string(),
-            album_id: album_id.to_string(),
+            release_id: release_id.to_string(),
             original_filename: original_filename.to_string(),
             file_size,
             format: format.to_string(),
@@ -983,10 +1501,10 @@ impl DbFile {
 
     /// Create a CUE/FLAC file record (one file = multiple tracks)
     ///
-    /// The file is linked to the album. Multiple tracks will reference this
+    /// The file is linked to the release. Multiple tracks will reference this
     /// same file via db_track_position, each with different time ranges.
     pub fn new_cue_flac(
-        album_id: &str,
+        release_id: &str,
         original_filename: &str,
         file_size: i64,
         flac_headers: Vec<u8>,
@@ -994,7 +1512,7 @@ impl DbFile {
     ) -> Self {
         DbFile {
             id: Uuid::new_v4().to_string(),
-            album_id: album_id.to_string(),
+            release_id: release_id.to_string(),
             original_filename: original_filename.to_string(),
             file_size,
             format: "flac".to_string(),
@@ -1007,8 +1525,8 @@ impl DbFile {
 }
 
 impl DbChunk {
-    pub fn from_album_chunk(
-        album_id: &str,
+    pub fn from_release_chunk(
+        release_id: &str,
         chunk_id: &str,
         chunk_index: i32,
         encrypted_size: usize,
@@ -1016,7 +1534,7 @@ impl DbChunk {
     ) -> Self {
         DbChunk {
             id: chunk_id.to_string(),
-            album_id: album_id.to_string(),
+            release_id: release_id.to_string(),
             chunk_index,
             encrypted_size: encrypted_size as i64,
             storage_location: storage_location.to_string(),

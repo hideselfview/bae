@@ -42,7 +42,7 @@ use tokio_stream::wrappers::ReceiverStream;
 /// avoiding heap allocation and virtual calls that `BoxStream` would require.
 pub(super) fn build_pipeline(
     config: ImportConfig,
-    album_id: String,
+    release_id: String,
     encryption_service: EncryptionService,
     cloud_storage: CloudStorageManager,
     library_manager: LibraryManager,
@@ -80,14 +80,14 @@ pub(super) fn build_pipeline(
         .buffer_unordered(config.max_upload_workers)
         // Stage 4: Persist to DB and handle progress
         .map(move |upload_result| {
-            let album_id = album_id.clone();
+            let release_id = release_id.clone();
             let library_manager = library_manager.clone();
             let progress_emitter = progress_emitter.clone();
 
             async move {
                 persist_and_track_progress(
                     upload_result,
-                    &album_id,
+                    &release_id,
                     &library_manager,
                     &progress_emitter,
                 )
@@ -197,11 +197,11 @@ pub(super) async fn upload_chunk(
 /// Integrity is guaranteed by AES-GCM's authentication tag - no separate checksum needed.
 pub(super) async fn persist_chunk(
     chunk: &UploadedChunk,
-    album_id: &str,
+    release_id: &str,
     library_manager: &LibraryManager,
 ) -> Result<(), String> {
-    let db_chunk = DbChunk::from_album_chunk(
-        album_id,
+    let db_chunk = DbChunk::from_release_chunk(
+        release_id,
         &chunk.chunk_id,
         chunk.chunk_index,
         chunk.encrypted_size,
@@ -225,14 +225,14 @@ pub(super) async fn persist_chunk(
 /// This is where the streaming pipeline meets the database and UI.
 pub(super) async fn persist_and_track_progress(
     upload_result: Result<UploadedChunk, String>,
-    album_id: &str,
+    release_id: &str,
     library_manager: &LibraryManager,
     progress_emitter: &ImportProgressEmitter,
 ) -> Result<(), String> {
     let uploaded_chunk = upload_result?;
 
     // Persist chunk to database
-    persist_chunk(&uploaded_chunk, album_id, library_manager).await?;
+    persist_chunk(&uploaded_chunk, release_id, library_manager).await?;
 
     // Track progress and get newly completed tracks
     let newly_completed_tracks = progress_emitter.on_chunk_complete(uploaded_chunk.chunk_index);
@@ -244,10 +244,14 @@ pub(super) async fn persist_and_track_progress(
             .await
             .map_err(|e| format!("Failed to mark track complete: {}", e))?;
 
-        progress_emitter.emit(crate::import::types::ImportProgress::TrackComplete {
-            album_id: album_id.to_string(),
-            track_id,
-        });
+        // Get the album_id for progress reporting (tracks are now linked to releases)
+        let album_id = library_manager
+            .get_release_id_for_track(&track_id)
+            .await
+            .map_err(|e| format!("Failed to get release for track: {}", e))?;
+
+        progress_emitter
+            .emit(crate::import::types::ImportProgress::TrackComplete { album_id, track_id });
     }
 
     Ok(())
