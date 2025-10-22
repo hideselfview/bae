@@ -4,7 +4,7 @@ use crate::library::SharedLibraryManager;
 use crate::playback;
 
 #[derive(Clone)]
-pub struct UIContext {
+pub struct AppContext {
     pub library_manager: SharedLibraryManager,
     pub config: config::Config,
     pub import_handle: import::ImportHandle,

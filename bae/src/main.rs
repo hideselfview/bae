@@ -21,7 +21,7 @@ use subsonic::create_router;
 
 /// Root application context containing all top-level dependencies
 // Import UIContext from the ui module
-pub use ui::UIContext;
+pub use ui::AppContext;
 
 /// Initialize cache manager
 async fn create_cache_manager() -> cache::CacheManager {
@@ -150,7 +150,7 @@ fn main() {
     );
 
     // Create UI context
-    let ui_context = UIContext {
+    let ui_context = AppContext {
         library_manager: library_manager.clone(),
         config: config.clone(),
         import_handle,

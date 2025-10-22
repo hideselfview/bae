@@ -3,7 +3,7 @@ use dioxus::prelude::*;
 
 use crate::ui::components::album_import::ImportWorkflowManager;
 use crate::ui::components::*;
-use crate::ui::UIContext;
+use crate::ui::AppContext;
 
 pub const FAVICON: Asset = asset!("/assets/favicon.ico");
 pub const MAIN_CSS: Asset = asset!("/assets/main.css");
@@ -34,7 +34,7 @@ fn make_window() -> WindowBuilder {
         .with_inner_size(dioxus::desktop::LogicalSize::new(1200, 800))
 }
 
-pub fn launch_app(context: UIContext) {
+pub fn launch_app(context: AppContext) {
     LaunchBuilder::desktop()
         .with_cfg(make_config())
         .with_context_provider(move || Box::new(context.clone()))

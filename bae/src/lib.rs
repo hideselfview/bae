@@ -7,7 +7,7 @@ pub mod config;
 pub mod ui;
 
 // Re-export UIContext at crate root for easier access
-pub use ui::UIContext;
+pub use ui::AppContext;
 
 pub mod cache;
 pub mod cloud_storage;

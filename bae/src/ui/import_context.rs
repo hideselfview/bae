@@ -14,7 +14,7 @@ pub enum SearchView {
 }
 
 #[derive(Clone)]
-pub struct AlbumImportContext {
+pub struct ImportContext {
     pub search_query: Signal<String>,
     pub search_results: Signal<Vec<DiscogsSearchResult>>,
     pub is_searching_masters: Signal<bool>,
@@ -26,7 +26,7 @@ pub struct AlbumImportContext {
     client: DiscogsClient,
 }
 
-impl AlbumImportContext {
+impl ImportContext {
     pub fn new(config: &crate::config::Config) -> Self {
         Self {
             search_query: use_signal(String::new),
@@ -166,7 +166,7 @@ impl AlbumImportContext {
 #[component]
 pub fn AlbumImportContextProvider(children: Element) -> Element {
     let config = use_config();
-    let album_import_ctx = AlbumImportContext::new(&config);
+    let album_import_ctx = ImportContext::new(&config);
 
     use_context_provider(move || album_import_ctx);
 

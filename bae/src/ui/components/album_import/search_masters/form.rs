@@ -1,10 +1,10 @@
-use crate::ui::album_import_context::AlbumImportContext;
+use crate::ui::import_context::ImportContext;
 use dioxus::prelude::*;
 
 /// Search masters input form with text field and search button
 #[component]
 pub fn SearchMastersForm() -> Element {
-    let album_import_ctx = use_context::<AlbumImportContext>();
+    let album_import_ctx = use_context::<ImportContext>();
     let mut search_query = album_import_ctx.search_query;
 
     rsx! {

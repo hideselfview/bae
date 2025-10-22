@@ -1,5 +1,5 @@
 use crate::discogs::DiscogsMasterReleaseVersion;
-use crate::ui::album_import_context::AlbumImportContext;
+use crate::ui::import_context::ImportContext;
 use dioxus::prelude::*;
 
 #[derive(Props, PartialEq, Clone)]
@@ -10,7 +10,7 @@ pub struct ReleaseItemProps {
 
 #[component]
 pub fn ReleaseItem(props: ReleaseItemProps) -> Element {
-    let album_import_ctx = use_context::<AlbumImportContext>();
+    let album_import_ctx = use_context::<ImportContext>();
     rsx! {
         tr {
             class: "hover:bg-gray-50",

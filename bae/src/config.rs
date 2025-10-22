@@ -274,6 +274,6 @@ impl Config {
 /// The config is provided via UIContext in main.rs
 pub fn use_config() -> Config {
     use dioxus::prelude::use_context;
-    let context = use_context::<crate::UIContext>();
+    let context = use_context::<crate::ui::AppContext>();
     context.config
 }

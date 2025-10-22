@@ -1,11 +1,11 @@
 use super::{release_list::ReleaseList, search_masters::SearchMastersPage};
-use crate::ui::album_import_context::{AlbumImportContext, SearchView};
+use crate::ui::import_context::{ImportContext, SearchView};
 use dioxus::prelude::*;
 
 /// Manages the import workflow and navigation between search and releases views
 #[component]
 pub fn ImportWorkflowManager() -> Element {
-    let album_import_ctx = use_context::<AlbumImportContext>();
+    let album_import_ctx = use_context::<ImportContext>();
     let album_import_ctx_clone = album_import_ctx.clone();
 
     let on_release_back = {

@@ -1,10 +1,10 @@
-use crate::ui::album_import_context::AlbumImportContext;
+use crate::ui::import_context::ImportContext;
 use dioxus::prelude::*;
 
 /// Displays loading and error states for search masters operations
 #[component]
 pub fn SearchMastersStatus() -> Element {
-    let album_import_ctx = use_context::<AlbumImportContext>();
+    let album_import_ctx = use_context::<ImportContext>();
 
     rsx! {
         if *album_import_ctx.is_searching_masters.read() {
