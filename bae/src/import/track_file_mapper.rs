@@ -3,7 +3,7 @@ use tracing::{debug, info, warn};
 
 use crate::cue_flac::CueFlacProcessor;
 use crate::db::DbTrack;
-use crate::import::types::{DiscoveredFile, TrackSourceFile};
+use crate::import::types::{DiscoveredFile, TrackFile};
 
 /// Map tracks to their source audio files using already-discovered files.
 ///
@@ -12,7 +12,7 @@ use crate::import::types::{DiscoveredFile, TrackSourceFile};
 pub async fn map_tracks_to_files(
     tracks: &[DbTrack],
     discovered_files: &[DiscoveredFile],
-) -> Result<Vec<TrackSourceFile>, String> {
+) -> Result<Vec<TrackFile>, String> {
     info!(
         "Mapping {} tracks using {} pre-discovered files",
         tracks.len(),
@@ -40,7 +40,7 @@ pub async fn map_tracks_to_files(
 fn map_tracks_to_cue_flac(
     cue_flac_pairs: Vec<crate::cue_flac::CueFlacPair>,
     tracks: &[DbTrack],
-) -> Result<Vec<TrackSourceFile>, String> {
+) -> Result<Vec<TrackFile>, String> {
     let mut mappings = Vec::new();
 
     for pair in cue_flac_pairs {
@@ -59,7 +59,7 @@ fn map_tracks_to_cue_flac(
         // For CUE/FLAC, all tracks map to the same FLAC file
         for (index, cue_track) in cue_sheet.tracks.iter().enumerate() {
             if let Some(db_track) = tracks.get(index) {
-                mappings.push(TrackSourceFile {
+                mappings.push(TrackFile {
                     db_track_id: db_track.id.clone(),
                     file_path: pair.flac_path.clone(),
                 });
@@ -85,7 +85,7 @@ fn map_tracks_to_cue_flac(
 fn map_tracks_to_individual_files(
     file_paths: &[PathBuf],
     tracks: &[DbTrack],
-) -> Result<Vec<TrackSourceFile>, String> {
+) -> Result<Vec<TrackFile>, String> {
     let audio_files = filter_audio_files(file_paths);
 
     if audio_files.is_empty() {
@@ -121,7 +121,7 @@ fn map_tracks_to_individual_files(
 
     for (index, track) in tracks.iter().enumerate() {
         if let Some(audio_file) = audio_files.get(index) {
-            mappings.push(TrackSourceFile {
+            mappings.push(TrackFile {
                 db_track_id: track.id.clone(),
                 file_path: audio_file.clone(),
             });

@@ -1,7 +1,7 @@
-use crate::chunking::FileChunkMapping;
+use crate::chunking::FileToChunks;
 use crate::cue_flac::CueFlacProcessor;
 use crate::db::{DbCueSheet, DbFile, DbFileChunk, DbTrackPosition};
-use crate::import::types::TrackSourceFile;
+use crate::import::types::TrackFile;
 use crate::library::LibraryManager;
 use std::collections::HashMap;
 use std::path::Path;
@@ -38,18 +38,18 @@ impl<'a> MetadataPersister<'a> {
     pub async fn persist_album_metadata(
         &self,
         release_id: &str,
-        track_files: &[TrackSourceFile],
-        chunk_mappings: Vec<FileChunkMapping>,
+        track_files: &[TrackFile],
+        files_to_chunks: Vec<FileToChunks>,
         chunk_size_bytes: usize,
     ) -> Result<(), String> {
         // Create a lookup map for chunk mappings by file path
-        let chunk_lookup: HashMap<&Path, &FileChunkMapping> = chunk_mappings
+        let chunk_lookup: HashMap<&Path, &FileToChunks> = files_to_chunks
             .iter()
             .map(|mapping| (mapping.file_path.as_path(), mapping))
             .collect();
 
         // Group track mappings by source file to handle CUE/FLAC
-        let mut file_groups: HashMap<&Path, Vec<&TrackSourceFile>> = HashMap::new();
+        let mut file_groups: HashMap<&Path, Vec<&TrackFile>> = HashMap::new();
         for mapping in track_files {
             file_groups
                 .entry(mapping.file_path.as_path())
@@ -58,7 +58,7 @@ impl<'a> MetadataPersister<'a> {
         }
 
         for (source_path, file_mappings) in file_groups {
-            let chunk_mapping = chunk_lookup.get(source_path).ok_or_else(|| {
+            let file_to_chunks = chunk_lookup.get(source_path).ok_or_else(|| {
                 format!("No chunk mapping found for file: {}", source_path.display())
             })?;
 
@@ -84,7 +84,7 @@ impl<'a> MetadataPersister<'a> {
                     release_id,
                     source_path,
                     file_mappings,
-                    chunk_mapping,
+                    file_to_chunks,
                     file_size,
                     chunk_size_bytes,
                 )
@@ -95,7 +95,7 @@ impl<'a> MetadataPersister<'a> {
                     self.persist_individual_file(
                         release_id,
                         mapping,
-                        chunk_mapping,
+                        file_to_chunks,
                         file_size,
                         &format,
                     )
@@ -118,8 +118,8 @@ impl<'a> MetadataPersister<'a> {
         &self,
         release_id: &str,
         source_path: &Path,
-        file_mappings: Vec<&TrackSourceFile>,
-        chunk_mapping: &FileChunkMapping,
+        file_mappings: Vec<&TrackFile>,
+        files_to_chunks: &FileToChunks,
         file_size: i64,
         chunk_size_bytes: usize,
     ) -> Result<(), String> {
@@ -148,10 +148,10 @@ impl<'a> MetadataPersister<'a> {
         // Store file-to-chunk mapping in database
         let db_file_chunk = DbFileChunk::new(
             &file_id,
-            chunk_mapping.start_chunk_index,
-            chunk_mapping.end_chunk_index,
-            chunk_mapping.start_byte_offset,
-            chunk_mapping.end_byte_offset,
+            files_to_chunks.start_chunk_index,
+            files_to_chunks.end_chunk_index,
+            files_to_chunks.start_byte_offset,
+            files_to_chunks.end_byte_offset,
         );
         self.library
             .add_file_chunk_mapping(&db_file_chunk)
@@ -195,8 +195,8 @@ impl<'a> MetadataPersister<'a> {
                 };
 
                 // Calculate chunk indices relative to the file's position in the album
-                let file_start_byte = chunk_mapping.start_byte_offset
-                    + (chunk_mapping.start_chunk_index as i64 * chunk_size);
+                let file_start_byte = files_to_chunks.start_byte_offset
+                    + (files_to_chunks.start_chunk_index as i64 * chunk_size);
                 let absolute_start_byte = file_start_byte + start_byte;
                 let absolute_end_byte = file_start_byte + end_byte;
 
@@ -230,8 +230,8 @@ impl<'a> MetadataPersister<'a> {
     async fn persist_individual_file(
         &self,
         release_id: &str,
-        mapping: &TrackSourceFile,
-        chunk_mapping: &FileChunkMapping,
+        mapping: &TrackFile,
+        files_to_chunks: &FileToChunks,
         file_size: i64,
         format: &str,
     ) -> Result<(), String> {
@@ -250,10 +250,10 @@ impl<'a> MetadataPersister<'a> {
         // Store file-to-chunk mapping in database
         let db_file_chunk = DbFileChunk::new(
             &file_id,
-            chunk_mapping.start_chunk_index,
-            chunk_mapping.end_chunk_index,
-            chunk_mapping.start_byte_offset,
-            chunk_mapping.end_byte_offset,
+            files_to_chunks.start_chunk_index,
+            files_to_chunks.end_chunk_index,
+            files_to_chunks.start_byte_offset,
+            files_to_chunks.end_byte_offset,
         );
         self.library
             .add_file_chunk_mapping(&db_file_chunk)
@@ -268,8 +268,8 @@ impl<'a> MetadataPersister<'a> {
             &file_id,
             0, // start_time_ms: 0 = beginning of file
             0, // end_time_ms: 0 = end of file (convention for full file)
-            chunk_mapping.start_chunk_index,
-            chunk_mapping.end_chunk_index,
+            files_to_chunks.start_chunk_index,
+            files_to_chunks.end_chunk_index,
         );
         self.library
             .add_track_position(&track_position)

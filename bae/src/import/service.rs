@@ -20,7 +20,7 @@
 
 use crate::cloud_storage::CloudStorageManager;
 use crate::encryption::EncryptionService;
-use crate::import::album_chunk_layout::AlbumDataLayout;
+use crate::import::album_file_layout::AlbumFileLayout;
 use crate::import::handle::{ImportHandle, ImportRequest};
 use crate::import::metadata_persister::MetadataPersister;
 use crate::import::pipeline;
@@ -141,35 +141,35 @@ impl ImportService {
         });
 
         // Analyze album layout: files → chunks → tracks
-        let layout = AlbumDataLayout::build(
+        let file_layout = AlbumFileLayout::build(
             discovered_files,
             &tracks_to_files,
             self.config.chunk_size_bytes,
         )?;
 
-        info!(
-            "Will stream {} chunks across {} files",
-            layout.total_chunks,
-            layout.file_mappings.len()
-        );
-
         // Destructure layout to move ownership of each piece to where it's needed
-        let AlbumDataLayout {
-            file_mappings,
+        let AlbumFileLayout {
+            files_to_chunks,
             total_chunks,
             chunk_to_track,
             track_chunk_counts,
-        } = layout;
+        } = file_layout;
+
+        info!(
+            "Will stream {} chunks across {} files",
+            total_chunks,
+            files_to_chunks.len()
+        );
 
         // ========== STREAMING PIPELINE ==========
         // Read → Encrypt → Upload → Persist (bounded parallelism at each stage)
 
         let progress_emitter = ImportProgressEmitter::new(
             db_album.id.clone(),
+            total_chunks,
             chunk_to_track,
             track_chunk_counts,
             self.progress_tx.clone(),
-            total_chunks,
         );
 
         let (pipeline, chunk_tx) = pipeline::build_pipeline(
@@ -181,9 +181,9 @@ impl ImportService {
             progress_emitter,
         );
 
-        // Spawn chunk producer task with file_mappings that tell it exactly what to read
-        tokio::spawn(pipeline::chunk_producer::produce_chunk_stream(
-            file_mappings.clone(), // Clone needed since we use it later for metadata
+        // Spawn chunk producer task with the file to chunk mappings that tell it what to produce
+        tokio::spawn(pipeline::chunk_producer::produce_chunk_stream_from_files(
+            files_to_chunks.clone(),
             self.config.chunk_size_bytes,
             chunk_tx,
         ));
@@ -206,7 +206,7 @@ impl ImportService {
             .persist_album_metadata(
                 &db_release.id,
                 &tracks_to_files,
-                file_mappings,
+                files_to_chunks,
                 self.config.chunk_size_bytes,
             )
             .await?;

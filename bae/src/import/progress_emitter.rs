@@ -30,10 +30,10 @@ impl ImportProgressEmitter {
     /// Create a new progress emitter for an album import.
     pub fn new(
         album_id: String,
+        total_chunks: usize,
         chunk_to_track: HashMap<i32, Vec<String>>,
         track_chunk_counts: HashMap<String, usize>,
         tx: tokio_mpsc::UnboundedSender<ImportProgress>,
-        total_chunks: usize,
     ) -> Self {
         Self {
             album_id,

@@ -39,7 +39,7 @@ pub enum ImportProgress {
 /// Used during import to know which file contains the audio data for each track.
 /// Tracks can share files (CUE/FLAC) or have dedicated files (one file per track).
 #[derive(Debug, Clone)]
-pub struct TrackSourceFile {
+pub struct TrackFile {
     /// Database track ID (UUID) - track already exists in DB with status='importing'
     pub db_track_id: String,
     /// Path to the source audio file on disk (FLAC, MP3, etc.)

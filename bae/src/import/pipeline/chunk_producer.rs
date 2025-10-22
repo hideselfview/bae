@@ -3,7 +3,7 @@
 // Reads files sequentially and produces chunks for the import pipeline.
 // Uses pre-calculated file mappings to ensure chunk production matches layout analysis.
 
-use crate::chunking::FileChunkMapping;
+use crate::chunking::FileToChunks;
 use crate::import::pipeline::ChunkData;
 use tokio::io::{AsyncReadExt, BufReader};
 use tokio::sync::mpsc;
@@ -16,8 +16,8 @@ use uuid::Uuid;
 ///
 /// Files are concatenated into a single byte stream divided into fixed-size chunks.
 /// Chunks are sent as soon as they're complete, allowing downstream processing to start.
-pub async fn produce_chunk_stream(
-    file_mappings: Vec<FileChunkMapping>,
+pub async fn produce_chunk_stream_from_files(
+    files_to_chunks: Vec<FileToChunks>,
     chunk_size: usize,
     chunk_tx: mpsc::Sender<Result<ChunkData, String>>,
 ) {
@@ -25,14 +25,14 @@ pub async fn produce_chunk_stream(
     let mut current_chunk_index = 0i32;
 
     // Iterate through files using file_mappings (which already did the chunking calculation)
-    for file_mapping in file_mappings {
-        let file_handle = match tokio::fs::File::open(&file_mapping.file_path).await {
+    for file_to_chunks in files_to_chunks {
+        let file_handle = match tokio::fs::File::open(&file_to_chunks.file_path).await {
             Ok(f) => f,
             Err(e) => {
                 let _ = chunk_tx
                     .send(Err(format!(
                         "Failed to open file {:?}: {}",
-                        file_mapping.file_path, e
+                        file_to_chunks.file_path, e
                     )))
                     .await;
                 return;

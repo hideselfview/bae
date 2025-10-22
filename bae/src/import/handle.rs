@@ -21,7 +21,7 @@ pub struct ImportHandle {
 pub struct ImportRequest {
     pub db_album: crate::db::DbAlbum,
     pub db_release: crate::db::DbRelease,
-    pub tracks_to_files: Vec<crate::import::types::TrackSourceFile>,
+    pub tracks_to_files: Vec<crate::import::types::TrackFile>,
     pub discovered_files: Vec<DiscoveredFile>,
 }
 
