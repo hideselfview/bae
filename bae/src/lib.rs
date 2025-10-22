@@ -2,8 +2,6 @@
 
 // Internal modules needed for compilation (hidden from docs)
 #[doc(hidden)]
-pub mod album_import_context;
-#[doc(hidden)]
 pub mod config;
 #[doc(hidden)]
 pub mod ui;
@@ -21,7 +19,6 @@ pub mod library;
 
 // Optional modules
 pub mod audio_processing;
-pub mod chunking;
 pub mod cue_flac;
 pub mod playback;
 pub mod subsonic;

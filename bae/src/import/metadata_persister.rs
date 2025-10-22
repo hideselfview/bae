@@ -1,6 +1,6 @@
-use crate::chunking::FileToChunks;
 use crate::cue_flac::CueFlacProcessor;
 use crate::db::{DbCueSheet, DbFile, DbFileChunk, DbTrackPosition};
+use crate::import::types::FileToChunks;
 use crate::import::types::TrackFile;
 use crate::library::LibraryManager;
 use std::collections::HashMap;

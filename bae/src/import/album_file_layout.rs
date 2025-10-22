@@ -10,7 +10,7 @@
 // This is the "planning" phase - it builds the layout that the chunk producer uses
 // to efficiently stream files in the correct sequence.
 
-use crate::chunking::FileToChunks;
+use crate::import::types::FileToChunks;
 use crate::import::types::{DiscoveredFile, TrackFile};
 use std::collections::HashMap;
 use std::path::PathBuf;

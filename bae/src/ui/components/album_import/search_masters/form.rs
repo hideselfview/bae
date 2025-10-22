@@ -1,4 +1,4 @@
-use crate::album_import_context::AlbumImportContext;
+use crate::ui::album_import_context::AlbumImportContext;
 use dioxus::prelude::*;
 
 /// Search masters input form with text field and search button

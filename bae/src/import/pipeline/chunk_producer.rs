@@ -3,8 +3,8 @@
 // Reads files sequentially and produces chunks for the import pipeline.
 // Uses pre-calculated file mappings to ensure chunk production matches layout analysis.
 
-use crate::chunking::FileToChunks;
 use crate::import::pipeline::ChunkData;
+use crate::import::types::FileToChunks;
 use tokio::io::{AsyncReadExt, BufReader};
 use tokio::sync::mpsc;
 use uuid::Uuid;

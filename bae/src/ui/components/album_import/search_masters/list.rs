@@ -1,5 +1,7 @@
-use super::{super::import_workflow::ImportWorkflow, item::SearchMastersItem};
-use crate::{album_import_context::AlbumImportContext, discogs::DiscogsAlbum};
+use super::super::import_workflow::ImportWorkflow;
+use super::item::SearchMastersItem;
+use crate::discogs::DiscogsAlbum;
+use crate::ui::album_import_context::AlbumImportContext;
 use dioxus::prelude::*;
 
 #[component]

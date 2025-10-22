@@ -1,4 +1,4 @@
-use crate::album_import_context::AlbumImportContext;
+use crate::ui::album_import_context::AlbumImportContext;
 use dioxus::prelude::*;
 
 /// Displays loading and error states for search masters operations

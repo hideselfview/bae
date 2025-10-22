@@ -1,5 +1,5 @@
 use super::{release_list::ReleaseList, search_masters::SearchMastersPage};
-use crate::album_import_context::{AlbumImportContext, SearchView};
+use crate::ui::album_import_context::{AlbumImportContext, SearchView};
 use dioxus::prelude::*;
 
 /// Manages the import workflow and navigation between search and releases views

@@ -1,4 +1,4 @@
-use crate::album_import_context::AlbumImportContextProvider;
+use crate::ui::album_import_context::AlbumImportContextProvider;
 use crate::ui::{Route, FAVICON, MAIN_CSS, TAILWIND_CSS};
 use dioxus::prelude::*;
 use tracing::debug;

@@ -1,5 +1,5 @@
-use crate::album_import_context::AlbumImportContext;
 use crate::discogs::client::DiscogsSearchResult;
+use crate::ui::album_import_context::AlbumImportContext;
 use dioxus::prelude::*;
 
 #[derive(Props, PartialEq, Clone)]
