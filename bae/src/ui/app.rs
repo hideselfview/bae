@@ -1,7 +1,7 @@
 use dioxus::desktop::{Config as DioxusConfig, WindowBuilder};
 use dioxus::prelude::*;
 
-use crate::ui::components::album_import::ImportWorkflowManager;
+use crate::ui::components::import::ImportWorkflowManager;
 use crate::ui::components::*;
 use crate::ui::AppContext;
 

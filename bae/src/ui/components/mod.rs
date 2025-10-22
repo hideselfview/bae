@@ -1,7 +1,7 @@
 pub mod album_card;
 pub mod album_detail;
-pub mod album_import;
 pub mod app;
+pub mod import;
 pub mod library;
 pub mod navbar;
 pub mod now_playing_bar;
