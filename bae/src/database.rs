@@ -39,13 +39,20 @@ impl ImportStatus {
     }
 }
 
+/// Album metadata
+///
+/// Represents the logical album entity. Currently imported from Discogs,
+/// but designed to support multiple metadata sources in the future.
+/// The discogs_master_id serves as the canonical album identifier for now.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DbAlbum {
     pub id: String,
     pub title: String,
     pub artist_name: String,
     pub year: Option<i32>,
-    pub discogs_master_id: Option<String>,
+    /// Master ID from metadata source (currently Discogs master ID)
+    pub discogs_master_id: String,
+    /// Specific release ID if user selected a particular pressing/version
     pub discogs_release_id: Option<String>,
     pub cover_art_url: Option<String>,
     pub import_status: ImportStatus,
@@ -53,6 +60,12 @@ pub struct DbAlbum {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Track metadata within an album
+///
+/// Represents a single track on an album. Tracks are linked to albums
+/// and may have their own artist (different from album artist).
+/// The discogs_position field stores the track position from metadata
+/// (e.g., "A1", "1", "1-1" for vinyl sides).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DbTrack {
     pub id: String,
@@ -60,17 +73,28 @@ pub struct DbTrack {
     pub title: String,
     pub track_number: Option<i32>,
     pub duration_ms: Option<i64>,
-
-    pub artist_name: Option<String>, // Can differ from album artist
-    pub discogs_position: Option<String>, // e.g., "A1", "1", "1-1"
+    /// Track artist (may differ from album artist)
+    pub artist_name: Option<String>,
+    /// Position from metadata source (e.g., "A1", "1", "1-1")
+    pub discogs_position: Option<String>,
     pub import_status: ImportStatus,
     pub created_at: DateTime<Utc>,
 }
 
+/// Physical file belonging to an album
+///
+/// Files are linked to albums, not tracks, because:
+/// - Some files are metadata (cover.jpg, .cue sheets) not associated with any track
+/// - Some files contain multiple tracks (CUE/FLAC: one FLAC file = entire album)
+/// - The file→track relationship is tracked via `db_track_position` table
+///
+/// For regular albums: 1 file = 1 track (linked via db_track_position)
+/// For CUE/FLAC albums: 1 file = N tracks (all link to same file via db_track_position)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbFile {
     pub id: String,
-    pub track_id: String,
+    /// Album this file belongs to
+    pub album_id: String,
     pub original_filename: String,
     pub file_size: i64,
     pub format: String,                // "flac", "mp3", etc.
@@ -80,17 +104,29 @@ pub struct DbFile {
     pub created_at: DateTime<Utc>,
 }
 
+/// Encrypted chunk of an album's data
+///
+/// Albums are split into encrypted chunks for cloud storage.
+/// Each chunk is stored separately and can be cached/streamed independently.
+/// The storage_location points to the encrypted chunk in cloud storage.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbChunk {
     pub id: String,
     pub album_id: String,
     pub chunk_index: i32,
     pub encrypted_size: i64,
-    pub storage_location: String, // S3 URI: s3://bucket/chunks/{shard}/{chunk_id}.enc
+    /// Cloud storage URI (e.g., s3://bucket/chunks/{shard}/{chunk_id}.enc)
+    pub storage_location: String,
+    /// Last time this chunk was accessed (for cache management)
     pub last_accessed: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
 
+/// Maps files to their chunk ranges
+///
+/// Since files are split into chunks for storage, this table tracks
+/// which chunks contain which files and the byte offsets within those chunks.
+/// This allows efficient streaming of individual files from the chunked storage.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbFileChunk {
     pub id: String,
@@ -102,23 +138,42 @@ pub struct DbFileChunk {
     pub created_at: DateTime<Utc>,
 }
 
+/// CUE sheet metadata for CUE/FLAC albums
+///
+/// Stores the raw CUE file content for albums that use CUE/FLAC format.
+/// The CUE sheet contains track timing information that allows splitting
+/// a single FLAC file into multiple tracks during playback.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbCueSheet {
     pub id: String,
     pub file_id: String,
-    pub cue_content: String, // Raw CUE file content
+    /// Raw CUE file content as text
+    pub cue_content: String,
     pub created_at: DateTime<Utc>,
 }
 
+/// Links tracks to their source files with position information
+///
+/// This table connects the logical track entity to its physical file.
+/// Created for ALL tracks during import (not just CUE/FLAC).
+///
+/// For regular tracks (1 file = 1 track):
+/// - start_time_ms = 0, end_time_ms = 0 (indicates "use full file")
+/// - start/end_chunk_index = the chunk range containing this file
+///
+/// For CUE/FLAC tracks (1 file = N tracks):
+/// - start_time_ms/end_time_ms = actual timestamps from CUE sheet
+/// - start/end_chunk_index = subset of chunks for this track's time range
+/// - Multiple tracks point to the same file_id
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbTrackPosition {
     pub id: String,
     pub track_id: String,
     pub file_id: String,
-    pub start_time_ms: i64,     // Track start in milliseconds
-    pub end_time_ms: i64,       // Track end in milliseconds
+    pub start_time_ms: i64, // Track start in milliseconds (0 = beginning of file)
+    pub end_time_ms: i64,   // Track end in milliseconds (0 = end of file)
     pub start_chunk_index: i32, // First chunk containing this track
-    pub end_chunk_index: i32,   // Last chunk containing this track
+    pub end_chunk_index: i32, // Last chunk containing this track
     pub created_at: DateTime<Utc>,
 }
 
@@ -150,7 +205,7 @@ impl Database {
                 title TEXT NOT NULL,
                 artist_name TEXT NOT NULL,
                 year INTEGER,
-                discogs_master_id TEXT,
+                discogs_master_id TEXT NOT NULL,
                 discogs_release_id TEXT,
                 cover_art_url TEXT,
                 import_status TEXT NOT NULL DEFAULT '{}',
@@ -184,12 +239,16 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
-        // Files table (maps tracks to actual audio files)
+        // Files table (maps albums to actual files - audio or metadata)
+        // Files belong to albums, not tracks, because:
+        // - Metadata files (cover.jpg, .cue) aren't tied to specific tracks
+        // - CUE/FLAC files contain multiple tracks in one file
+        // Track→file relationship is tracked via track_positions table
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS files (
                 id TEXT PRIMARY KEY,
-                track_id TEXT NOT NULL,
+                album_id TEXT NOT NULL,
                 original_filename TEXT NOT NULL,
                 file_size INTEGER NOT NULL,
                 format TEXT NOT NULL,
@@ -197,7 +256,7 @@ impl Database {
                 audio_start_byte INTEGER,
                 has_cue_sheet BOOLEAN NOT NULL DEFAULT FALSE,
                 created_at TEXT NOT NULL,
-                FOREIGN KEY (track_id) REFERENCES tracks (id) ON DELETE CASCADE
+                FOREIGN KEY (album_id) REFERENCES albums (id) ON DELETE CASCADE
             )
             "#,
         )
@@ -255,7 +314,10 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
-        // Track positions table (for CUE track boundaries)
+        // Track positions table (links tracks to files with timing information)
+        // Created for ALL tracks during import:
+        // - Regular tracks: start_time_ms=0, end_time_ms=0 (full file)
+        // - CUE tracks: actual timestamps from CUE sheet
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS track_positions (
@@ -280,7 +342,7 @@ impl Database {
             .execute(&self.pool)
             .await?;
 
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_files_track_id ON files (track_id)")
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_files_album_id ON files (album_id)")
             .execute(&self.pool)
             .await?;
 
@@ -324,7 +386,7 @@ impl Database {
             INSERT INTO albums (
                 id, title, artist_name, year, discogs_master_id, 
                 discogs_release_id, cover_art_url, import_status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&album.id)
@@ -538,13 +600,13 @@ impl Database {
         sqlx::query(
             r#"
             INSERT INTO files (
-                id, track_id, original_filename, file_size, format, 
+                id, album_id, original_filename, file_size, format, 
                 flac_headers, audio_start_byte, has_cue_sheet, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&file.id)
-        .bind(&file.track_id)
+        .bind(&file.album_id)
         .bind(&file.original_filename)
         .bind(file.file_size)
         .bind(&file.format)
@@ -633,16 +695,19 @@ impl Database {
     }
 
     /// Get chunks for a file (via file_chunks mapping)
+    ///
+    /// Since files now belong to albums directly, we can join more simply.
+    /// The file_chunks table tells us which chunk range this file spans.
     pub async fn get_chunks_for_file(&self, file_id: &str) -> Result<Vec<DbChunk>, sqlx::Error> {
         let rows = sqlx::query(
             r#"
             SELECT c.* FROM chunks c
             JOIN file_chunks fc ON c.chunk_index >= fc.start_chunk_index 
                 AND c.chunk_index <= fc.end_chunk_index
-                AND c.album_id = (SELECT album_id FROM tracks WHERE id = (SELECT track_id FROM files WHERE id = ?))
+                AND c.album_id = (SELECT album_id FROM files WHERE id = ?)
             WHERE fc.file_id = ?
             ORDER BY c.chunk_index
-            "#
+            "#,
         )
         .bind(file_id)
         .bind(file_id)
@@ -671,10 +736,10 @@ impl Database {
         Ok(chunks)
     }
 
-    /// Get files for a track
-    pub async fn get_files_for_track(&self, track_id: &str) -> Result<Vec<DbFile>, sqlx::Error> {
-        let rows = sqlx::query("SELECT * FROM files WHERE track_id = ?")
-            .bind(track_id)
+    /// Get files for an album
+    pub async fn get_files_for_album(&self, album_id: &str) -> Result<Vec<DbFile>, sqlx::Error> {
+        let rows = sqlx::query("SELECT * FROM files WHERE album_id = ?")
+            .bind(album_id)
             .fetch_all(&self.pool)
             .await?;
 
@@ -682,7 +747,7 @@ impl Database {
         for row in rows {
             files.push(DbFile {
                 id: row.get("id"),
-                track_id: row.get("track_id"),
+                album_id: row.get("album_id"),
                 original_filename: row.get("original_filename"),
                 file_size: row.get("file_size"),
                 format: row.get("format"),
@@ -696,6 +761,32 @@ impl Database {
         }
 
         Ok(files)
+    }
+
+    /// Get a specific file by ID
+    pub async fn get_file_by_id(&self, file_id: &str) -> Result<Option<DbFile>, sqlx::Error> {
+        let row = sqlx::query("SELECT * FROM files WHERE id = ?")
+            .bind(file_id)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        if let Some(row) = row {
+            Ok(Some(DbFile {
+                id: row.get("id"),
+                album_id: row.get("album_id"),
+                original_filename: row.get("original_filename"),
+                file_size: row.get("file_size"),
+                format: row.get("format"),
+                flac_headers: row.get("flac_headers"),
+                audio_start_byte: row.get("audio_start_byte"),
+                has_cue_sheet: row.get("has_cue_sheet"),
+                created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
+                    .unwrap()
+                    .with_timezone(&Utc),
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Insert a new CUE sheet record
@@ -819,7 +910,7 @@ impl DbAlbum {
             title: master.title.clone(),
             artist_name: artist_name.to_string(),
             year: master.year.map(|y| y as i32),
-            discogs_master_id: Some(master.id.clone()),
+            discogs_master_id: master.id.clone(),
             discogs_release_id: None,
             cover_art_url: master.thumb.clone(),
             import_status: ImportStatus::Queued,
@@ -838,7 +929,10 @@ impl DbAlbum {
             title: release.title.clone(),
             artist_name: artist_name.to_string(),
             year: release.year.map(|y| y as i32),
-            discogs_master_id: release.master_id.clone(),
+            discogs_master_id: release.master_id.clone().unwrap_or_else(|| {
+                // If release doesn't have master_id, use release_id as fallback
+                release.id.clone()
+            }),
             discogs_release_id: Some(release.id.clone()),
             cover_art_url: release.thumb.clone(),
             import_status: ImportStatus::Queued,
@@ -869,10 +963,14 @@ impl DbTrack {
 }
 
 impl DbFile {
-    pub fn new(track_id: &str, original_filename: &str, file_size: i64, format: &str) -> Self {
+    /// Create a regular file record (one file = one track)
+    ///
+    /// The file is linked to the album, not a specific track.
+    /// Track→file relationship is established via db_track_position.
+    pub fn new(album_id: &str, original_filename: &str, file_size: i64, format: &str) -> Self {
         DbFile {
             id: Uuid::new_v4().to_string(),
-            track_id: track_id.to_string(),
+            album_id: album_id.to_string(),
             original_filename: original_filename.to_string(),
             file_size,
             format: format.to_string(),
@@ -883,8 +981,12 @@ impl DbFile {
         }
     }
 
+    /// Create a CUE/FLAC file record (one file = multiple tracks)
+    ///
+    /// The file is linked to the album. Multiple tracks will reference this
+    /// same file via db_track_position, each with different time ranges.
     pub fn new_cue_flac(
-        track_id: &str,
+        album_id: &str,
         original_filename: &str,
         file_size: i64,
         flac_headers: Vec<u8>,
@@ -892,7 +994,7 @@ impl DbFile {
     ) -> Self {
         DbFile {
             id: Uuid::new_v4().to_string(),
-            track_id: track_id.to_string(),
+            album_id: album_id.to_string(),
             original_filename: original_filename.to_string(),
             file_size,
             format: "flac".to_string(),

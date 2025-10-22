@@ -8,7 +8,17 @@ use std::path::Path;
 use tracing::debug;
 
 /// Service responsible for persisting file metadata to the database.
-/// Creates DbFile, DbFileChunk, DbCueSheet, and DbTrackPosition records.
+///
+/// After the streaming pipeline uploads all chunks, this service creates:
+/// - DbFile records (linked to album, not individual tracks)
+/// - DbFileChunk records (which chunks contain which files)
+/// - DbTrackPosition records (which tracks use which files, with time ranges)
+/// - DbCueSheet records (for CUE/FLAC albums)
+///
+/// Key insight: Files belong to albums. The track→file relationship is
+/// established through db_track_position, which allows:
+/// - Regular albums: 1 file = 1 track
+/// - CUE/FLAC albums: 1 file = N tracks (each with different time ranges)
 pub struct MetadataPersister<'a> {
     library: &'a LibraryManager,
 }
@@ -22,11 +32,12 @@ impl<'a> MetadataPersister<'a> {
     /// Persist all album metadata to database.
     ///
     /// For each source file:
-    /// - Creates DbFile record (links to track)
+    /// - Creates DbFile record (links to album)
     /// - Creates DbFileChunk record (maps byte ranges to chunks)
     /// - For CUE/FLAC: Creates DbCueSheet and DbTrackPosition records
     pub async fn persist_album_metadata(
         &self,
+        album_id: &str,
         track_files: &[TrackSourceFile],
         chunk_mappings: Vec<FileChunkMapping>,
         chunk_size_bytes: usize,
@@ -70,6 +81,7 @@ impl<'a> MetadataPersister<'a> {
                     file_mappings.len()
                 );
                 self.persist_cue_flac_metadata(
+                    album_id,
                     source_path,
                     file_mappings,
                     chunk_mapping,
@@ -80,8 +92,14 @@ impl<'a> MetadataPersister<'a> {
             } else {
                 // Process as individual file
                 for mapping in file_mappings {
-                    self.persist_individual_file(mapping, chunk_mapping, file_size, &format)
-                        .await?;
+                    self.persist_individual_file(
+                        album_id,
+                        mapping,
+                        chunk_mapping,
+                        file_size,
+                        &format,
+                    )
+                    .await?;
                 }
             }
         }
@@ -90,24 +108,30 @@ impl<'a> MetadataPersister<'a> {
     }
 
     /// Persist CUE/FLAC file metadata - file record, CUE sheet, and track positions
+    ///
+    /// For CUE/FLAC albums:
+    /// - One FLAC file contains the entire album
+    /// - The file is linked to the album (not to any specific track)
+    /// - Multiple tracks will reference this same file via db_track_position
+    /// - Each track has its own time range within the file (from CUE sheet)
     async fn persist_cue_flac_metadata(
         &self,
+        album_id: &str,
         source_path: &Path,
         file_mappings: Vec<&TrackSourceFile>,
         chunk_mapping: &FileChunkMapping,
         file_size: i64,
         chunk_size_bytes: usize,
     ) -> Result<(), String> {
-        // Extract FLAC headers
+        // Extract FLAC headers for instant streaming
         let flac_headers = CueFlacProcessor::extract_flac_headers(source_path)
             .map_err(|e| format!("Failed to extract FLAC headers: {}", e))?;
 
-        // Create file record with FLAC headers (use first track's ID as primary)
-        let primary_track_id = &file_mappings[0].db_track_id;
+        // Create file record linked to album (not to any specific track)
         let filename = source_path.file_name().unwrap().to_str().unwrap();
 
         let db_file = DbFile::new_cue_flac(
-            primary_track_id,
+            album_id,
             filename,
             file_size,
             flac_headers.headers.clone(),
@@ -197,9 +221,15 @@ impl<'a> MetadataPersister<'a> {
         Ok(())
     }
 
-    /// Persist individual file metadata - file record and chunk mapping
+    /// Persist individual file metadata - file record, chunk mapping, and track position
+    ///
+    /// For regular albums (1 file = 1 track):
+    /// - File is linked to album (not directly to track)
+    /// - Track position is created with start_time=0, end_time=0 (indicates "use full file")
+    /// - This establishes the track→file relationship via db_track_position
     async fn persist_individual_file(
         &self,
+        album_id: &str,
         mapping: &TrackSourceFile,
         chunk_mapping: &FileChunkMapping,
         file_size: i64,
@@ -207,8 +237,8 @@ impl<'a> MetadataPersister<'a> {
     ) -> Result<(), String> {
         let filename = mapping.file_path.file_name().unwrap().to_str().unwrap();
 
-        // Create file record
-        let db_file = DbFile::new(&mapping.db_track_id, filename, file_size, format);
+        // Create file record linked to album (not to specific track)
+        let db_file = DbFile::new(album_id, filename, file_size, format);
         let file_id = db_file.id.clone();
 
         // Save file record to database
@@ -229,6 +259,22 @@ impl<'a> MetadataPersister<'a> {
             .add_file_chunk_mapping(&db_file_chunk)
             .await
             .map_err(|e| format!("Failed to insert file chunk: {}", e))?;
+
+        // Create track position record to link this track to its file
+        // For individual files: start_time=0, end_time=0 indicates "use full file"
+        // This is how we establish the track→file relationship for streaming
+        let track_position = DbTrackPosition::new(
+            &mapping.db_track_id,
+            &file_id,
+            0, // start_time_ms: 0 = beginning of file
+            0, // end_time_ms: 0 = end of file (convention for full file)
+            chunk_mapping.start_chunk_index,
+            chunk_mapping.end_chunk_index,
+        );
+        self.library
+            .add_track_position(&track_position)
+            .await
+            .map_err(|e| format!("Failed to insert track position: {}", e))?;
 
         Ok(())
     }

@@ -177,14 +177,21 @@ pub async fn do_roundtrip<F, G>(
     info!("Verifying reassembly...");
 
     for (i, (track, expected_data)) in tracks.iter().zip(&file_data).take(3).enumerate() {
-        let files = library_manager
-            .get_files_for_track(&track.id)
+        // Get track position to find the file
+        let track_position = library_manager
+            .get_track_position(&track.id)
             .await
-            .expect("Failed to get files");
-        assert_eq!(files.len(), 1);
+            .expect("Failed to get track position")
+            .expect("No track position found");
+
+        let file = library_manager
+            .get_file_by_id(&track_position.file_id)
+            .await
+            .expect("Failed to get file")
+            .expect("No file found");
 
         let chunks = library_manager
-            .get_chunks_for_file(&files[0].id)
+            .get_chunks_for_file(&file.id)
             .await
             .expect("Failed to get chunks");
 

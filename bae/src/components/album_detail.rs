@@ -136,11 +136,9 @@ fn AlbumDetailView(album: DbAlbum, tracks: Vec<DbTrack>) -> Element {
                                     span { "{year}" }
                                 }
                             }
-                            if let Some(discogs_id) = &album.discogs_master_id {
-                                div {
-                                    span { class: "font-medium", "Discogs Master ID: " }
-                                    span { "{discogs_id}" }
-                                }
+                            div {
+                                span { class: "font-medium", "Discogs Master ID: " }
+                                span { "{album.discogs_master_id}" }
                             }
                             if let Some(release_id) = &album.discogs_release_id {
                                 div {

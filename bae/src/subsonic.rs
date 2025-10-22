@@ -504,28 +504,30 @@ async fn stream_track_chunks(
     let library_manager = &state.library_manager;
     info!("Starting chunk reassembly for track: {}", track_id);
 
-    // Check if this is a CUE/FLAC track with track positions
-    if let Some(track_position) = library_manager
+    // Get track position (now populated for all tracks, not just CUE)
+    let track_position = library_manager
         .get()
         .get_track_position(track_id)
         .await
         .map_err(|e| format!("Database error: {}", e))?
-    {
-        info!("Detected CUE/FLAC track - using efficient chunk range streaming");
-        return stream_cue_track_chunks(state, track_id, &track_position).await;
+        .ok_or_else(|| format!("No track position found for track {}", track_id))?;
+
+    // Get the file for this track
+    let file = library_manager
+        .get()
+        .get_file_by_id(&track_position.file_id)
+        .await
+        .map_err(|e| format!("Database error: {}", e))?
+        .ok_or_else(|| "File not found for track".to_string())?;
+
+    // Check if this is a CUE/FLAC track
+    if file.has_cue_sheet {
+        info!("Detected CUE/FLAC track - using efficient chunk range streaming with FLAC headers");
+        return stream_cue_track_chunks(state, track_id, &track_position, &file).await;
     }
 
-    // Fallback to regular file streaming for individual tracks
+    // Regular file streaming for individual tracks
     info!("Using regular file streaming");
-
-    // Get files for this track
-    let files = library_manager.get().get_files_for_track(track_id).await?;
-    if files.is_empty() {
-        return Err("No files found for track".into());
-    }
-
-    // For now, just handle the first file (most tracks have one file)
-    let file = &files[0];
     debug!(
         "Processing file: {} ({} bytes)",
         file.original_filename, file.file_size
@@ -613,22 +615,15 @@ async fn download_and_decrypt_chunk(
 /// This provides 85% download reduction compared to downloading entire files
 async fn stream_cue_track_chunks(
     state: &SubsonicState,
-    track_id: &str,
+    _track_id: &str,
     track_position: &crate::database::DbTrackPosition,
+    file: &crate::database::DbFile,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     let library_manager = &state.library_manager;
     info!(
         "Streaming CUE/FLAC track: chunks {}-{}",
         track_position.start_chunk_index, track_position.end_chunk_index
     );
-
-    // Get the file for this track
-    let files = library_manager.get().get_files_for_track(track_id).await?;
-    if files.is_empty() {
-        return Err("No files found for CUE track".into());
-    }
-
-    let file = &files[0];
 
     // Check if this file has FLAC headers stored in database
     if !file.has_cue_sheet {
@@ -642,18 +637,11 @@ async fn stream_cue_track_chunks(
 
     debug!("Using stored FLAC headers: {} bytes", flac_headers.len());
 
-    // Get the album_id for this track
-    let album_id = library_manager
-        .get()
-        .get_album_id_for_track(track_id)
-        .await
-        .map_err(|e| format!("Failed to get album ID: {}", e))?;
-
     // Get only the chunks we need for this track (efficient!)
     let chunk_range = track_position.start_chunk_index..=track_position.end_chunk_index;
     let chunks = library_manager
         .get()
-        .get_chunks_in_range(&album_id, chunk_range)
+        .get_chunks_in_range(&file.album_id, chunk_range)
         .await
         .map_err(|e| format!("Failed to get chunk range: {}", e))?;
 

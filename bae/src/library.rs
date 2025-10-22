@@ -136,9 +136,21 @@ impl LibraryManager {
         Ok(self.database.get_track_by_id(track_id).await?)
     }
 
-    /// Get files for a specific track
-    pub async fn get_files_for_track(&self, track_id: &str) -> Result<Vec<DbFile>, LibraryError> {
-        Ok(self.database.get_files_for_track(track_id).await?)
+    /// Get all files for a specific album
+    ///
+    /// Files belong to albums (not tracks). This includes both:
+    /// - Audio files (linked to tracks via db_track_position)
+    /// - Metadata files (cover art, CUE sheets, etc.)
+    pub async fn get_files_for_album(&self, album_id: &str) -> Result<Vec<DbFile>, LibraryError> {
+        Ok(self.database.get_files_for_album(album_id).await?)
+    }
+
+    /// Get a specific file by ID
+    ///
+    /// Used during streaming to retrieve the file record after looking up
+    /// the track→file relationship via db_track_position.
+    pub async fn get_file_by_id(&self, file_id: &str) -> Result<Option<DbFile>, LibraryError> {
+        Ok(self.database.get_file_by_id(file_id).await?)
     }
 
     /// Get chunks for a specific file

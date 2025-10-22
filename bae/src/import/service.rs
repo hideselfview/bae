@@ -203,6 +203,7 @@ impl ImportService {
         let persister = MetadataPersister::new(library_manager);
         persister
             .persist_album_metadata(
+                &db_album.id,
                 &tracks_to_files,
                 file_mappings,
                 self.config.chunk_size_bytes,
