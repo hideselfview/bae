@@ -2,6 +2,15 @@ use crate::database::{DbAlbum, DbAlbumArtist, DbArtist, DbRelease, DbTrack};
 use crate::models::DiscogsAlbum;
 use uuid::Uuid;
 
+/// Result of parsing a Discogs album into database entities
+pub type ParsedAlbum = (
+    DbAlbum,
+    DbRelease,
+    Vec<DbTrack>,
+    Vec<DbArtist>,
+    Vec<DbAlbumArtist>,
+);
+
 /// Parse Discogs album metadata into database models including artist information.
 ///
 /// Converts a DiscogsAlbum (from the API) into DbAlbum, DbRelease, DbTrack, and artist records
@@ -9,18 +18,7 @@ use uuid::Uuid;
 /// generates IDs, and links all entities together.
 ///
 /// Returns: (album, release, tracks, artists, album_artists)
-pub fn parse_discogs_album(
-    import_item: &DiscogsAlbum,
-) -> Result<
-    (
-        DbAlbum,
-        DbRelease,
-        Vec<DbTrack>,
-        Vec<DbArtist>,
-        Vec<DbAlbumArtist>,
-    ),
-    String,
-> {
+pub fn parse_discogs_album(import_item: &DiscogsAlbum) -> Result<ParsedAlbum, String> {
     // Create album record (logical album entity)
     let album = match import_item {
         DiscogsAlbum::Master(master) => DbAlbum::from_discogs_master(master),

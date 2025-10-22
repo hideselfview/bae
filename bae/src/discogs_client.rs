@@ -54,8 +54,8 @@ struct MasterVersionsResponse {
 struct VersionResponse {
     id: u64,
     title: String,
-    format: String, // Fixed: format is a string, not Vec<String>
-    label: String,  // Fixed: label is a string, not Vec<String>
+    format: String,
+    label: String,
     catno: String,
     country: String,
     released: Option<String>,
@@ -67,8 +67,6 @@ struct VersionResponse {
 struct ArtistCredit {
     id: u64,
     name: String,
-    // Note: Discogs API also returns 'anv' (artist name variation) and 'join' fields,
-    // but we don't need them so we don't deserialize them
 }
 
 /// Master detail response from Discogs
