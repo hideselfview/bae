@@ -1,4 +1,3 @@
-use dioxus::desktop::{Config as DioxusConfig, WindowBuilder};
 use dioxus::prelude::*;
 use tracing::{error, info};
 
@@ -10,7 +9,6 @@ mod audio_processing;
 mod cache;
 mod chunking;
 mod cloud_storage;
-mod components;
 mod config;
 mod cue_flac;
 mod db;
@@ -21,33 +19,15 @@ mod library;
 mod library_context;
 mod playback;
 mod subsonic;
+mod ui;
 
-use components::album_import::ImportWorkflowManager;
-use components::*;
 use library_context::SharedLibraryManager;
 use subsonic::create_router;
+use ui::*;
 
 /// Root application context containing all top-level dependencies
 // Import AppContext from our local app_context module
 pub use app_context::AppContext;
-
-#[derive(Debug, Clone, Routable, PartialEq)]
-#[rustfmt::skip]
-enum Route {
-    #[layout(Navbar)]
-    #[route("/")]
-    Library {},
-    #[route("/album/:album_id")]
-    AlbumDetail { album_id: String },
-    #[route("/import")]
-    ImportWorkflowManager {},
-    #[route("/settings")]
-    Settings {},
-}
-
-const FAVICON: Asset = asset!("/assets/favicon.ico");
-const MAIN_CSS: Asset = asset!("/assets/main.css");
-const TAILWIND_CSS: Asset = asset!("/assets/tailwind.css");
 
 /// Initialize cache manager
 async fn create_cache_manager() -> cache::CacheManager {
@@ -240,15 +220,4 @@ async fn start_subsonic_server(
     if let Err(e) = axum::serve(listener, app).await {
         error!("Subsonic server error: {}", e);
     }
-}
-
-fn make_config() -> DioxusConfig {
-    DioxusConfig::default().with_window(make_window())
-}
-
-fn make_window() -> WindowBuilder {
-    WindowBuilder::new()
-        .with_title("bae")
-        .with_always_on_top(false)
-        .with_inner_size(dioxus::desktop::LogicalSize::new(1200, 800))
 }
