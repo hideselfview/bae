@@ -29,15 +29,15 @@ impl SharedLibraryManager {
 }
 
 /// Hook to access the shared library manager from components
-/// The library manager is provided via AppContext in main.rs
+/// The library manager is provided via UIContext in main.rs
 pub fn use_library_manager() -> SharedLibraryManager {
-    let app_context = use_context::<crate::AppContext>();
-    app_context.library_manager
+    let context = use_context::<crate::UIContext>();
+    context.library_manager
 }
 
 /// Hook to access the import service handle from components
-/// The import service handle is provided via AppContext in main.rs
+/// The import service handle is provided via UIContext in main.rs
 pub fn use_import_service() -> crate::import::ImportHandle {
-    let app_context = use_context::<crate::AppContext>();
-    app_context.import_service_handle.clone()
+    let context = use_context::<crate::UIContext>();
+    context.import_service_handle.clone()
 }

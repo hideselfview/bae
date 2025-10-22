@@ -1,4 +1,4 @@
-use crate::Route;
+use crate::ui::Route;
 use dioxus::prelude::*;
 
 /// Shared navbar component.

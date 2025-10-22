@@ -1,7 +1,7 @@
 use crate::db::{DbAlbum, DbArtist};
 use crate::library_context::use_library_manager;
 use crate::ui::components::album_card::AlbumCard;
-use crate::Route;
+use crate::ui::Route;
 use dioxus::prelude::*;
 use std::collections::HashMap;
 use tracing::debug;

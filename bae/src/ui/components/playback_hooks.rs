@@ -1,9 +1,9 @@
 use crate::playback::PlaybackHandle;
-use crate::AppContext;
+use crate::UIContext;
 use dioxus::prelude::*;
 
 /// Hook to access the playback service
 pub fn use_playback_service() -> PlaybackHandle {
-    let app_context = use_context::<AppContext>();
-    app_context.playback_handle.clone()
+    let context = use_context::<UIContext>();
+    context.playback_handle.clone()
 }

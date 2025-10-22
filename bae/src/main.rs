@@ -1,10 +1,8 @@
-use dioxus::prelude::*;
 use tracing::{error, info};
 
 use crate::db::Database;
 
 mod album_import_context;
-mod app_context;
 mod audio_processing;
 mod cache;
 mod chunking;
@@ -23,11 +21,10 @@ mod ui;
 
 use library_context::SharedLibraryManager;
 use subsonic::create_router;
-use ui::*;
 
 /// Root application context containing all top-level dependencies
-// Import AppContext from our local app_context module
-pub use app_context::AppContext;
+// Import UIContext from the ui module
+pub use ui::UIContext;
 
 /// Initialize cache manager
 async fn create_cache_manager() -> cache::CacheManager {
@@ -155,8 +152,8 @@ fn main() {
         runtime_handle.clone(),
     );
 
-    // Create root application context
-    let app_context = AppContext {
+    // Create UI context
+    let ui_context = UIContext {
         library_manager: library_manager.clone(),
         config: config.clone(),
         import_service_handle,
@@ -164,14 +161,13 @@ fn main() {
     };
 
     // Start Subsonic API server as async task on shared runtime
-    let chunk_size_bytes = config.chunk_size_bytes;
     runtime_handle.spawn(async move {
         start_subsonic_server(
             cache_manager,
             library_manager,
             encryption_service,
             cloud_storage,
-            chunk_size_bytes,
+            config.chunk_size_bytes,
         )
         .await
     });
@@ -180,10 +176,7 @@ fn main() {
     // The runtime stays alive for the app's lifetime (Dioxus launch() blocks main thread)
     info!("Starting Dioxus desktop app...");
 
-    LaunchBuilder::desktop()
-        .with_cfg(make_config())
-        .with_context_provider(move || Box::new(app_context.clone()))
-        .launch(App);
+    ui::launch_app(ui_context);
 
     info!("Dioxus desktop app quit");
 }

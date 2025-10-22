@@ -271,9 +271,9 @@ impl Config {
 }
 
 /// Hook to access config from components (using Dioxus context)
-/// The config is provided via AppContext in main.rs
+/// The config is provided via UIContext in main.rs
 pub fn use_config() -> Config {
     use dioxus::prelude::use_context;
-    let app_context = use_context::<crate::AppContext>();
-    app_context.config
+    let context = use_context::<crate::UIContext>();
+    context.config
 }

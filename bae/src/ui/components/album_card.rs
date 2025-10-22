@@ -1,5 +1,5 @@
 use crate::db::{DbAlbum, DbArtist};
-use crate::Route;
+use crate::ui::Route;
 use dioxus::prelude::*;
 
 /// Individual album card component

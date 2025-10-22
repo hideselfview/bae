@@ -4,14 +4,14 @@
 #[doc(hidden)]
 pub mod album_import_context;
 #[doc(hidden)]
-pub mod app_context;
-#[doc(hidden)]
 pub mod config;
 #[doc(hidden)]
 pub mod library_context;
+#[doc(hidden)]
+pub mod ui;
 
-// Re-export AppContext at crate root for easier access
-pub use app_context::AppContext;
+// Re-export UIContext at crate root for easier access
+pub use ui::UIContext;
 
 pub mod cache;
 pub mod cloud_storage;
