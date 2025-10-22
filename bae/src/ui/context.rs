@@ -1,6 +1,6 @@
 use crate::config;
 use crate::import;
-use crate::library_context::SharedLibraryManager;
+use crate::library::SharedLibraryManager;
 use crate::playback;
 
 #[derive(Clone)]

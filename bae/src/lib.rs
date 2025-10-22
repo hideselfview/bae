@@ -6,8 +6,6 @@ pub mod album_import_context;
 #[doc(hidden)]
 pub mod config;
 #[doc(hidden)]
-pub mod library_context;
-#[doc(hidden)]
 pub mod ui;
 
 // Re-export UIContext at crate root for easier access

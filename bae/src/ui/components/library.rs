@@ -1,5 +1,5 @@
 use crate::db::{DbAlbum, DbArtist};
-use crate::library_context::use_library_manager;
+use crate::library::use_library_manager;
 use crate::ui::components::album_card::AlbumCard;
 use crate::ui::Route;
 use dioxus::prelude::*;

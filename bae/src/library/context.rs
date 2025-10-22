@@ -1,4 +1,4 @@
-use crate::library::LibraryManager;
+use super::manager::LibraryManager;
 use dioxus::prelude::*;
 use std::sync::Arc;
 

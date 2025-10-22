@@ -26,7 +26,7 @@ use crate::import::metadata_persister::MetadataPersister;
 use crate::import::pipeline;
 use crate::import::progress_emitter::ImportProgressEmitter;
 use crate::import::types::ImportProgress;
-use crate::library_context::SharedLibraryManager;
+use crate::library::SharedLibraryManager;
 use futures::stream::StreamExt;
 use tokio::sync::mpsc;
 use tracing::{error, info};

@@ -5,7 +5,7 @@
 
 use crate::import::progress_handle::ImportProgressHandle;
 use crate::import::types::{DiscoveredFile, ImportProgress, SendRequestParams};
-use crate::library_context::SharedLibraryManager;
+use crate::library::SharedLibraryManager;
 use std::path::Path;
 use tokio::sync::mpsc;
 

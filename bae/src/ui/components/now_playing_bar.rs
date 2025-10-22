@@ -1,4 +1,4 @@
-use crate::library_context::use_library_manager;
+use crate::library::use_library_manager;
 use crate::playback::PlaybackState;
 use dioxus::prelude::*;
 

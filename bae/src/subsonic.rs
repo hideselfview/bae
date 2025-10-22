@@ -1,5 +1,5 @@
 use crate::library::LibraryError;
-use crate::library_context::SharedLibraryManager;
+use crate::library::SharedLibraryManager;
 use axum::{
     extract::{Query, State},
     http::StatusCode,

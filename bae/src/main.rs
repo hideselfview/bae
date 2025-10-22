@@ -14,12 +14,11 @@ mod discogs;
 mod encryption;
 mod import;
 mod library;
-mod library_context;
 mod playback;
 mod subsonic;
 mod ui;
 
-use library_context::SharedLibraryManager;
+use library::SharedLibraryManager;
 use subsonic::create_router;
 
 /// Root application context containing all top-level dependencies

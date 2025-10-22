@@ -1,6 +1,6 @@
 use crate::db::{DbAlbum, DbArtist, DbTrack};
+use crate::library::use_library_manager;
 use crate::library::LibraryError;
-use crate::library_context::use_library_manager;
 use crate::ui::Route;
 use dioxus::prelude::*;
 
@@ -313,7 +313,7 @@ fn format_duration(duration_ms: i64) -> String {
 /// Load album and tracks from the database
 async fn load_album_details(
     album_id: &str,
-    library_manager: &crate::library_context::SharedLibraryManager,
+    library_manager: &crate::library::SharedLibraryManager,
 ) -> Result<(DbAlbum, Vec<DbTrack>), LibraryError> {
     // Get all albums to find the one we want
     let albums = library_manager.get().get_albums().await?;
