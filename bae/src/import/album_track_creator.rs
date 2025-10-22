@@ -5,8 +5,8 @@ use uuid::Uuid;
 /// Parse Discogs album metadata into database models including artist information.
 ///
 /// Converts a DiscogsAlbum (from the API) into DbAlbum, DbRelease, DbTrack, and artist records
-/// ready for database insertion. Extracts artist name, generates IDs,
-/// and links all entities together. All records start with status='queued'.
+/// ready for database insertion. Extracts artist data from Discogs API response,
+/// generates IDs, and links all entities together.
 ///
 /// Returns: (album, release, tracks, artists, album_artists)
 pub fn parse_discogs_album(
@@ -21,9 +21,6 @@ pub fn parse_discogs_album(
     ),
     String,
 > {
-    // Extract artist name from album title (e.g., "Artist - Album Title")
-    let artist_name = import_item.extract_artist_name();
-
     // Create album record (logical album entity)
     let album = match import_item {
         DiscogsAlbum::Master(master) => DbAlbum::from_discogs_master(master),
@@ -36,25 +33,57 @@ pub fn parse_discogs_album(
         DiscogsAlbum::Release(release) => DbRelease::from_discogs_release(&album.id, release),
     };
 
-    // Create artist record
-    // TODO: Fetch proper Discogs artist ID for deduplication
-    let artist = DbArtist {
-        id: Uuid::new_v4().to_string(),
-        name: artist_name.clone(),
-        sort_name: Some(artist_name.clone()),
-        discogs_artist_id: None, // TODO: Get from Discogs API
-        bandcamp_artist_id: None,
-        created_at: chrono::Utc::now(),
-        updated_at: chrono::Utc::now(),
-    };
+    // Create artist records from Discogs API data
+    let discogs_artists = import_item.artists();
+    let mut artists = Vec::new();
+    let mut album_artists = Vec::new();
 
-    // Create album-artist relationship
-    let album_artist = DbAlbumArtist {
-        id: Uuid::new_v4().to_string(),
-        album_id: album.id.clone(),
-        artist_id: artist.id.clone(),
-        position: 0, // Primary artist
-    };
+    if discogs_artists.is_empty() {
+        // Fallback: parse artist from title if Discogs API didn't return artists
+        let artist_name = import_item.extract_artist_name();
+        let artist = DbArtist {
+            id: Uuid::new_v4().to_string(),
+            name: artist_name.clone(),
+            sort_name: Some(artist_name.clone()),
+            discogs_artist_id: None,
+            bandcamp_artist_id: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        let album_artist = DbAlbumArtist {
+            id: Uuid::new_v4().to_string(),
+            album_id: album.id.clone(),
+            artist_id: artist.id.clone(),
+            position: 0,
+        };
+
+        artists.push(artist);
+        album_artists.push(album_artist);
+    } else {
+        // Use artist data from Discogs API
+        for (position, discogs_artist) in discogs_artists.iter().enumerate() {
+            let artist = DbArtist {
+                id: Uuid::new_v4().to_string(),
+                name: discogs_artist.name.clone(),
+                sort_name: Some(discogs_artist.name.clone()),
+                discogs_artist_id: Some(discogs_artist.id.clone()),
+                bandcamp_artist_id: None,
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            };
+
+            let album_artist = DbAlbumArtist {
+                id: Uuid::new_v4().to_string(),
+                album_id: album.id.clone(),
+                artist_id: artist.id.clone(),
+                position: position as i32,
+            };
+
+            artists.push(artist);
+            album_artists.push(album_artist);
+        }
+    }
 
     // Create track records linked to this release
     let discogs_tracks = import_item.tracklist();
@@ -65,7 +94,7 @@ pub fn parse_discogs_album(
         tracks.push(track);
     }
 
-    Ok((album, db_release, tracks, vec![artist], vec![album_artist]))
+    Ok((album, db_release, tracks, artists, album_artists))
 }
 
 #[cfg(test)]
@@ -82,6 +111,10 @@ mod tests {
             thumb: None,
             label: vec!["Test Label".to_string()],
             country: Some("US".to_string()),
+            artists: vec![crate::models::DiscogsArtist {
+                id: "artist-123".to_string(),
+                name: "Test Artist".to_string(),
+            }],
             tracklist: vec![
                 DiscogsTrack {
                     position: "1".to_string(),
@@ -118,9 +151,10 @@ mod tests {
         assert_eq!(db_tracks[1].track_number, Some(2));
         assert_eq!(db_tracks[1].release_id, db_release.id);
 
-        // Verify artist
+        // Verify artist (from Discogs API)
         assert_eq!(artists.len(), 1);
         assert_eq!(artists[0].name, "Test Artist");
+        assert_eq!(artists[0].discogs_artist_id, Some("artist-123".to_string()));
         assert_eq!(album_artists.len(), 1);
         assert_eq!(album_artists[0].album_id, db_album.id);
         assert_eq!(album_artists[0].artist_id, artists[0].id);
@@ -135,6 +169,10 @@ mod tests {
             thumb: None,
             label: vec![],
             country: None,
+            artists: vec![crate::models::DiscogsArtist {
+                id: "artist-456".to_string(),
+                name: "Artist Name".to_string(),
+            }],
             tracklist: vec![DiscogsTrack {
                 position: "1".to_string(),
                 title: "Only Track".to_string(),
@@ -165,6 +203,10 @@ mod tests {
             thumb: None,
             label: vec![],
             country: None,
+            artists: vec![crate::models::DiscogsArtist {
+                id: "artist-789".to_string(),
+                name: "Some Artist".to_string(),
+            }],
             tracklist: vec![],
         });
 

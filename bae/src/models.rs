@@ -1,5 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+/// Artist credit from Discogs
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DiscogsArtist {
+    pub id: String,
+    pub name: String,
+}
+
 /// Represents a Discogs master (full data from master detail API)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DiscogsMaster {
@@ -9,6 +16,7 @@ pub struct DiscogsMaster {
     pub thumb: Option<String>,
     pub label: Vec<String>,
     pub country: Option<String>,
+    pub artists: Vec<DiscogsArtist>,
     pub tracklist: Vec<DiscogsTrack>,
 }
 
@@ -25,6 +33,7 @@ pub struct DiscogsRelease {
     pub label: Vec<String>,
     pub cover_image: Option<String>,
     pub thumb: Option<String>,
+    pub artists: Vec<DiscogsArtist>,
     pub tracklist: Vec<DiscogsTrack>,
     pub master_id: Option<String>, // Reference to the master release
 }
@@ -84,7 +93,15 @@ impl DiscogsAlbum {
         }
     }
 
-    /// Extract artist name from album title.
+    /// Get artists for this album
+    pub fn artists(&self) -> &[DiscogsArtist] {
+        match self {
+            DiscogsAlbum::Master(master) => &master.artists,
+            DiscogsAlbum::Release(release) => &release.artists,
+        }
+    }
+
+    /// Extract artist name from album title (fallback when artists array is empty).
     ///
     /// Discogs album titles often follow "Artist - Album" format.
     /// Splits on " - " to extract the artist. Falls back to "Unknown Artist".

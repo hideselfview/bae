@@ -46,6 +46,11 @@ impl ImportStatus {
 /// - Multiple artists per album (collaborations)
 /// - Different artists per track (compilations, features)
 /// - Artist deduplication across imports
+///
+/// Supports multiple metadata sources:
+/// - Discogs: discogs_artist_id for deduplication
+/// - Bandcamp: bandcamp_artist_id for future integration
+/// - Other sources can be added as needed
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DbArtist {
     pub id: String,

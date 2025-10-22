@@ -62,6 +62,15 @@ struct VersionResponse {
     thumb: Option<String>,
 }
 
+/// Artist credit in Discogs API responses
+#[derive(Debug, Deserialize, Clone)]
+struct ArtistCredit {
+    id: u64,
+    name: String,
+    // Note: Discogs API also returns 'anv' (artist name variation) and 'join' fields,
+    // but we don't need them so we don't deserialize them
+}
+
 /// Master detail response from Discogs
 #[derive(Debug, Deserialize)]
 struct MasterResponse {
@@ -69,6 +78,8 @@ struct MasterResponse {
     title: String,
     year: Option<u32>,
     thumb: Option<String>,
+    // TODO is this optional? It might be required.
+    artists: Option<Vec<ArtistCredit>>,
     tracklist: Option<Vec<TrackResponse>>,
 }
 
@@ -83,6 +94,7 @@ struct ReleaseResponse {
     formats: Option<Vec<Format>>,
     country: Option<String>,
     images: Option<Vec<Image>>,
+    artists: Option<Vec<ArtistCredit>>,
     tracklist: Option<Vec<TrackResponse>>,
     master_id: Option<u64>,
 }
@@ -195,6 +207,16 @@ impl DiscogsClient {
                 })
                 .collect();
 
+            let artists = master
+                .artists
+                .unwrap_or_default()
+                .into_iter()
+                .map(|a| crate::models::DiscogsArtist {
+                    id: a.id.to_string(),
+                    name: a.name,
+                })
+                .collect();
+
             // Masters don't have direct label field, use empty default
             // TODO fix this
             let label = Vec::new();
@@ -206,6 +228,7 @@ impl DiscogsClient {
                 thumb: master.thumb,
                 label,
                 country: None, // Masters don't have country info
+                artists,
                 tracklist,
             };
 
@@ -315,6 +338,16 @@ impl DiscogsClient {
                 })
                 .collect();
 
+            let artists = release
+                .artists
+                .unwrap_or_default()
+                .into_iter()
+                .map(|a| crate::models::DiscogsArtist {
+                    id: a.id.to_string(),
+                    name: a.name,
+                })
+                .collect();
+
             let cover_image = release.images.as_ref().and_then(|images| {
                 images
                     .iter()
@@ -339,6 +372,7 @@ impl DiscogsClient {
                 label: Vec::new(), // Not available in detailed release
                 cover_image,
                 thumb: None, // Not available in detailed release
+                artists,
                 tracklist,
                 master_id: release.master_id.map(|id| id.to_string()), // Use master_id from detailed release
             })

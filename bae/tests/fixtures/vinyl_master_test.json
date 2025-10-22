@@ -5,6 +5,12 @@
   "thumb": null,
   "label": [],
   "country": null,
+  "artists": [
+    {
+      "id": "artist-vinyl-test",
+      "name": "Test Vinyl Artist"
+    }
+  ],
   "tracklist": [
     {
       "position": "A1",
