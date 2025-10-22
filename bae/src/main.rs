@@ -134,7 +134,7 @@ fn main() {
     };
 
     // Create import service with shared runtime handle
-    let import_service_handle = import::ImportService::start(
+    let import_handle = import::ImportService::start(
         import_config,
         runtime_handle.clone(),
         library_manager.clone(),
@@ -156,7 +156,7 @@ fn main() {
     let ui_context = UIContext {
         library_manager: library_manager.clone(),
         config: config.clone(),
-        import_service_handle,
+        import_handle,
         playback_handle,
     };
 

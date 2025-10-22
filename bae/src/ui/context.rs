@@ -7,6 +7,6 @@ use crate::playback;
 pub struct UIContext {
     pub library_manager: SharedLibraryManager,
     pub config: config::Config,
-    pub import_service_handle: import::ImportHandle,
+    pub import_handle: import::ImportHandle,
     pub playback_handle: playback::PlaybackHandle,
 }
