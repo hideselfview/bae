@@ -1,6 +1,6 @@
 use crate::cache::CacheManager;
 use crate::cloud_storage::CloudStorageManager;
-use crate::database::{DbChunk, DbTrackPosition};
+use crate::db::{DbChunk, DbFile, DbTrackPosition};
 use crate::encryption::EncryptionService;
 use crate::library::LibraryManager;
 use futures::stream::{self, StreamExt};
@@ -139,7 +139,7 @@ pub async fn reassemble_track(
 /// 4. Return as valid FLAC audio data
 async fn reassemble_cue_track(
     track_position: &DbTrackPosition,
-    file: &crate::database::DbFile,
+    file: &DbFile,
     library_manager: &LibraryManager,
     cloud_storage: &CloudStorageManager,
     cache: &CacheManager,

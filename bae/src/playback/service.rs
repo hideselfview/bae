@@ -1,6 +1,6 @@
 use crate::cache::CacheManager;
 use crate::cloud_storage::CloudStorageManager;
-use crate::database::DbTrack;
+use crate::db::DbTrack;
 use crate::encryption::EncryptionService;
 use crate::library::LibraryManager;
 use rodio::{OutputStream, OutputStreamBuilder, Sink};

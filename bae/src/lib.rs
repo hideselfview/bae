@@ -15,12 +15,11 @@ pub use app_context::AppContext;
 
 pub mod cache;
 pub mod cloud_storage;
-pub mod database;
-pub mod discogs_client;
+pub mod db;
+pub mod discogs;
 pub mod encryption;
 pub mod import;
 pub mod library;
-pub mod models;
 
 // Optional modules
 pub mod audio_processing;

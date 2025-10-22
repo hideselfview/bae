@@ -1,6 +1,6 @@
-use crate::discogs_client::DiscogsSearchResult;
-use crate::models::{DiscogsAlbum, DiscogsMasterReleaseVersion};
-use crate::{config::use_config, discogs_client};
+use crate::config::use_config;
+use crate::discogs::client::DiscogsSearchResult;
+use crate::discogs::{DiscogsAlbum, DiscogsClient, DiscogsMasterReleaseVersion};
 use dioxus::prelude::*;
 use tracing::debug;
 
@@ -23,7 +23,7 @@ pub struct AlbumImportContext {
     pub is_importing_release: Signal<bool>,
     pub error_message: Signal<Option<String>>,
     pub current_view: Signal<SearchView>,
-    client: discogs_client::DiscogsClient,
+    client: DiscogsClient,
 }
 
 impl AlbumImportContext {
@@ -37,7 +37,7 @@ impl AlbumImportContext {
             is_importing_release: use_signal(|| false),
             error_message: use_signal(|| None),
             current_view: use_signal(|| SearchView::SearchResults),
-            client: discogs_client::DiscogsClient::new(config.discogs_api_key.clone()),
+            client: DiscogsClient::new(config.discogs_api_key.clone()),
         }
     }
 

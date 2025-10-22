@@ -1,4 +1,6 @@
-use crate::models::{DiscogsMaster, DiscogsMasterReleaseVersion, DiscogsRelease, DiscogsTrack};
+use crate::discogs::models::{
+    DiscogsArtist, DiscogsMaster, DiscogsMasterReleaseVersion, DiscogsRelease, DiscogsTrack,
+};
 use reqwest::{Client, Error as ReqwestError};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -209,7 +211,7 @@ impl DiscogsClient {
                 .artists
                 .unwrap_or_default()
                 .into_iter()
-                .map(|a| crate::models::DiscogsArtist {
+                .map(|a| DiscogsArtist {
                     id: a.id.to_string(),
                     name: a.name,
                 })
@@ -340,7 +342,7 @@ impl DiscogsClient {
                 .artists
                 .unwrap_or_default()
                 .into_iter()
-                .map(|a| crate::models::DiscogsArtist {
+                .map(|a| DiscogsArtist {
                     id: a.id.to_string(),
                     name: a.name,
                 })

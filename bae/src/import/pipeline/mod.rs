@@ -16,7 +16,7 @@ mod tests;
 pub(super) mod chunk_producer;
 
 use crate::cloud_storage::CloudStorageManager;
-use crate::database::DbChunk;
+use crate::db::DbChunk;
 use crate::encryption::{EncryptedChunk, EncryptionService};
 use crate::import::progress_emitter::ImportProgressEmitter;
 use crate::import::service::ImportConfig;

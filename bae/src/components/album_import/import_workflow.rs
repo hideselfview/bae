@@ -1,6 +1,6 @@
+use crate::discogs::DiscogsAlbum;
 use crate::import::SendRequestParams;
 use crate::library_context::use_import_service;
-use crate::models::DiscogsAlbum;
 use crate::Route;
 use dioxus::prelude::*;
 use rfd::AsyncFileDialog;

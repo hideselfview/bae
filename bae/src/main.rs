@@ -2,6 +2,8 @@ use dioxus::desktop::{Config as DioxusConfig, WindowBuilder};
 use dioxus::prelude::*;
 use tracing::{error, info};
 
+use crate::db::Database;
+
 mod album_import_context;
 mod app_context;
 mod audio_processing;
@@ -11,13 +13,12 @@ mod cloud_storage;
 mod components;
 mod config;
 mod cue_flac;
-mod database;
-mod discogs_client;
+mod db;
+mod discogs;
 mod encryption;
 mod import;
 mod library;
 mod library_context;
-mod models;
 mod playback;
 mod subsonic;
 
@@ -70,7 +71,7 @@ async fn create_cloud_storage_manager(
 }
 
 /// Initialize database
-async fn create_database(config: &config::Config) -> database::Database {
+async fn create_database(config: &config::Config) -> Database {
     let library_path = config.get_library_path();
 
     info!("Creating library directory: {}", library_path.display());
@@ -81,7 +82,7 @@ async fn create_database(config: &config::Config) -> database::Database {
 
     info!("Initializing database at: {}", db_path.display());
 
-    let database = database::Database::new(db_path.to_str().unwrap())
+    let database = Database::new(db_path.to_str().unwrap())
         .await
         .expect("Failed to create database");
 
@@ -91,7 +92,7 @@ async fn create_database(config: &config::Config) -> database::Database {
 }
 
 /// Initialize library manager with all dependencies
-fn create_library_manager(database: database::Database) -> SharedLibraryManager {
+fn create_library_manager(database: Database) -> SharedLibraryManager {
     let library_manager = library::LibraryManager::new(database);
 
     info!("Library manager created");

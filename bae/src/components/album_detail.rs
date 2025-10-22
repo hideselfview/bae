@@ -1,4 +1,4 @@
-use crate::database::{DbAlbum, DbArtist, DbTrack};
+use crate::db::{DbAlbum, DbArtist, DbTrack};
 use crate::library::LibraryError;
 use crate::library_context::use_library_manager;
 use crate::Route;

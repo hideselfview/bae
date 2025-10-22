@@ -1,7 +1,7 @@
 use crate::cloud_storage::CloudStorageError;
-use crate::database::{
-    Database, DbAlbum, DbAlbumArtist, DbArtist, DbChunk, DbCueSheet, DbFile, DbRelease, DbTrack,
-    DbTrackArtist, DbTrackPosition,
+use crate::db::{
+    Database, DbAlbum, DbAlbumArtist, DbArtist, DbChunk, DbCueSheet, DbFile, DbFileChunk,
+    DbRelease, DbTrack, DbTrackArtist, DbTrackPosition, ImportStatus,
 };
 use thiserror::Error;
 
@@ -52,7 +52,7 @@ impl LibraryManager {
     /// Mark release as importing when pipeline starts processing
     pub async fn mark_release_importing(&self, release_id: &str) -> Result<(), LibraryError> {
         self.database
-            .update_release_status(release_id, crate::database::ImportStatus::Importing)
+            .update_release_status(release_id, ImportStatus::Importing)
             .await?;
         Ok(())
     }
@@ -60,7 +60,7 @@ impl LibraryManager {
     /// Mark track as complete after successful import
     pub async fn mark_track_complete(&self, track_id: &str) -> Result<(), LibraryError> {
         self.database
-            .update_track_status(track_id, crate::database::ImportStatus::Complete)
+            .update_track_status(track_id, ImportStatus::Complete)
             .await?;
         Ok(())
     }
@@ -68,7 +68,7 @@ impl LibraryManager {
     /// Mark track as failed if import errors
     pub async fn mark_track_failed(&self, track_id: &str) -> Result<(), LibraryError> {
         self.database
-            .update_track_status(track_id, crate::database::ImportStatus::Failed)
+            .update_track_status(track_id, ImportStatus::Failed)
             .await?;
         Ok(())
     }
@@ -76,7 +76,7 @@ impl LibraryManager {
     /// Mark release as complete after successful import
     pub async fn mark_release_complete(&self, release_id: &str) -> Result<(), LibraryError> {
         self.database
-            .update_release_status(release_id, crate::database::ImportStatus::Complete)
+            .update_release_status(release_id, ImportStatus::Complete)
             .await?;
         Ok(())
     }
@@ -84,19 +84,19 @@ impl LibraryManager {
     /// Mark release as failed if import errors
     pub async fn mark_release_failed(&self, release_id: &str) -> Result<(), LibraryError> {
         self.database
-            .update_release_status(release_id, crate::database::ImportStatus::Failed)
+            .update_release_status(release_id, ImportStatus::Failed)
             .await?;
         Ok(())
     }
 
     /// Add a chunk to the library
-    pub async fn add_chunk(&self, chunk: &crate::database::DbChunk) -> Result<(), LibraryError> {
+    pub async fn add_chunk(&self, chunk: &DbChunk) -> Result<(), LibraryError> {
         self.database.insert_chunk(chunk).await?;
         Ok(())
     }
 
     /// Add a file to the library
-    pub async fn add_file(&self, file: &crate::database::DbFile) -> Result<(), LibraryError> {
+    pub async fn add_file(&self, file: &DbFile) -> Result<(), LibraryError> {
         self.database.insert_file(file).await?;
         Ok(())
     }
@@ -104,7 +104,7 @@ impl LibraryManager {
     /// Add a file-chunk mapping to the library
     pub async fn add_file_chunk_mapping(
         &self,
-        file_chunk: &crate::database::DbFileChunk,
+        file_chunk: &DbFileChunk,
     ) -> Result<(), LibraryError> {
         self.database.insert_file_chunk(file_chunk).await?;
         Ok(())
@@ -185,7 +185,7 @@ impl LibraryManager {
     pub async fn get_track_position(
         &self,
         track_id: &str,
-    ) -> Result<Option<crate::database::DbTrackPosition>, LibraryError> {
+    ) -> Result<Option<DbTrackPosition>, LibraryError> {
         Ok(self.database.get_track_position(track_id).await?)
     }
 

@@ -1,5 +1,5 @@
-use crate::database::{DbAlbum, DbAlbumArtist, DbArtist, DbRelease, DbTrack};
-use crate::models::DiscogsAlbum;
+use crate::db::{DbAlbum, DbAlbumArtist, DbArtist, DbRelease, DbTrack};
+use crate::discogs::DiscogsAlbum;
 use uuid::Uuid;
 
 /// Result of parsing a Discogs album into database entities
@@ -98,7 +98,7 @@ pub fn parse_discogs_album(import_item: &DiscogsAlbum) -> Result<ParsedAlbum, St
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{DiscogsMaster, DiscogsTrack};
+    use crate::discogs::{DiscogsMaster, DiscogsTrack};
 
     #[test]
     fn test_parse_discogs_album_basic() {
@@ -109,7 +109,7 @@ mod tests {
             thumb: None,
             label: vec!["Test Label".to_string()],
             country: Some("US".to_string()),
-            artists: vec![crate::models::DiscogsArtist {
+            artists: vec![crate::discogs::DiscogsArtist {
                 id: "artist-123".to_string(),
                 name: "Test Artist".to_string(),
             }],
@@ -167,7 +167,7 @@ mod tests {
             thumb: None,
             label: vec![],
             country: None,
-            artists: vec![crate::models::DiscogsArtist {
+            artists: vec![crate::discogs::DiscogsArtist {
                 id: "artist-456".to_string(),
                 name: "Artist Name".to_string(),
             }],
@@ -201,7 +201,7 @@ mod tests {
             thumb: None,
             label: vec![],
             country: None,
-            artists: vec![crate::models::DiscogsArtist {
+            artists: vec![crate::discogs::DiscogsArtist {
                 id: "artist-789".to_string(),
                 name: "Some Artist".to_string(),
             }],

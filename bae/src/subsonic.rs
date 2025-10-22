@@ -618,7 +618,7 @@ async fn stream_track_chunks(
 /// Download and decrypt a single chunk with caching
 async fn download_and_decrypt_chunk(
     state: &SubsonicState,
-    chunk: &crate::database::DbChunk,
+    chunk: &crate::db::DbChunk,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     let cache_manager = &state.cache_manager;
 
@@ -665,8 +665,8 @@ async fn download_and_decrypt_chunk(
 async fn stream_cue_track_chunks(
     state: &SubsonicState,
     _track_id: &str,
-    track_position: &crate::database::DbTrackPosition,
-    file: &crate::database::DbFile,
+    track_position: &crate::db::DbTrackPosition,
+    file: &crate::db::DbFile,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     let library_manager = &state.library_manager;
     info!(

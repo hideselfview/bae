@@ -1,4 +1,4 @@
-use crate::models::DiscogsAlbum;
+use crate::discogs::DiscogsAlbum;
 use std::path::PathBuf;
 
 /// Request to import an album

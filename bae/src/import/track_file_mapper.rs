@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use tracing::{debug, info, warn};
 
 use crate::cue_flac::CueFlacProcessor;
-use crate::database::DbTrack;
+use crate::db::DbTrack;
 use crate::import::types::{DiscoveredFile, TrackSourceFile};
 
 /// Map tracks to their source audio files using already-discovered files.
@@ -157,7 +157,7 @@ fn filter_audio_files(paths: &[PathBuf]) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::database::ImportStatus;
+    use crate::db::ImportStatus;
     use chrono::Utc;
 
     fn create_test_tracks(count: usize) -> Vec<DbTrack> {
@@ -305,9 +305,9 @@ mod tests {
             .join("tests/fixtures/vinyl_master_test.json");
         let json_data =
             std::fs::read_to_string(&fixture_path).expect("Failed to read vinyl_master_test.json");
-        let master: crate::models::DiscogsMaster =
+        let master: crate::discogs::DiscogsMaster =
             serde_json::from_str(&json_data).expect("Failed to parse JSON");
-        let album = crate::models::DiscogsAlbum::Master(master);
+        let album = crate::discogs::DiscogsAlbum::Master(master);
 
         // Parse through album_track_creator to get real DbTracks with vinyl positions
         let (_, _, tracks, _, _) =
@@ -381,9 +381,9 @@ mod tests {
             .join("tests/fixtures/vinyl_master_test.json");
         let json_data =
             std::fs::read_to_string(&fixture_path).expect("Failed to read vinyl_master_test.json");
-        let master: crate::models::DiscogsMaster =
+        let master: crate::discogs::DiscogsMaster =
             serde_json::from_str(&json_data).expect("Failed to parse JSON");
-        let album = crate::models::DiscogsAlbum::Master(master);
+        let album = crate::discogs::DiscogsAlbum::Master(master);
 
         // Parse through album_track_creator to get real DbTracks with vinyl positions
         let (_, _, tracks, _, _) =

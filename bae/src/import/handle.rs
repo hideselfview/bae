@@ -19,8 +19,8 @@ pub struct ImportHandle {
 
 /// Validated import ready for pipeline execution
 pub struct ImportRequest {
-    pub db_album: crate::database::DbAlbum,
-    pub db_release: crate::database::DbRelease,
+    pub db_album: crate::db::DbAlbum,
+    pub db_release: crate::db::DbRelease,
     pub tracks_to_files: Vec<crate::import::types::TrackSourceFile>,
     pub discovered_files: Vec<DiscoveredFile>,
 }

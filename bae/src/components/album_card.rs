@@ -1,4 +1,4 @@
-use crate::database::{DbAlbum, DbArtist};
+use crate::db::{DbAlbum, DbArtist};
 use crate::Route;
 use dioxus::prelude::*;
 

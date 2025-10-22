@@ -1,13 +1,13 @@
 use super::{import_workflow::ImportWorkflow, release_item::ReleaseItem};
-use crate::models::DiscogsMasterReleaseVersion;
-use crate::{album_import_context::AlbumImportContext, models};
+use crate::album_import_context::AlbumImportContext;
+use crate::discogs::DiscogsMasterReleaseVersion;
 use dioxus::prelude::*;
 
 #[component]
 pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandler<()>) -> Element {
     let album_import_ctx = use_context::<AlbumImportContext>();
     let mut release_results = use_signal(Vec::<DiscogsMasterReleaseVersion>::new);
-    let mut selected_import_item = use_signal(|| None::<models::DiscogsAlbum>);
+    let mut selected_import_item = use_signal(|| None::<crate::discogs::DiscogsAlbum>);
 
     let master_id_for_effect = master_id.clone();
 
