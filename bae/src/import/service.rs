@@ -191,7 +191,7 @@ impl ImportService {
         // Wait for the pipeline to complete
         let results: Vec<_> = pipeline.collect().await;
 
-        // Check for errors (fail fast on first error)
+        // Check for errors (fail on first error found)
         for result in results {
             result?;
         }

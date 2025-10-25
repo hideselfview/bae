@@ -82,13 +82,21 @@ pub(super) fn build_import_pipeline(
             let progress_emitter = progress_emitter.clone();
 
             async move {
-                persist_and_track_progress(
-                    upload_result,
-                    &release_id,
-                    &library_manager,
-                    &progress_emitter,
-                )
-                .await
+                match upload_result {
+                    Ok(uploaded_chunk) => {
+                        persist_and_track_progress(
+                            uploaded_chunk,
+                            &release_id,
+                            &library_manager,
+                            &progress_emitter,
+                        )
+                        .await
+                    }
+                    Err(error) => {
+                        eprintln!("Upload failed: {}", error);
+                        Err(error)
+                    }
+                }
             }
         })
         .buffer_unordered(10); // Allow some parallelism for DB writes
@@ -221,13 +229,11 @@ pub(super) async fn persist_chunk(
 /// Checks if this chunk completes a track, marking it playable and emitting TrackComplete.
 /// This is where the streaming pipeline meets the database and UI.
 pub(super) async fn persist_and_track_progress(
-    upload_result: Result<UploadedChunk, String>,
+    uploaded_chunk: UploadedChunk,
     release_id: &str,
     library_manager: &LibraryManager,
     progress_emitter: &ImportProgressEmitter,
 ) -> Result<(), String> {
-    let uploaded_chunk = upload_result?;
-
     // Persist chunk to database
     persist_chunk(&uploaded_chunk, release_id, library_manager).await?;
 
