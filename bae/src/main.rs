@@ -103,26 +103,15 @@ fn main() {
 
     info!("Building dependencies...");
 
-    // Load application configuration (handles .env loading in debug builds)
     let config = config::Config::load();
-
-    // Initialize cache manager
     let cache_manager = runtime_handle.block_on(create_cache_manager());
-
-    // Try to initialize cloud storage from config (optional, lazy loading)
-    // This will only prompt for keyring if cloud storage is actually configured
     let cloud_storage = runtime_handle.block_on(create_cloud_storage_manager(&config));
-
-    // Initialize database
     let database = runtime_handle.block_on(create_database(&config));
+    let library_manager = create_library_manager(database.clone());
 
-    // Create encryption service
     let encryption_service = encryption::EncryptionService::new(&config).expect(
         "Failed to initialize encryption service. Check your encryption key configuration.",
     );
-
-    // Build library manager
-    let library_manager = create_library_manager(database.clone());
 
     let import_config = import::ImportConfig {
         max_encrypt_workers: config.max_encrypt_workers,
@@ -171,11 +160,11 @@ fn main() {
 
     // Start the desktop app (this will run in the main thread)
     // The runtime stays alive for the app's lifetime (Dioxus launch() blocks main thread)
-    info!("Starting Dioxus desktop app...");
+    info!("Starting UI");
 
     ui::launch_app(ui_context);
 
-    info!("Dioxus desktop app quit");
+    info!("UI quit");
 }
 
 /// Start the Subsonic API server

@@ -15,17 +15,17 @@
 // - `ImportProgress`: Real-time progress updates
 
 mod album_file_layout;
-mod album_track_creator;
+mod discogs_parser;
 mod handle;
 mod metadata_persister;
 mod pipeline;
 mod progress_emitter;
 mod progress_handle;
 mod service;
-mod track_file_mapper;
+mod track_to_file_mapper;
 mod types;
 
 // Public API exports
 pub use handle::ImportHandle;
 pub use service::{ImportConfig, ImportService};
-pub use types::SendRequestParams;
+pub use types::{ImportProgress, ImportRequestParams};

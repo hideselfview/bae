@@ -3,7 +3,7 @@
 mod support;
 use std::fs;
 
-use bae::models::DiscogsAlbum;
+use bae::discogs::DiscogsAlbum;
 use support::{do_roundtrip, tracing_init};
 use tracing::{error, info};
 
@@ -47,7 +47,7 @@ async fn test_roundtrip_vinyl() {
 
 /// Load vinyl album fixture with vinyl side notation (A1-A7, B1-B9)
 fn load_vinyl_album_fixture() -> DiscogsAlbum {
-    use bae::models::DiscogsMaster;
+    use bae::discogs::DiscogsMaster;
 
     let json = std::fs::read_to_string("tests/fixtures/vinyl_master_test.json")
         .expect("Failed to read fixture");

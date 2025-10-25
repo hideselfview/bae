@@ -2,11 +2,11 @@
 
 use bae::cache::CacheManager;
 use bae::cloud_storage::CloudStorageManager;
-use bae::database::Database;
+use bae::db::Database;
+use bae::discogs::DiscogsAlbum;
 use bae::encryption::EncryptionService;
-use bae::import::{ImportConfig, ImportService, SendRequestParams};
+use bae::import::{ImportConfig, ImportRequestParams, ImportService};
 use bae::library::LibraryManager;
-use bae::models::DiscogsAlbum;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tracing::info;
@@ -25,7 +25,7 @@ pub async fn do_roundtrip<F, G>(
     verify_tracks: G,
 ) where
     F: FnOnce(&std::path::Path) -> Vec<Vec<u8>>,
-    G: FnOnce(&[bae::database::DbTrack]),
+    G: FnOnce(&[bae::db::DbTrack]),
 {
     info!("\n=== {} ===\n", test_name);
 
@@ -81,8 +81,7 @@ pub async fn do_roundtrip<F, G>(
         .expect("Failed to create cache manager");
 
     let library_manager = LibraryManager::new(database.clone());
-    let shared_library_manager =
-        bae::library_context::SharedLibraryManager::new(library_manager.clone());
+    let shared_library_manager = bae::library::SharedLibraryManager::new(library_manager.clone());
     let library_manager = Arc::new(library_manager);
 
     let runtime_handle = tokio::runtime::Handle::current();
@@ -113,7 +112,7 @@ pub async fn do_roundtrip<F, G>(
     info!("Sending import request...");
 
     let album_id = import_handle
-        .send_request(SendRequestParams::FromFolder {
+        .send_request(ImportRequestParams::FromFolder {
             discogs_album,
             folder: album_dir.clone(),
         })
@@ -166,7 +165,7 @@ pub async fn do_roundtrip<F, G>(
     assert!(
         tracks
             .iter()
-            .all(|t| t.import_status == bae::database::ImportStatus::Complete),
+            .all(|t| t.import_status == bae::db::ImportStatus::Complete),
         "Not all tracks have Complete status"
     );
 

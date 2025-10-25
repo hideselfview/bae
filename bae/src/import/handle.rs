@@ -3,8 +3,11 @@
 // Handle for sending import requests and subscribing to progress updates.
 // Provides the public API for interacting with the import service.
 
+use crate::db::{DbAlbum, DbRelease};
+use crate::import::discogs_parser::parse_discogs_album;
 use crate::import::progress_handle::ImportProgressHandle;
-use crate::import::types::{DiscoveredFile, ImportProgress, SendRequestParams};
+use crate::import::track_to_file_mapper::map_tracks_to_files;
+use crate::import::types::{DiscoveredFile, ImportProgress, ImportRequestParams, TrackFile};
 use crate::library::SharedLibraryManager;
 use std::path::Path;
 use tokio::sync::mpsc;
@@ -19,9 +22,9 @@ pub struct ImportHandle {
 
 /// Validated import ready for pipeline execution
 pub struct ImportRequest {
-    pub db_album: crate::db::DbAlbum,
-    pub db_release: crate::db::DbRelease,
-    pub tracks_to_files: Vec<crate::import::types::TrackFile>,
+    pub db_album: DbAlbum,
+    pub db_release: DbRelease,
+    pub tracks_to_files: Vec<TrackFile>,
     pub discovered_files: Vec<DiscoveredFile>,
 }
 
@@ -50,9 +53,9 @@ impl ImportHandle {
     /// request is sent to the import worker.  
     ///
     /// Returns the database album ID for progress subscription.
-    pub async fn send_request(&self, params: SendRequestParams) -> Result<String, String> {
+    pub async fn send_request(&self, params: ImportRequestParams) -> Result<String, String> {
         match params {
-            SendRequestParams::FromFolder {
+            ImportRequestParams::FromFolder {
                 discogs_album: album,
                 folder,
             } => {
@@ -62,7 +65,7 @@ impl ImportHandle {
 
                 // 1. Parse Discogs album into database models
                 let (db_album, db_release, db_tracks, artists, album_artists) =
-                    crate::import::album_track_creator::parse_discogs_album(&album)?;
+                    parse_discogs_album(&album)?;
 
                 tracing::info!(
                     "Parsed Discogs album into database models:\n{:#?}",
@@ -85,12 +88,8 @@ impl ImportHandle {
                 // 2. Discover files
                 let discovered_files = discover_folder_files(&folder)?;
 
-                // 3. Validate track-to-file mapping
-                let tracks_to_files = crate::import::track_file_mapper::map_tracks_to_files(
-                    &db_tracks,
-                    &discovered_files,
-                )
-                .await?;
+                // 3. Build track-to-file mapping
+                let tracks_to_files = map_tracks_to_files(&db_tracks, &discovered_files).await?;
 
                 // 4. Insert or lookup artists (deduplicate across imports)
                 for artist in &artists {

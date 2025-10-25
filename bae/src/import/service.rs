@@ -97,13 +97,13 @@ impl ImportService {
                 Some(request) => {
                     info!("Starting pipeline for '{}'", request.db_album.title);
 
-                    if let Err(e) = self.import_from_folder(request).await {
+                    if let Err(e) = self.import_album_from_folder(request).await {
                         error!("Pipeline failed: {}", e);
                         // TODO: Mark album as failed
                     }
                 }
                 None => {
-                    info!("Channel closed");
+                    info!("Worker receive channel closed");
                     break;
                 }
             }
@@ -117,7 +117,7 @@ impl ImportService {
     /// 2. Calculates chunk layout and track progress
     /// 3. Streams files → encrypts → uploads → persists
     /// 4. Persists metadata and marks album complete.
-    async fn import_from_folder(&self, request: ImportRequest) -> Result<(), String> {
+    async fn import_album_from_folder(&self, request: ImportRequest) -> Result<(), String> {
         let library_manager = self.library_manager.get();
 
         let ImportRequest {
@@ -172,7 +172,7 @@ impl ImportService {
             self.progress_tx.clone(),
         );
 
-        let (pipeline, chunk_tx) = pipeline::build_pipeline(
+        let (pipeline, chunk_tx) = pipeline::build_import_pipeline(
             self.config.clone(),
             db_release.id.clone(),
             self.encryption_service.clone(),

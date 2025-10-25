@@ -311,7 +311,7 @@ mod tests {
 
         // Parse through album_track_creator to get real DbTracks with vinyl positions
         let (_, _, tracks, _, _) =
-            crate::import::album_track_creator::parse_discogs_album(&album).unwrap();
+            crate::import::discogs_parser::parse_discogs_album(&album).unwrap();
 
         // Verify tracks have vinyl positions but sequential track_numbers
         assert_eq!(tracks.len(), 2); // Fixture only has 2 tracks (A1-A2)
@@ -387,7 +387,7 @@ mod tests {
 
         // Parse through album_track_creator to get real DbTracks with vinyl positions
         let (_, _, tracks, _, _) =
-            crate::import::album_track_creator::parse_discogs_album(&album).unwrap();
+            crate::import::discogs_parser::parse_discogs_album(&album).unwrap();
 
         assert_eq!(tracks.len(), 2); // Fixture only has 2 tracks (A1-A2)
 

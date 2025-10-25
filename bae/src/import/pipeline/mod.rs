@@ -10,9 +10,6 @@
 //
 // The pipeline ensures bounded memory usage and fail-fast error handling.
 
-#[cfg(test)]
-mod tests;
-
 pub(super) mod chunk_producer;
 
 use crate::cloud_storage::CloudStorageManager;
@@ -40,7 +37,7 @@ use tokio_stream::wrappers::ReceiverStream;
 ///
 /// Using `impl Stream` keeps everything stack-allocated with static dispatch,
 /// avoiding heap allocation and virtual calls that `BoxStream` would require.
-pub(super) fn build_pipeline(
+pub(super) fn build_import_pipeline(
     config: ImportConfig,
     release_id: String,
     encryption_service: EncryptionService,

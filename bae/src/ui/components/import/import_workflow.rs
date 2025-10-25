@@ -1,5 +1,5 @@
 use crate::discogs::DiscogsAlbum;
-use crate::import::SendRequestParams;
+use crate::import::ImportRequestParams;
 use crate::library::use_import_service;
 use crate::ui::Route;
 use dioxus::prelude::*;
@@ -94,7 +94,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                     );
 
                     // Send import request to service (validates and queues)
-                    let request = SendRequestParams::FromFolder {
+                    let request = ImportRequestParams::FromFolder {
                         discogs_album: discogs_album.clone(),
                         folder: PathBuf::from(folder),
                     };
