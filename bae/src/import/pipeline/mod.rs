@@ -98,7 +98,7 @@ pub(super) fn build_import_pipeline(
                 }
             }
         })
-        .buffer_unordered(10) // Allow some parallelism for DB writes
+        .buffer_unordered(config.max_db_write_workers) // Allow some parallelism for DB writes
         // Stage 5: Track progress and emit events
         .map(move |persist_result| {
             let library_manager = library_manager_track.clone();
@@ -113,7 +113,7 @@ pub(super) fn build_import_pipeline(
                 }
             }
         })
-        .buffer_unordered(10); // Allow some parallelism for progress tracking
+        .buffer_unordered(config.max_db_write_workers); // Controlled parallelism for progress tracking DB writes
 
     (stream, chunk_tx)
 }

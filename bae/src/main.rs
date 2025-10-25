@@ -114,8 +114,9 @@ fn main() {
     );
 
     let import_config = import::ImportConfig {
-        max_encrypt_workers: config.max_encrypt_workers,
-        max_upload_workers: config.max_upload_workers,
+        max_encrypt_workers: config.max_import_encrypt_workers,
+        max_upload_workers: config.max_import_upload_workers,
+        max_db_write_workers: config.max_import_db_write_workers,
         chunk_size_bytes: config.chunk_size_bytes,
     };
 

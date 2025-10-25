@@ -29,10 +29,12 @@ pub struct Config {
     pub s3_config: crate::cloud_storage::S3Config,
     /// Encryption key (hex-encoded 256-bit key)
     pub encryption_key: String,
-    /// Number of parallel encryption workers (CPU-bound)
-    pub max_encrypt_workers: usize,
-    /// Number of parallel upload workers (I/O-bound)
-    pub max_upload_workers: usize,
+    /// Number of parallel encryption workers for import (CPU-bound)
+    pub max_import_encrypt_workers: usize,
+    /// Number of parallel upload workers for import (I/O-bound)
+    pub max_import_upload_workers: usize,
+    /// Number of parallel DB write workers for import (I/O-bound)
+    pub max_import_db_write_workers: usize,
     /// Size of each chunk in bytes (default: 1MB)
     pub chunk_size_bytes: usize,
 }
@@ -117,8 +119,8 @@ impl Config {
             hex::encode(key.as_slice())
         });
 
-        // Worker pool configuration
-        let max_encrypt_workers = std::env::var("BAE_MAX_ENCRYPT_WORKERS")
+        // Import worker pool configuration
+        let max_import_encrypt_workers = std::env::var("BAE_MAX_IMPORT_ENCRYPT_WORKERS")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or_else(|| {
@@ -127,10 +129,15 @@ impl Config {
                     .unwrap_or(4)
             });
 
-        let max_upload_workers = std::env::var("BAE_MAX_UPLOAD_WORKERS")
+        let max_import_upload_workers = std::env::var("BAE_MAX_IMPORT_UPLOAD_WORKERS")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(20);
+
+        let max_import_db_write_workers = std::env::var("BAE_MAX_IMPORT_DB_WRITE_WORKERS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(10);
 
         let chunk_size_bytes = std::env::var("BAE_CHUNK_SIZE_BYTES")
             .ok()
@@ -143,8 +150,8 @@ impl Config {
             info!("S3 endpoint: {}", endpoint);
         }
         info!(
-            "Worker pools - encrypt: {}, upload: {}",
-            max_encrypt_workers, max_upload_workers
+            "Import worker pools - encrypt: {}, upload: {}, db_write: {}",
+            max_import_encrypt_workers, max_import_upload_workers, max_import_db_write_workers
         );
         info!("Chunk size: {} bytes", chunk_size_bytes);
 
@@ -153,9 +160,10 @@ impl Config {
             discogs_api_key,
             s3_config,
             encryption_key,
-            max_encrypt_workers,
-            max_upload_workers,
             chunk_size_bytes,
+            max_import_encrypt_workers,
+            max_import_upload_workers,
+            max_import_db_write_workers,
         }
     }
 
@@ -176,11 +184,12 @@ impl Config {
             id
         };
 
-        // Worker pool configuration (TODO: load from config.yaml)
-        let max_encrypt_workers = std::thread::available_parallelism()
+        // Import worker pool configuration (TODO: load from config.yaml)
+        let max_import_encrypt_workers = std::thread::available_parallelism()
             .map(|n| n.get() * 2)
             .unwrap_or(4);
-        let max_upload_workers = 20;
+        let max_import_upload_workers = 20;
+        let max_import_db_write_workers = 10;
         let chunk_size_bytes = 1024 * 1024; // 1MB default
 
         Self {
@@ -188,8 +197,9 @@ impl Config {
             discogs_api_key: credentials.discogs_api_key,
             s3_config: credentials.s3_config,
             encryption_key: credentials.encryption_key,
-            max_encrypt_workers,
-            max_upload_workers,
+            max_import_encrypt_workers,
+            max_import_upload_workers,
+            max_import_db_write_workers,
             chunk_size_bytes,
         }
     }

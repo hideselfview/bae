@@ -92,6 +92,7 @@ pub async fn do_roundtrip<F, G>(
             .map(|n| n.get() * 2)
             .unwrap_or(4),
         max_upload_workers: 20,
+        max_db_write_workers: 10,
     };
 
     info!("Starting import service...");

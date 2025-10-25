@@ -34,12 +34,14 @@ use tracing::{error, info};
 /// Configuration for import service
 #[derive(Clone)]
 pub struct ImportConfig {
+    /// Size of each chunk in bytes
+    pub chunk_size_bytes: usize,
     /// Number of parallel encryption workers (CPU-bound, typically 2x CPU cores)
     pub max_encrypt_workers: usize,
     /// Number of parallel upload workers (I/O-bound)
     pub max_upload_workers: usize,
-    /// Size of each chunk in bytes
-    pub chunk_size_bytes: usize,
+    /// Number of parallel DB write workers (I/O-bound)
+    pub max_db_write_workers: usize,
 }
 
 /// Import service that orchestrates the album import workflow
