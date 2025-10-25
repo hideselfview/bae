@@ -100,8 +100,8 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                     };
 
                     match import_service.send_request(request).await {
-                        Ok(album_id) => {
-                            info!("Album queued for import with ID: {}", album_id);
+                        Ok(release_id) => {
+                            info!("Release queued for import with ID: {}", release_id);
                         }
                         Err(e) => {
                             error!("Failed to validate/queue import: {}", e);

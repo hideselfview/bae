@@ -14,7 +14,7 @@ use tokio::sync::mpsc as tokio_mpsc;
 /// Used by the import pipeline to track progress and emit events as chunks complete.
 #[derive(Clone)]
 pub struct ImportProgressTracker {
-    album_id: String,
+    release_id: String,
     // Chunk→track mappings (a chunk can belong to multiple tracks)
     chunk_to_track: Arc<HashMap<i32, Vec<String>>>,
     track_chunk_counts: Arc<HashMap<String, usize>>,
@@ -27,16 +27,16 @@ pub struct ImportProgressTracker {
 }
 
 impl ImportProgressTracker {
-    /// Create a new progress tracker for an album import.
+    /// Create a new progress tracker for a release import.
     pub fn new(
-        album_id: String,
+        release_id: String,
         total_chunks: usize,
         chunk_to_track: HashMap<i32, Vec<String>>,
         track_chunk_counts: HashMap<String, usize>,
         tx: tokio_mpsc::UnboundedSender<ImportProgress>,
     ) -> Self {
         Self {
-            album_id,
+            release_id,
             chunk_to_track: Arc::new(chunk_to_track),
             track_chunk_counts: Arc::new(track_chunk_counts),
             tx,
@@ -72,7 +72,7 @@ impl ImportProgressTracker {
 
         // Emit progress event
         let _ = self.tx.send(ImportProgress::ProcessingProgress {
-            album_id: self.album_id.clone(),
+            release_id: self.release_id.clone(),
             percent: progress_update.1,
             current: progress_update.0,
             total: self.total_chunks,
@@ -81,7 +81,7 @@ impl ImportProgressTracker {
         // Emit TrackComplete for each newly completed track
         for track_id in &newly_completed_tracks {
             let _ = self.tx.send(ImportProgress::TrackComplete {
-                album_id: self.album_id.clone(),
+                release_id: self.release_id.clone(),
                 track_id: track_id.clone(),
             });
         }

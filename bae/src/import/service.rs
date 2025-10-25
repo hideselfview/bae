@@ -137,7 +137,7 @@ impl ImportService {
 
         // Send started progress
         let _ = self.progress_tx.send(ImportProgress::Started {
-            album_id: db_album.id.clone(),
+            release_id: db_release.id.clone(),
         });
 
         // Analyze album layout: files → chunks → tracks
@@ -165,7 +165,7 @@ impl ImportService {
         // Read → Encrypt → Upload → Persist → Track (bounded parallelism at each stage)
 
         let progress_tracker = ImportProgressTracker::new(
-            db_album.id.clone(),
+            db_release.id.clone(),
             total_chunks,
             chunk_to_track,
             track_chunk_counts,
@@ -219,7 +219,7 @@ impl ImportService {
 
         // Send completion event
         let _ = self.progress_tx.send(ImportProgress::Complete {
-            album_id: db_album.id,
+            release_id: db_release.id,
         });
 
         info!("Import completed successfully for {}", db_album.title);

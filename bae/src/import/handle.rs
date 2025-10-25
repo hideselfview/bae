@@ -52,7 +52,7 @@ impl ImportHandle {
     /// If successful, album is inserted with status='queued' and an import
     /// request is sent to the import worker.  
     ///
-    /// Returns the database album ID for progress subscription.
+    /// Returns the database release ID for progress subscription.
     pub async fn send_request(&self, params: ImportRequestParams) -> Result<String, String> {
         match params {
             ImportRequestParams::FromFolder {
@@ -137,7 +137,7 @@ impl ImportHandle {
 
                 // ========== QUEUE FOR PIPELINE ==========
 
-                let album_id = db_album.id.clone();
+                let release_id = db_release.id.clone();
 
                 self.requests_tx
                     .send(ImportRequest {
@@ -148,28 +148,28 @@ impl ImportHandle {
                     })
                     .map_err(|_| "Failed to queue validated album for import".to_string())?;
 
-                Ok(album_id)
+                Ok(release_id)
             }
         }
     }
 
-    /// Subscribe to progress updates for a specific album
-    /// Returns a filtered receiver that yields only updates for the specified album
-    pub fn subscribe_album(
+    /// Subscribe to progress updates for a specific release
+    /// Returns a filtered receiver that yields only updates for the specified release
+    pub fn subscribe_release(
         &self,
-        album_id: String,
+        release_id: String,
     ) -> tokio::sync::mpsc::UnboundedReceiver<ImportProgress> {
-        self.progress_handle.subscribe_album(album_id)
+        self.progress_handle.subscribe_release(release_id)
     }
 
     /// Subscribe to progress updates for a specific track
     /// Returns a filtered receiver that yields only updates for the specified track
     pub fn subscribe_track(
         &self,
-        album_id: String,
+        release_id: String,
         track_id: String,
     ) -> tokio::sync::mpsc::UnboundedReceiver<ImportProgress> {
-        self.progress_handle.subscribe_track(album_id, track_id)
+        self.progress_handle.subscribe_track(release_id, track_id)
     }
 }
 

@@ -14,23 +14,23 @@ pub enum ImportRequestParams {
 #[derive(Debug, Clone)]
 pub enum ImportProgress {
     Started {
-        album_id: String,
+        release_id: String,
     },
     ProcessingProgress {
-        album_id: String,
+        release_id: String,
         current: usize,
         total: usize,
         percent: u8,
     },
     TrackComplete {
-        album_id: String,
+        release_id: String,
         track_id: String,
     },
     Complete {
-        album_id: String,
+        release_id: String,
     },
     Failed {
-        album_id: String,
+        release_id: String,
         error: String,
     },
 }

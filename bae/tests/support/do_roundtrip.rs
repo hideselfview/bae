@@ -111,7 +111,7 @@ pub async fn do_roundtrip<F, G>(
     info!("Starting import...");
     info!("Sending import request...");
 
-    let album_id = import_handle
+    let release_id = import_handle
         .send_request(ImportRequestParams::FromFolder {
             discogs_album,
             folder: album_dir.clone(),
@@ -119,10 +119,10 @@ pub async fn do_roundtrip<F, G>(
         .await
         .expect("Failed to send import request");
 
-    info!("Request sent, got album_id: {}", album_id);
-    info!("Subscribing to album progress...");
+    info!("Request sent, got release_id: {}", release_id);
+    info!("Subscribing to release progress...");
 
-    let mut progress_rx = import_handle.subscribe_album(album_id);
+    let mut progress_rx = import_handle.subscribe_release(release_id);
 
     // Wait for completion
     info!("Waiting for import to complete...");

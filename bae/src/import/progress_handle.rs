@@ -12,29 +12,49 @@ type SubscriptionId = u64;
 /// Filter criteria for progress subscriptions
 #[derive(Debug, Clone)]
 enum SubscriptionFilter {
-    Album { album_id: String },
-    Track { album_id: String, track_id: String },
+    Release {
+        release_id: String,
+    },
+    Track {
+        release_id: String,
+        track_id: String,
+    },
 }
 
 impl SubscriptionFilter {
     fn matches(&self, progress: &ImportProgress) -> bool {
         match self {
-            SubscriptionFilter::Album { album_id } => match progress {
-                ImportProgress::Started { album_id: aid, .. } => aid == album_id,
-                ImportProgress::ProcessingProgress { album_id: aid, .. } => aid == album_id,
-                ImportProgress::TrackComplete { album_id: aid, .. } => aid == album_id,
-                ImportProgress::Complete { album_id: aid } => aid == album_id,
-                ImportProgress::Failed { album_id: aid, .. } => aid == album_id,
-            },
-            SubscriptionFilter::Track { album_id, track_id } => match progress {
+            SubscriptionFilter::Release { release_id } => match progress {
+                ImportProgress::Started {
+                    release_id: rid, ..
+                } => rid == release_id,
+                ImportProgress::ProcessingProgress {
+                    release_id: rid, ..
+                } => rid == release_id,
                 ImportProgress::TrackComplete {
-                    album_id: aid,
+                    release_id: rid, ..
+                } => rid == release_id,
+                ImportProgress::Complete { release_id: rid } => rid == release_id,
+                ImportProgress::Failed {
+                    release_id: rid, ..
+                } => rid == release_id,
+            },
+            SubscriptionFilter::Track {
+                release_id,
+                track_id,
+            } => match progress {
+                ImportProgress::TrackComplete {
+                    release_id: rid,
                     track_id: tid,
-                } => aid == album_id && tid == track_id,
-                // Also include album-level updates for context
-                ImportProgress::Started { album_id: aid, .. } => aid == album_id,
-                ImportProgress::Complete { album_id: aid } => aid == album_id,
-                ImportProgress::Failed { album_id: aid, .. } => aid == album_id,
+                } => rid == release_id && tid == track_id,
+                // Also include release-level updates for context
+                ImportProgress::Started {
+                    release_id: rid, ..
+                } => rid == release_id,
+                ImportProgress::Complete { release_id: rid } => rid == release_id,
+                ImportProgress::Failed {
+                    release_id: rid, ..
+                } => rid == release_id,
                 _ => false,
             },
         }
@@ -100,18 +120,18 @@ impl ImportProgressHandle {
         }
     }
 
-    /// Subscribe to progress updates for a specific album
-    /// Returns a receiver that yields only progress updates for the specified album
+    /// Subscribe to progress updates for a specific release
+    /// Returns a receiver that yields only progress updates for the specified release
     /// Subscription is automatically removed when receiver is dropped
-    pub fn subscribe_album(
+    pub fn subscribe_release(
         &self,
-        album_id: String,
+        release_id: String,
     ) -> tokio_mpsc::UnboundedReceiver<ImportProgress> {
         let (tx, rx) = tokio_mpsc::unbounded_channel();
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
 
         let subscription = Subscription {
-            filter: SubscriptionFilter::Album { album_id },
+            filter: SubscriptionFilter::Release { release_id },
             tx,
         };
 
@@ -124,14 +144,17 @@ impl ImportProgressHandle {
     /// Subscription is automatically removed when receiver is dropped
     pub fn subscribe_track(
         &self,
-        album_id: String,
+        release_id: String,
         track_id: String,
     ) -> tokio_mpsc::UnboundedReceiver<ImportProgress> {
         let (tx, rx) = tokio_mpsc::unbounded_channel();
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
 
         let subscription = Subscription {
-            filter: SubscriptionFilter::Track { album_id, track_id },
+            filter: SubscriptionFilter::Track {
+                release_id,
+                track_id,
+            },
             tx,
         };
 
