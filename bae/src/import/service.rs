@@ -24,7 +24,7 @@ use crate::import::album_file_layout::AlbumFileLayout;
 use crate::import::handle::{ImportHandle, ImportRequest};
 use crate::import::metadata_persister::MetadataPersister;
 use crate::import::pipeline;
-use crate::import::progress_emitter::ImportProgressEmitter;
+use crate::import::progress_tracker::ImportProgressTracker;
 use crate::import::types::ImportProgress;
 use crate::library::SharedLibraryManager;
 use futures::stream::StreamExt;
@@ -162,9 +162,9 @@ impl ImportService {
         );
 
         // ========== STREAMING PIPELINE ==========
-        // Read → Encrypt → Upload → Persist (bounded parallelism at each stage)
+        // Read → Encrypt → Upload → Persist → Track (bounded parallelism at each stage)
 
-        let progress_emitter = ImportProgressEmitter::new(
+        let progress_tracker = ImportProgressTracker::new(
             db_album.id.clone(),
             total_chunks,
             chunk_to_track,
@@ -178,7 +178,7 @@ impl ImportService {
             self.encryption_service.clone(),
             self.cloud_storage.clone(),
             library_manager.clone(),
-            progress_emitter,
+            progress_tracker,
         );
 
         // Spawn chunk producer task with the file to chunk mappings that tell it what to produce

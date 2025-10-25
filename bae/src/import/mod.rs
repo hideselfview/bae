@@ -19,8 +19,8 @@ mod discogs_parser;
 mod handle;
 mod metadata_persister;
 mod pipeline;
-mod progress_emitter;
 mod progress_handle;
+mod progress_tracker;
 mod service;
 mod track_to_file_mapper;
 mod types;
@@ -28,4 +28,7 @@ mod types;
 // Public API exports
 pub use handle::ImportHandle;
 pub use service::{ImportConfig, ImportService};
-pub use types::{ImportProgress, ImportRequestParams};
+pub use types::ImportRequestParams;
+
+#[cfg(feature = "test-utils")]
+pub use types::ImportProgress;

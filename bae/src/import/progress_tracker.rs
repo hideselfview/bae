@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc as tokio_mpsc;
 
-/// Emitter for publishing import progress events during pipeline execution.
+/// Tracks import progress and emits progress events during pipeline execution.
 ///
 /// Encapsulates:
 /// - Chunk→track mappings (which chunks belong to which tracks)
@@ -11,9 +11,9 @@ use tokio::sync::mpsc as tokio_mpsc;
 /// - Progress event transmission
 ///
 /// A chunk can contain data from multiple tracks (when small files share a chunk).
-/// Used by the import pipeline to emit progress events as chunks complete.
+/// Used by the import pipeline to track progress and emit events as chunks complete.
 #[derive(Clone)]
-pub struct ImportProgressEmitter {
+pub struct ImportProgressTracker {
     album_id: String,
     // Chunk→track mappings (a chunk can belong to multiple tracks)
     chunk_to_track: Arc<HashMap<i32, Vec<String>>>,
@@ -26,8 +26,8 @@ pub struct ImportProgressEmitter {
     total_chunks: usize,
 }
 
-impl ImportProgressEmitter {
-    /// Create a new progress emitter for an album import.
+impl ImportProgressTracker {
+    /// Create a new progress tracker for an album import.
     pub fn new(
         album_id: String,
         total_chunks: usize,
@@ -165,7 +165,7 @@ mod tests {
         track_chunk_counts.insert(track1_id.clone(), 25);
         track_chunk_counts.insert(track2_id.clone(), 24);
 
-        let emitter = ImportProgressEmitter::new(
+        let tracker = ImportProgressTracker::new(
             "test-album".to_string(),
             49,
             chunk_to_track,
@@ -176,7 +176,7 @@ mod tests {
         // Complete all chunks
         let mut completed_tracks = Vec::new();
         for i in 0..49 {
-            let newly_completed = emitter.on_chunk_complete(i);
+            let newly_completed = tracker.on_chunk_complete(i);
             completed_tracks.extend(newly_completed);
         }
 

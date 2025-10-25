@@ -1,12 +1,13 @@
 // Streaming Import Pipeline
 //
-// Three-stage pipeline for album import: Read → Encrypt → Upload
+// Five-stage pipeline for album import: Read → Encrypt → Upload → Persist → Track
 //
 // Each stage runs with bounded parallelism via channels:
 // - Reader: Sequential file reading, streaming chunks to encryption
 // - Encryption: Parallel CPU-bound work via spawn_blocking
 // - Upload: Parallel I/O-bound S3 uploads
-// - Persistence: DB writes and progress tracking
+// - Persistence: DB writes for chunk metadata
+// - Progress Tracking: Track completion and emit progress events
 //
 // The pipeline ensures bounded memory usage and fail-fast error handling.
 
@@ -15,7 +16,7 @@ pub(super) mod chunk_producer;
 use crate::cloud_storage::CloudStorageManager;
 use crate::db::DbChunk;
 use crate::encryption::{EncryptedChunk, EncryptionService};
-use crate::import::progress_emitter::ImportProgressEmitter;
+use crate::import::progress_tracker::ImportProgressTracker;
 use crate::import::service::ImportConfig;
 use crate::library::LibraryManager;
 use futures::stream::{Stream, StreamExt};
@@ -26,7 +27,7 @@ use tokio_stream::wrappers::ReceiverStream;
 // Public API
 // ============================================================================
 
-/// Build the complete streaming pipeline: read → encrypt → upload → persist.
+/// Build the complete streaming pipeline: read → encrypt → upload → persist → track.
 ///
 /// Returns a tuple of (chunk_tx, stream) where:
 /// - chunk_tx: Sender for chunk data that should be spawned separately
@@ -43,11 +44,15 @@ pub(super) fn build_import_pipeline(
     encryption_service: EncryptionService,
     cloud_storage: CloudStorageManager,
     library_manager: LibraryManager,
-    progress_emitter: ImportProgressEmitter,
+    progress_tracker: ImportProgressTracker,
 ) -> (
     impl Stream<Item = Result<(), String>>,
     mpsc::Sender<Result<ChunkData, String>>,
 ) {
+    // Clone library_manager for both persistence and progress tracking stages
+    let library_manager_persist = library_manager.clone();
+    let library_manager_track = library_manager;
+
     // Stage 1: Read files and stream chunks (bounded channel for backpressure)
     let (chunk_tx, chunk_rx) = mpsc::channel::<Result<ChunkData, String>>(10);
 
@@ -75,22 +80,16 @@ pub(super) fn build_import_pipeline(
             }
         })
         .buffer_unordered(config.max_upload_workers)
-        // Stage 4: Persist to DB and handle progress
+        // Stage 4: Persist chunk metadata to database
         .map(move |upload_result| {
             let release_id = release_id.clone();
-            let library_manager = library_manager.clone();
-            let progress_emitter = progress_emitter.clone();
+            let library_manager = library_manager_persist.clone();
 
             async move {
                 match upload_result {
                     Ok(uploaded_chunk) => {
-                        persist_and_track_progress(
-                            &release_id,
-                            uploaded_chunk,
-                            &library_manager,
-                            &progress_emitter,
-                        )
-                        .await
+                        persist_chunk(&uploaded_chunk, &release_id, &library_manager).await?;
+                        Ok(uploaded_chunk)
                     }
                     Err(error) => {
                         eprintln!("Upload failed: {}", error);
@@ -99,7 +98,22 @@ pub(super) fn build_import_pipeline(
                 }
             }
         })
-        .buffer_unordered(10); // Allow some parallelism for DB writes
+        .buffer_unordered(10) // Allow some parallelism for DB writes
+        // Stage 5: Track progress and emit events
+        .map(move |persist_result| {
+            let library_manager = library_manager_track.clone();
+            let progress_tracker = progress_tracker.clone();
+
+            async move {
+                match persist_result {
+                    Ok(uploaded_chunk) => {
+                        track_progress(uploaded_chunk, &library_manager, &progress_tracker).await
+                    }
+                    Err(error) => Err(error),
+                }
+            }
+        })
+        .buffer_unordered(10); // Allow some parallelism for progress tracking
 
     (stream, chunk_tx)
 }
@@ -223,22 +237,17 @@ async fn persist_chunk(
 // Progress Tracking
 // ============================================================================
 
-/// Stage 4: Persist chunk to DB and handle progress tracking.
+/// Stage 5: Track progress and mark completed tracks.
 ///
-/// Final stage of the pipeline. Saves chunk metadata to DB and emits progress events.
-/// Checks if this chunk completes a track, marking it playable and emitting TrackComplete.
-/// This is where the streaming pipeline meets the database and UI.
-async fn persist_and_track_progress(
-    release_id: &str,
+/// Final stage of the pipeline. Checks if this chunk completes any tracks,
+/// marks them complete in the database, and emits progress events.
+async fn track_progress(
     uploaded_chunk: UploadedChunk,
     library_manager: &LibraryManager,
-    progress_emitter: &ImportProgressEmitter,
+    progress_tracker: &ImportProgressTracker,
 ) -> Result<(), String> {
-    // Persist chunk to database
-    persist_chunk(&uploaded_chunk, release_id, library_manager).await?;
-
     // Track progress and get newly completed tracks
-    let newly_completed_tracks = progress_emitter.on_chunk_complete(uploaded_chunk.chunk_index);
+    let newly_completed_tracks = progress_tracker.on_chunk_complete(uploaded_chunk.chunk_index);
 
     // Mark newly completed tracks in the database
     for track_id in &newly_completed_tracks {
