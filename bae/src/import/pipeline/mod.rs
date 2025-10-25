@@ -16,7 +16,7 @@ pub(super) mod chunk_producer;
 use crate::cloud_storage::CloudStorageManager;
 use crate::db::DbChunk;
 use crate::encryption::{EncryptedChunk, EncryptionService};
-use crate::import::progress_tracker::ImportProgressTracker;
+use crate::import::progress::ImportProgressTracker;
 use crate::import::service::ImportConfig;
 use crate::library::LibraryManager;
 use futures::stream::{Stream, StreamExt};

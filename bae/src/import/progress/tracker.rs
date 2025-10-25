@@ -1,4 +1,4 @@
-use super::types::ImportProgress;
+use crate::import::types::ImportProgress;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc as tokio_mpsc;

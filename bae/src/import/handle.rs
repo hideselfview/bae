@@ -5,7 +5,7 @@
 
 use crate::db::{DbAlbum, DbRelease};
 use crate::import::discogs_parser::parse_discogs_album;
-use crate::import::progress_handle::ImportProgressHandle;
+use crate::import::progress::ImportProgressHandle;
 use crate::import::track_to_file_mapper::map_tracks_to_files;
 use crate::import::types::{DiscoveredFile, ImportProgress, ImportRequestParams, TrackFile};
 use crate::library::SharedLibraryManager;

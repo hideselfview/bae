@@ -24,7 +24,7 @@ use crate::import::album_file_layout::AlbumFileLayout;
 use crate::import::handle::{ImportHandle, ImportRequest};
 use crate::import::metadata_persister::MetadataPersister;
 use crate::import::pipeline;
-use crate::import::progress_tracker::ImportProgressTracker;
+use crate::import::progress::ImportProgressTracker;
 use crate::import::types::ImportProgress;
 use crate::library::SharedLibraryManager;
 use futures::stream::StreamExt;

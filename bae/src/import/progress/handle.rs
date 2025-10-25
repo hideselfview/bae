@@ -1,4 +1,4 @@
-use super::types::ImportProgress;
+use crate::import::types::ImportProgress;
 use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
