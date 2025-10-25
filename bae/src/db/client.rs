@@ -93,7 +93,9 @@ impl Database {
                 import_status TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                FOREIGN KEY (album_id) REFERENCES albums (id) ON DELETE CASCADE
+                FOREIGN KEY (album_id) REFERENCES albums (id) ON DELETE CASCADE,
+                UNIQUE(album_id, discogs_release_id),
+                UNIQUE(album_id, bandcamp_release_id)
             )
             "#,
             IMPORT_STATUS_QUEUED

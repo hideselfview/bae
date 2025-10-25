@@ -46,10 +46,10 @@ impl ImportProgressEmitter {
         }
     }
 
-    /// Mark a chunk as complete and return newly completed track IDs.
+    /// Mark a chunk as complete and emit progress events.
     ///
     /// Updates internal state, checks all tracks for completion, emits progress events.
-    /// Returns track IDs that were just completed (not previously marked).
+    /// Returns newly completed track IDs for database persistence.
     pub fn on_chunk_complete(&self, chunk_index: i32) -> Vec<String> {
         let (newly_completed_tracks, progress_update) = {
             let mut completed = self.completed_chunks.lock().unwrap();
@@ -78,12 +78,15 @@ impl ImportProgressEmitter {
             total: self.total_chunks,
         });
 
-        newly_completed_tracks
-    }
+        // Emit TrackComplete for each newly completed track
+        for track_id in &newly_completed_tracks {
+            let _ = self.tx.send(ImportProgress::TrackComplete {
+                album_id: self.album_id.clone(),
+                track_id: track_id.clone(),
+            });
+        }
 
-    /// Emit a progress event directly.
-    pub fn emit(&self, progress: ImportProgress) {
-        let _ = self.tx.send(progress);
+        newly_completed_tracks
     }
 
     /// Check all tracks for completion and return newly completed ones.
@@ -131,5 +134,79 @@ fn calculate_progress(completed: usize, total: usize) -> u8 {
         100
     } else {
         ((completed as f64 / total as f64) * 100.0).min(100.0) as u8
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_track_completion_simple_two_tracks() {
+        // Replicate the vinyl test scenario: 2 tracks, each gets some chunks
+        let (tx, mut rx) = tokio_mpsc::unbounded_channel();
+
+        // Track 1 spans chunks 0-24 (25 chunks)
+        // Track 2 spans chunks 25-48 (24 chunks)
+        let mut chunk_to_track = HashMap::new();
+        let track1_id = "track-1".to_string();
+        let track2_id = "track-2".to_string();
+
+        // Map chunks to tracks
+        for i in 0..25 {
+            chunk_to_track.insert(i, vec![track1_id.clone()]);
+        }
+        for i in 25..49 {
+            chunk_to_track.insert(i, vec![track2_id.clone()]);
+        }
+
+        // Track chunk counts
+        let mut track_chunk_counts = HashMap::new();
+        track_chunk_counts.insert(track1_id.clone(), 25);
+        track_chunk_counts.insert(track2_id.clone(), 24);
+
+        let emitter = ImportProgressEmitter::new(
+            "test-album".to_string(),
+            49,
+            chunk_to_track,
+            track_chunk_counts,
+            tx,
+        );
+
+        // Complete all chunks
+        let mut completed_tracks = Vec::new();
+        for i in 0..49 {
+            let newly_completed = emitter.on_chunk_complete(i);
+            completed_tracks.extend(newly_completed);
+        }
+
+        // Assert: Both tracks should be marked complete
+        assert_eq!(
+            completed_tracks.len(),
+            2,
+            "Expected 2 tracks to complete, but got: {:?}",
+            completed_tracks
+        );
+        assert!(
+            completed_tracks.contains(&track1_id),
+            "Track 1 should be complete"
+        );
+        assert!(
+            completed_tracks.contains(&track2_id),
+            "Track 2 should be complete"
+        );
+
+        // Verify progress events were sent (49 ProcessingProgress + 2 TrackComplete)
+        let mut progress_count = 0;
+        let mut track_complete_count = 0;
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                ImportProgress::ProcessingProgress { .. } => progress_count += 1,
+                ImportProgress::TrackComplete { .. } => track_complete_count += 1,
+                _ => {}
+            }
+        }
+        assert_eq!(progress_count, 49, "Expected 49 ProcessingProgress events");
+        assert_eq!(track_complete_count, 2, "Expected 2 TrackComplete events");
     }
 }

@@ -80,13 +80,13 @@ bae uses a cloud-first storage approach. For library configuration details, see 
 
 ### Import Service
 
-`ImportService` runs as an async task on the shared tokio runtime. It processes import requests sequentially from a queue, preventing UI blocking and ensuring imports complete one at a time.
+`ImportService` runs as an async task on the shared tokio runtime. It processes import requests sequentially from a queue, preventing UI blocking and ensuring imports run sequentially.
 
 **Key characteristics:**
 - Single instance for entire app
-- Processes one import at a time (sequential, not concurrent)
 - Validates and queues imports synchronously in UI thread
 - Executes pipeline asynchronously on background task
+- Processes one import at a time (sequential, not concurrent)
 
 ### Import Flow
 

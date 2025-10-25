@@ -85,8 +85,8 @@ pub(super) fn build_import_pipeline(
                 match upload_result {
                     Ok(uploaded_chunk) => {
                         persist_and_track_progress(
-                            uploaded_chunk,
                             &release_id,
+                            uploaded_chunk,
                             &library_manager,
                             &progress_emitter,
                         )
@@ -200,7 +200,7 @@ pub(super) async fn upload_chunk(
 /// Stores chunk ID, encrypted size, and cloud location for later retrieval.
 /// This creates the link between our database and cloud storage.
 /// Integrity is guaranteed by AES-GCM's authentication tag - no separate checksum needed.
-pub(super) async fn persist_chunk(
+async fn persist_chunk(
     chunk: &UploadedChunk,
     release_id: &str,
     library_manager: &LibraryManager,
@@ -228,9 +228,9 @@ pub(super) async fn persist_chunk(
 /// Final stage of the pipeline. Saves chunk metadata to DB and emits progress events.
 /// Checks if this chunk completes a track, marking it playable and emitting TrackComplete.
 /// This is where the streaming pipeline meets the database and UI.
-pub(super) async fn persist_and_track_progress(
-    uploaded_chunk: UploadedChunk,
+async fn persist_and_track_progress(
     release_id: &str,
+    uploaded_chunk: UploadedChunk,
     library_manager: &LibraryManager,
     progress_emitter: &ImportProgressEmitter,
 ) -> Result<(), String> {
@@ -241,20 +241,11 @@ pub(super) async fn persist_and_track_progress(
     let newly_completed_tracks = progress_emitter.on_chunk_complete(uploaded_chunk.chunk_index);
 
     // Mark newly completed tracks in the database
-    for track_id in newly_completed_tracks {
+    for track_id in &newly_completed_tracks {
         library_manager
-            .mark_track_complete(&track_id)
+            .mark_track_complete(track_id)
             .await
             .map_err(|e| format!("Failed to mark track complete: {}", e))?;
-
-        // Get the album_id for progress reporting (tracks are now linked to releases)
-        let album_id = library_manager
-            .get_release_id_for_track(&track_id)
-            .await
-            .map_err(|e| format!("Failed to get release for track: {}", e))?;
-
-        progress_emitter
-            .emit(crate::import::types::ImportProgress::TrackComplete { album_id, track_id });
     }
 
     Ok(())

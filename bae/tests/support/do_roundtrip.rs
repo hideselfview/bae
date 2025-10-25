@@ -156,8 +156,14 @@ pub async fn do_roundtrip<F, G>(
         .expect("Failed to get albums");
     assert_eq!(albums.len(), 1, "Expected 1 album");
 
+    let releases = library_manager
+        .get_releases_for_album(&albums[0].id)
+        .await
+        .expect("Failed to get releases");
+    assert_eq!(releases.len(), 1, "Expected 1 release");
+
     let tracks = library_manager
-        .get_tracks(&albums[0].id)
+        .get_tracks(&releases[0].id)
         .await
         .expect("Failed to get tracks");
 
