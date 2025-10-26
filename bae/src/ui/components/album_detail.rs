@@ -11,13 +11,10 @@ use super::use_playback_service;
 /// Album detail page showing album info and tracklist
 #[component]
 pub fn AlbumDetail(album_id: String, release_id: String) -> Element {
-    // Convert empty string to None for optional release_id
-    let release_id = if release_id.is_empty() {
-        None
-    } else {
-        Some(release_id)
-    };
+    let release_id = optional_route_param(release_id);
+
     let library_manager = use_library_manager();
+
     let mut album = use_signal(|| None::<DbAlbum>);
     let mut releases = use_signal(Vec::<DbRelease>::new);
     let mut selected_release_index = use_signal(|| 0_usize);
@@ -521,4 +518,13 @@ async fn load_album_and_releases(
         .await?;
 
     Ok((album, releases))
+}
+
+/// Convert empty string from optional route parameter to None
+fn optional_route_param(s: String) -> Option<String> {
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
 }
