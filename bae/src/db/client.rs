@@ -950,6 +950,33 @@ impl Database {
         Ok(files)
     }
 
+    /// Get file_chunk mapping for a file
+    pub async fn get_file_chunk_mapping(
+        &self,
+        file_id: &str,
+    ) -> Result<Option<DbFileChunk>, sqlx::Error> {
+        let row = sqlx::query("SELECT * FROM file_chunks WHERE file_id = ?")
+            .bind(file_id)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        if let Some(row) = row {
+            Ok(Some(DbFileChunk {
+                id: row.get("id"),
+                file_id: row.get("file_id"),
+                start_chunk_index: row.get("start_chunk_index"),
+                end_chunk_index: row.get("end_chunk_index"),
+                start_byte_offset: row.get("start_byte_offset"),
+                end_byte_offset: row.get("end_byte_offset"),
+                created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
+                    .unwrap()
+                    .with_timezone(&Utc),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// Get a specific file by ID
     pub async fn get_file_by_id(&self, file_id: &str) -> Result<Option<DbFile>, sqlx::Error> {
         let row = sqlx::query("SELECT * FROM files WHERE id = ?")

@@ -237,8 +237,9 @@ mod tests {
                 endpoint_url: None,
             },
             encryption_key: test_key_hex,
-            max_encrypt_workers: 4,
-            max_upload_workers: 20,
+            max_import_encrypt_workers: 4,
+            max_import_upload_workers: 20,
+            max_import_db_write_workers: 10,
             chunk_size_bytes: 1024 * 1024,
         };
 

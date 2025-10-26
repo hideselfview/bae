@@ -1,8 +1,10 @@
-use bae::cloud_storage::{CloudStorage, CloudStorageError};
+// Test support utilities for both unit and integration tests
+
+use crate::cloud_storage::{CloudStorage, CloudStorageError};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-/// Mock cloud storage for integration tests
+/// Mock cloud storage for testing
 ///
 /// Stores chunks in memory instead of uploading to S3.
 /// Useful for testing without external dependencies.

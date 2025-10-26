@@ -22,3 +22,7 @@ pub mod audio_processing;
 pub mod cue_flac;
 pub mod playback;
 pub mod subsonic;
+
+// Test support (only available with test-utils feature)
+#[cfg(feature = "test-utils")]
+pub mod test_support;

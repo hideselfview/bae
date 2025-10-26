@@ -317,6 +317,22 @@ impl DbTrackArtist {
 }
 
 impl DbAlbum {
+    #[cfg(test)]
+    pub fn new_test(title: &str) -> Self {
+        let now = chrono::Utc::now();
+        DbAlbum {
+            id: uuid::Uuid::new_v4().to_string(),
+            title: title.to_string(),
+            year: None,
+            discogs_master_id: None,
+            bandcamp_album_id: None,
+            cover_art_url: None,
+            is_compilation: false,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
     /// Create a logical album from a Discogs master
     /// Note: Artists should be created separately and linked via DbAlbumArtist
     pub fn from_discogs_master(master: &crate::discogs::DiscogsMaster) -> Self {
@@ -353,6 +369,22 @@ impl DbAlbum {
 }
 
 impl DbRelease {
+    #[cfg(test)]
+    pub fn new_test(album_id: &str, release_id: &str) -> Self {
+        let now = chrono::Utc::now();
+        DbRelease {
+            id: release_id.to_string(),
+            album_id: album_id.to_string(),
+            release_name: None,
+            year: None,
+            discogs_release_id: None,
+            bandcamp_release_id: None,
+            import_status: ImportStatus::Queued,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
     /// Create a release from a Discogs release
     pub fn from_discogs_release(album_id: &str, release: &crate::discogs::DiscogsRelease) -> Self {
         let now = Utc::now();
@@ -387,6 +419,25 @@ impl DbRelease {
 }
 
 impl DbTrack {
+    #[cfg(test)]
+    pub fn new_test(
+        release_id: &str,
+        track_id: &str,
+        title: &str,
+        track_number: Option<i32>,
+    ) -> Self {
+        DbTrack {
+            id: track_id.to_string(),
+            release_id: release_id.to_string(),
+            title: title.to_string(),
+            track_number,
+            duration_ms: None,
+            discogs_position: None,
+            import_status: ImportStatus::Queued,
+            created_at: chrono::Utc::now(),
+        }
+    }
+
     pub fn from_discogs_track(
         discogs_track: &crate::discogs::DiscogsTrack,
         release_id: &str,

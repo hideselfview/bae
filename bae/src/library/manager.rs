@@ -168,6 +168,17 @@ impl LibraryManager {
         Ok(self.database.get_file_by_id(file_id).await?)
     }
 
+    /// Get file_chunk mapping for a file
+    ///
+    /// Returns the chunk range and byte offsets for a file.
+    /// Used during reassembly to extract the correct bytes from chunks.
+    pub async fn get_file_chunk_mapping(
+        &self,
+        file_id: &str,
+    ) -> Result<Option<DbFileChunk>, LibraryError> {
+        Ok(self.database.get_file_chunk_mapping(file_id).await?)
+    }
+
     /// Get chunks for a specific file
     pub async fn get_chunks_for_file(&self, file_id: &str) -> Result<Vec<DbChunk>, LibraryError> {
         Ok(self.database.get_chunks_for_file(file_id).await?)

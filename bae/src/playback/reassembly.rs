@@ -64,6 +64,21 @@ pub async fn reassemble_track(
         file.original_filename, file.file_size
     );
 
+    // Get file_chunk mapping to know byte offsets
+    let file_chunk = library_manager
+        .get_file_chunk_mapping(&file.id)
+        .await
+        .map_err(|e| format!("Database error: {}", e))?
+        .ok_or_else(|| "No file_chunk mapping found for file".to_string())?;
+
+    debug!(
+        "File spans chunks {}-{} with byte offsets {}-{}",
+        file_chunk.start_chunk_index,
+        file_chunk.end_chunk_index,
+        file_chunk.start_byte_offset,
+        file_chunk.end_byte_offset
+    );
+
     // Get chunks for this track's file
     let chunks = library_manager
         .get_chunks_for_file(&file.id)
@@ -110,16 +125,28 @@ pub async fn reassemble_track(
     // Sort by file position to ensure correct order (parallel downloads may complete out of order)
     indexed_chunks.sort_by_key(|(position, _)| *position);
 
-    // Reassemble chunks into audio data
-    let mut audio_data = Vec::new();
-    for (index, chunk_data) in indexed_chunks {
-        debug!("Assembling chunk at index {}", index);
-        audio_data.extend_from_slice(&chunk_data);
-    }
+    // Extract only the chunk data (without the position index)
+    let chunk_data: Vec<Vec<u8>> = indexed_chunks.into_iter().map(|(_, data)| data).collect();
+
+    // Use byte offsets to extract exactly the file data
+    debug!(
+        "Extracting file data: {} chunks, start_offset={}, end_offset={}, chunk_size={}",
+        chunk_data.len(),
+        file_chunk.start_byte_offset,
+        file_chunk.end_byte_offset,
+        _chunk_size_bytes
+    );
+    let audio_data = extract_file_from_chunks(
+        &chunk_data,
+        file_chunk.start_byte_offset,
+        file_chunk.end_byte_offset,
+        _chunk_size_bytes,
+    );
 
     info!(
-        "Successfully reassembled {} bytes of audio data",
-        audio_data.len()
+        "Successfully reassembled {} bytes of audio data (expected: {} bytes)",
+        audio_data.len(),
+        file.file_size
     );
     Ok(audio_data)
 }
@@ -288,4 +315,204 @@ async fn download_and_decrypt_chunk(
     .map_err(|e| format!("Decryption task failed: {}", e))??;
 
     Ok(decrypted_data)
+}
+
+/// Extract file data from chunks using byte offsets
+///
+/// Given a list of chunks and the file's byte offsets within those chunks,
+/// this function extracts exactly the bytes that belong to the file.
+///
+/// # Arguments
+/// * `chunks` - Decrypted chunk data in order (chunk 0, chunk 1, chunk 2, ...)
+/// * `start_byte_offset` - Byte offset within the first chunk where the file starts
+/// * `end_byte_offset` - Byte offset within the last chunk where the file ends (inclusive)
+/// * `chunk_size` - Size of each chunk in bytes
+///
+/// # Returns
+/// The extracted file data
+fn extract_file_from_chunks(
+    chunks: &[Vec<u8>],
+    start_byte_offset: i64,
+    end_byte_offset: i64,
+    _chunk_size: usize,
+) -> Vec<u8> {
+    if chunks.is_empty() {
+        return Vec::new();
+    }
+
+    let mut file_data = Vec::new();
+
+    if chunks.len() == 1 {
+        // File is entirely within a single chunk
+        let start = start_byte_offset as usize;
+        let end = (end_byte_offset + 1) as usize; // end_byte_offset is inclusive
+        file_data.extend_from_slice(&chunks[0][start..end]);
+    } else {
+        // File spans multiple chunks
+        // First chunk: from start_byte_offset to end of chunk
+        let first_chunk_start = start_byte_offset as usize;
+        file_data.extend_from_slice(&chunks[0][first_chunk_start..]);
+
+        // Middle chunks: use entirely
+        for chunk in &chunks[1..chunks.len() - 1] {
+            file_data.extend_from_slice(chunk);
+        }
+
+        // Last chunk: from start to end_byte_offset
+        let last_chunk_end = (end_byte_offset + 1) as usize; // end_byte_offset is inclusive
+        file_data.extend_from_slice(&chunks[chunks.len() - 1][0..last_chunk_end]);
+    }
+
+    file_data
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cache::CacheConfig;
+    use crate::cloud_storage::CloudStorageManager;
+    use crate::db::{Database, DbChunk, DbFile, DbFileChunk, DbTrackPosition};
+    use crate::encryption::EncryptionService;
+    use crate::test_support::MockCloudStorage;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    #[cfg(feature = "test-utils")]
+    async fn test_reassemble_track_with_file_ending_mid_chunk() {
+        // This test simulates the vinyl album scenario:
+        // File 1 is 14,832,725 bytes (~14.14 MB)
+        // With 1MB chunks, it spans chunks 0-14
+        // Chunk 14 contains bytes 0-832,724 of file 1, then file 2 starts at byte 832,725
+
+        let chunk_size = 1024 * 1024; // 1MB
+        let file_size = 14_832_725;
+
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let cache_dir = temp_dir.path().join("cache");
+        std::fs::create_dir_all(&cache_dir).unwrap();
+
+        let database = Database::new(db_path.to_str().unwrap()).await.unwrap();
+        let library_manager = LibraryManager::new(database);
+        let encryption_service = EncryptionService::new_with_key(vec![0u8; 32]);
+        let mock_storage = Arc::new(MockCloudStorage::new());
+        let cloud_storage = CloudStorageManager::from_storage(mock_storage);
+        let cache_config = CacheConfig {
+            cache_dir,
+            max_size_bytes: 1024 * 1024 * 100,
+            max_chunks: 1000,
+        };
+        let cache = CacheManager::with_config(cache_config).await.unwrap();
+
+        // Create test data and chunks
+        // Use a pattern that doesn't include 0xFF to avoid false positives
+        let pattern: Vec<u8> = (0..=254).collect(); // 0-254, excluding 255 (0xFF)
+        let file_data = pattern.repeat((file_size / 255) + 1);
+        let file_data = &file_data[0..file_size];
+
+        // Encrypt and upload 15 chunks
+        for i in 0..15 {
+            let start = i * chunk_size;
+            let end = std::cmp::min(start + chunk_size, file_size);
+            let mut chunk_data = vec![0u8; chunk_size];
+            if start < file_size {
+                let actual_len = end - start;
+                chunk_data[0..actual_len].copy_from_slice(&file_data[start..end]);
+                // Fill rest with data from "file 2" to simulate concatenation
+                if actual_len < chunk_size {
+                    chunk_data[actual_len..chunk_size].fill(0xFF);
+                }
+            }
+
+            let (ciphertext, nonce) = encryption_service.encrypt(&chunk_data).unwrap();
+            let encrypted_chunk =
+                crate::encryption::EncryptedChunk::new(ciphertext, nonce, "master".to_string());
+            cloud_storage
+                .upload_chunk_data(&format!("test-chunk-{}", i), &encrypted_chunk.to_bytes())
+                .await
+                .unwrap();
+        }
+
+        // Setup database
+        let album = crate::db::DbAlbum::new_test("Test Album");
+        let release = crate::db::DbRelease::new_test(&album.id, "test-release");
+        let track =
+            crate::db::DbTrack::new_test("test-release", "test-track", "Test Track", Some(1));
+        library_manager
+            .insert_album_with_release_and_tracks(&album, &release, &[track])
+            .await
+            .unwrap();
+
+        let file = DbFile::new("test-release", "test.flac", file_size as i64, "flac");
+        library_manager.add_file(&file).await.unwrap();
+
+        // Add chunks
+        for i in 0..15 {
+            let chunk_id = format!("test-chunk-{}", i);
+            let location = format!(
+                "s3://test-bucket/chunks/{}/{}/{}.enc",
+                &chunk_id[0..2],
+                &chunk_id[2..4],
+                chunk_id
+            );
+            let chunk =
+                DbChunk::from_release_chunk("test-release", &chunk_id, i, chunk_size, &location);
+            library_manager.add_chunk(&chunk).await.unwrap();
+        }
+
+        // Add file_chunk mapping with byte offsets
+        let file_chunk = DbFileChunk {
+            id: uuid::Uuid::new_v4().to_string(),
+            file_id: file.id.clone(),
+            start_chunk_index: 0,
+            end_chunk_index: 14,
+            start_byte_offset: 0,
+            end_byte_offset: 152_660, // Last byte of file in chunk 14 (14,832,725 - 14,680,064 - 1)
+            created_at: chrono::Utc::now(),
+        };
+        library_manager
+            .add_file_chunk_mapping(&file_chunk)
+            .await
+            .unwrap();
+
+        // Add track_position
+        let track_position = DbTrackPosition {
+            id: uuid::Uuid::new_v4().to_string(),
+            track_id: "test-track".to_string(),
+            file_id: file.id.clone(),
+            start_time_ms: 0,
+            end_time_ms: 0,
+            start_chunk_index: 0,
+            end_chunk_index: 14,
+            created_at: chrono::Utc::now(),
+        };
+        library_manager
+            .add_track_position(&track_position)
+            .await
+            .unwrap();
+
+        // THE TEST: Reassemble the track
+        let reassembled = reassemble_track(
+            "test-track",
+            &library_manager,
+            &cloud_storage,
+            &cache,
+            &encryption_service,
+            chunk_size,
+        )
+        .await
+        .unwrap();
+
+        // Verify the fix works correctly
+        assert_eq!(
+            reassembled.len(),
+            file_size,
+            "File size should match exactly"
+        );
+        assert!(
+            !reassembled.contains(&0xFF),
+            "Should not contain bytes from next file"
+        );
+    }
 }

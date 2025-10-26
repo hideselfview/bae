@@ -7,11 +7,12 @@ use bae::discogs::DiscogsAlbum;
 use bae::encryption::EncryptionService;
 use bae::import::{ImportConfig, ImportRequestParams, ImportService};
 use bae::library::LibraryManager;
+use bae::playback::reassemble_track;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tracing::info;
 
-use super::MockCloudStorage;
+use bae::test_support::MockCloudStorage;
 
 /// Parameterized test runner for import and reassembly
 ///
@@ -76,7 +77,7 @@ pub async fn do_roundtrip<F, G>(
         max_size_bytes: 1024 * 1024 * 1024,
         max_chunks: 10000,
     };
-    let _cache_manager = CacheManager::with_config(cache_config)
+    let cache_manager = CacheManager::with_config(cache_config)
         .await
         .expect("Failed to create cache manager");
 
@@ -190,28 +191,23 @@ pub async fn do_roundtrip<F, G>(
             .expect("Failed to get track position")
             .expect("No track position found");
 
-        let file = library_manager
+        let _file = library_manager
             .get_file_by_id(&track_position.file_id)
             .await
             .expect("Failed to get file")
             .expect("No file found");
 
-        let chunks = library_manager
-            .get_chunks_for_file(&file.id)
-            .await
-            .expect("Failed to get chunks");
-
-        let mut reassembled = Vec::new();
-        for chunk in chunks {
-            let encrypted = cloud_storage
-                .download_chunk(&chunk.storage_location)
-                .await
-                .expect("Failed to download");
-            let decrypted = encryption_service
-                .decrypt_chunk(&encrypted)
-                .expect("Failed to decrypt");
-            reassembled.extend_from_slice(&decrypted);
-        }
+        // Use the proper reassembly function that handles byte offsets
+        let reassembled = reassemble_track(
+            &track.id,
+            &library_manager,
+            &cloud_storage,
+            &cache_manager,
+            &encryption_service,
+            1024 * 1024, // 1MB chunk size
+        )
+        .await
+        .expect("Failed to reassemble track");
 
         assert_eq!(
             reassembled.len(),
