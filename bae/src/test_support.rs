@@ -12,12 +12,18 @@ pub struct MockCloudStorage {
     chunks: Mutex<HashMap<String, Vec<u8>>>,
 }
 
-impl MockCloudStorage {
-    /// Create a new mock cloud storage instance
-    pub fn new() -> Self {
+impl Default for MockCloudStorage {
+    fn default() -> Self {
         MockCloudStorage {
             chunks: Mutex::new(HashMap::new()),
         }
+    }
+}
+
+impl MockCloudStorage {
+    /// Create a new mock cloud storage instance
+    pub fn new() -> Self {
+        Self::default()
     }
 }
 

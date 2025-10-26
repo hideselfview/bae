@@ -32,7 +32,10 @@ pub fn AlbumCard(album: DbAlbum, artists: Vec<DbArtist>) -> Element {
                 let album_id = album.id.clone();
                 let navigator = navigator();
                 move |_| {
-                    navigator.push(Route::AlbumDetail { album_id: album_id.clone() });
+                    navigator.push(Route::AlbumDetail {
+                    album_id: album_id.clone(),
+                    release_id: String::new(),
+                });
                 }
             },
 

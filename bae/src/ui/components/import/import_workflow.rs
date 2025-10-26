@@ -100,19 +100,22 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                     };
 
                     match import_service.send_request(request).await {
-                        Ok(release_id) => {
-                            info!("Release queued for import with ID: {}", release_id);
+                        Ok((album_id, release_id)) => {
+                            info!(
+                                "Release queued for import with ID: {} (album: {})",
+                                release_id, album_id
+                            );
+                            // Navigate to album detail page to show import progress for this specific release
+                            navigator.push(Route::AlbumDetail {
+                                album_id,
+                                release_id,
+                            });
                         }
                         Err(e) => {
                             error!("Failed to validate/queue import: {}", e);
                             current_step.set(ImportStep::ImportError(e));
-                            return;
                         }
                     }
-
-                    // Import validated and queued successfully - navigate to library
-                    // User can see it with 'queued' status
-                    navigator.push(Route::Library {});
                 });
             }
         }

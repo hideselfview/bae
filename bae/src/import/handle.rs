@@ -52,8 +52,11 @@ impl ImportHandle {
     /// If successful, album is inserted with status='queued' and an import
     /// request is sent to the import worker.  
     ///
-    /// Returns the database release ID for progress subscription.
-    pub async fn send_request(&self, params: ImportRequestParams) -> Result<String, String> {
+    /// Returns (album_id, release_id) for navigation and progress subscription.
+    pub async fn send_request(
+        &self,
+        params: ImportRequestParams,
+    ) -> Result<(String, String), String> {
         match params {
             ImportRequestParams::FromFolder {
                 discogs_album: album,
@@ -137,6 +140,7 @@ impl ImportHandle {
 
                 // ========== QUEUE FOR PIPELINE ==========
 
+                let album_id = db_album.id.clone();
                 let release_id = db_release.id.clone();
 
                 self.requests_tx
@@ -148,7 +152,7 @@ impl ImportHandle {
                     })
                     .map_err(|_| "Failed to queue validated album for import".to_string())?;
 
-                Ok(release_id)
+                Ok((album_id, release_id))
             }
         }
     }

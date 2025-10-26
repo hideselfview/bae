@@ -113,7 +113,7 @@ pub async fn do_roundtrip<F, G>(
     info!("Starting import...");
     info!("Sending import request...");
 
-    let release_id = import_handle
+    let (_album_id, release_id) = import_handle
         .send_request(ImportRequestParams::FromFolder {
             discogs_album,
             folder: album_dir.clone(),

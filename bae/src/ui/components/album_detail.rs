@@ -10,7 +10,13 @@ use super::use_playback_service;
 
 /// Album detail page showing album info and tracklist
 #[component]
-pub fn AlbumDetail(album_id: String) -> Element {
+pub fn AlbumDetail(album_id: String, release_id: String) -> Element {
+    // Convert empty string to None for optional release_id
+    let release_id = if release_id.is_empty() {
+        None
+    } else {
+        Some(release_id)
+    };
     let library_manager = use_library_manager();
     let mut album = use_signal(|| None::<DbAlbum>);
     let mut releases = use_signal(Vec::<DbRelease>::new);
@@ -22,11 +28,13 @@ pub fn AlbumDetail(album_id: String) -> Element {
     // Load album and releases on component mount
     use_effect({
         let album_id = album_id.clone();
+        let release_id = release_id.clone();
         let library_manager = library_manager.clone();
 
         move || {
             spawn({
                 let album_id = album_id.clone();
+                let release_id = release_id.clone();
                 let library_manager = library_manager.clone();
 
                 async move {
@@ -36,6 +44,17 @@ pub fn AlbumDetail(album_id: String) -> Element {
                     match load_album_and_releases(&album_id, &library_manager).await {
                         Ok((album_data, releases_data)) => {
                             album.set(Some(album_data));
+
+                            // If a specific release_id was provided, find its index
+                            if let Some(ref target_release_id) = release_id {
+                                if let Some(index) = releases_data
+                                    .iter()
+                                    .position(|r| &r.id == target_release_id)
+                                {
+                                    selected_release_index.set(index);
+                                }
+                            }
+
                             releases.set(releases_data);
                             loading.set(false);
                         }
