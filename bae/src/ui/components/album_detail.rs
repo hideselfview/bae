@@ -1,8 +1,10 @@
-use crate::db::{DbAlbum, DbArtist, DbTrack};
-use crate::library::use_library_manager;
+use crate::db::{DbAlbum, DbArtist, DbRelease, DbTrack, ImportStatus};
+use crate::import::ImportProgress;
 use crate::library::LibraryError;
+use crate::library::{use_import_service, use_library_manager};
 use crate::ui::Route;
 use dioxus::prelude::*;
+use std::collections::HashMap as StdHashMap;
 
 use super::use_playback_service;
 
@@ -11,11 +13,13 @@ use super::use_playback_service;
 pub fn AlbumDetail(album_id: String) -> Element {
     let library_manager = use_library_manager();
     let mut album = use_signal(|| None::<DbAlbum>);
+    let mut releases = use_signal(Vec::<DbRelease>::new);
+    let mut selected_release_index = use_signal(|| 0_usize);
     let mut tracks = use_signal(Vec::<DbTrack>::new);
     let mut loading = use_signal(|| true);
     let mut error = use_signal(|| None::<String>);
 
-    // Load album and tracks on component mount
+    // Load album and releases on component mount
     use_effect({
         let album_id = album_id.clone();
         let library_manager = library_manager.clone();
@@ -29,10 +33,10 @@ pub fn AlbumDetail(album_id: String) -> Element {
                     loading.set(true);
                     error.set(None);
 
-                    match load_album_details(&album_id, &library_manager).await {
-                        Ok((album_data, tracks_data)) => {
+                    match load_album_and_releases(&album_id, &library_manager).await {
+                        Ok((album_data, releases_data)) => {
                             album.set(Some(album_data));
-                            tracks.set(tracks_data);
+                            releases.set(releases_data);
                             loading.set(false);
                         }
                         Err(e) => {
@@ -42,6 +46,30 @@ pub fn AlbumDetail(album_id: String) -> Element {
                     }
                 }
             });
+        }
+    });
+
+    // Load tracks when selected release changes
+    use_effect({
+        move || {
+            let releases_list = releases();
+            let index = selected_release_index();
+
+            if let Some(release) = releases_list.get(index) {
+                let release_id = release.id.clone();
+                let library_manager = library_manager.clone();
+
+                spawn(async move {
+                    match library_manager.get().get_tracks(&release_id).await {
+                        Ok(tracks_data) => {
+                            tracks.set(tracks_data);
+                        }
+                        Err(e) => {
+                            error.set(Some(format!("Failed to load tracks: {}", e)));
+                        }
+                    }
+                });
+            }
         }
     });
 
@@ -78,6 +106,11 @@ pub fn AlbumDetail(album_id: String) -> Element {
             } else if let Some(album_data) = album() {
                 AlbumDetailView {
                     album: album_data,
+                    releases: releases(),
+                    selected_release_index: selected_release_index(),
+                    on_release_select: move |index: usize| {
+                        selected_release_index.set(index);
+                    },
                     tracks: tracks()
                 }
             }
@@ -87,10 +120,19 @@ pub fn AlbumDetail(album_id: String) -> Element {
 
 /// Album detail view component
 #[component]
-fn AlbumDetailView(album: DbAlbum, tracks: Vec<DbTrack>) -> Element {
+fn AlbumDetailView(
+    album: DbAlbum,
+    releases: Vec<DbRelease>,
+    selected_release_index: usize,
+    on_release_select: EventHandler<usize>,
+    tracks: Vec<DbTrack>,
+) -> Element {
     let library_manager = use_library_manager();
+    let import_service = use_import_service();
     let playback = use_playback_service();
     let mut artist_name = use_signal(|| "Loading...".to_string());
+    let mut import_progress = use_signal(|| None::<(usize, usize, u8)>); // (current, total, percent)
+    let mut completed_tracks = use_signal(StdHashMap::<String, bool>::new); // track_id -> completed
 
     // Load artists for this album
     use_effect({
@@ -116,6 +158,59 @@ fn AlbumDetailView(album: DbAlbum, tracks: Vec<DbTrack>) -> Element {
                     }
                 }
             });
+        }
+    });
+
+    // Subscribe to import progress for the selected release
+    // The receiver will automatically drop and unsubscribe when the effect re-runs or component unmounts
+    use_effect({
+        let releases_for_effect = releases.clone();
+        move || {
+            let releases_list = releases_for_effect.clone();
+            let index = selected_release_index;
+
+            if let Some(release) = releases_list.get(index) {
+                // Only subscribe if release is importing
+                if release.import_status == ImportStatus::Importing
+                    || release.import_status == ImportStatus::Queued
+                {
+                    let release_id = release.id.clone();
+                    let import_service = import_service.clone();
+
+                    spawn(async move {
+                        let mut progress_rx = import_service.subscribe_release(release_id);
+
+                        // Receiver automatically unsubscribes when dropped (when effect re-runs or component unmounts)
+                        while let Some(progress) = progress_rx.recv().await {
+                            match progress {
+                                ImportProgress::ProcessingProgress {
+                                    current,
+                                    total,
+                                    percent,
+                                    ..
+                                } => {
+                                    import_progress.set(Some((current, total, percent)));
+                                }
+                                ImportProgress::TrackComplete { track_id, .. } => {
+                                    completed_tracks.write().insert(track_id, true);
+                                }
+                                ImportProgress::Complete { .. } => {
+                                    import_progress.set(None);
+                                    break;
+                                }
+                                ImportProgress::Failed { .. } => {
+                                    import_progress.set(None);
+                                    break;
+                                }
+                                _ => {}
+                            }
+                        }
+                    });
+                } else {
+                    import_progress.set(None);
+                    completed_tracks.set(StdHashMap::new());
+                }
+            }
         }
     });
 
@@ -198,9 +293,67 @@ fn AlbumDetailView(album: DbAlbum, tracks: Vec<DbTrack>) -> Element {
                 class: "lg:col-span-2",
                 div {
                     class: "bg-gray-800 rounded-lg p-6",
+
+                    // Release tabs (if multiple releases exist)
+                    if releases.len() > 1 {
+                        div {
+                            class: "mb-6 border-b border-gray-700",
+                            div {
+                                class: "flex gap-2 overflow-x-auto",
+                                for (index, release) in releases.iter().enumerate() {
+                                    button {
+                                        key: "{release.id}",
+                                        class: if index == selected_release_index {
+                                            "px-4 py-2 text-sm font-medium text-blue-400 border-b-2 border-blue-400 whitespace-nowrap"
+                                        } else {
+                                            "px-4 py-2 text-sm font-medium text-gray-400 hover:text-gray-300 border-b-2 border-transparent whitespace-nowrap"
+                                        },
+                                        onclick: move |_| {
+                                            on_release_select.call(index);
+                                        },
+                                        {
+                                            if let Some(ref name) = release.release_name {
+                                                name.clone()
+                                            } else if let Some(year) = release.year {
+                                                format!("Release ({})", year)
+                                            } else {
+                                                "Release".to_string()
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     h2 {
                         class: "text-xl font-bold text-white mb-4",
                         "Tracklist"
+                    }
+
+                    // Show import progress if release is importing
+                    if let Some((current, total, percent)) = import_progress() {
+                        div {
+                            class: "mb-4 p-4 bg-blue-900 bg-opacity-30 rounded-lg border border-blue-700",
+                            div {
+                                class: "flex justify-between items-center mb-2",
+                                span {
+                                    class: "text-sm font-medium text-blue-300",
+                                    "Importing..."
+                                }
+                                span {
+                                    class: "text-sm text-blue-400",
+                                    "{current} / {total} chunks ({percent}%)"
+                                }
+                            }
+                            div {
+                                class: "w-full bg-gray-700 rounded-full h-2",
+                                div {
+                                    class: "bg-blue-500 h-2 rounded-full transition-all duration-300",
+                                    style: "width: {percent}%"
+                                }
+                            }
+                        }
                     }
 
                     if tracks.is_empty() {
@@ -212,7 +365,10 @@ fn AlbumDetailView(album: DbAlbum, tracks: Vec<DbTrack>) -> Element {
                         div {
                             class: "space-y-2",
                             for track in &tracks {
-                                TrackRow { track: track.clone() }
+                                TrackRow {
+                                    track: track.clone(),
+                                    is_completed: completed_tracks().get(&track.id).copied().unwrap_or(false)
+                                }
                             }
                         }
                     }
@@ -224,7 +380,7 @@ fn AlbumDetailView(album: DbAlbum, tracks: Vec<DbTrack>) -> Element {
 
 /// Individual track row component
 #[component]
-fn TrackRow(track: DbTrack) -> Element {
+fn TrackRow(track: DbTrack, is_completed: bool) -> Element {
     let library_manager = use_library_manager();
     let playback = use_playback_service();
     let mut track_artists = use_signal(Vec::<DbArtist>::new);
@@ -247,13 +403,30 @@ fn TrackRow(track: DbTrack) -> Element {
         div {
             class: "flex items-center py-3 px-4 rounded-lg hover:bg-gray-700 transition-colors group",
 
-            // Play button (hidden by default, shown on hover)
-            button {
-                class: "opacity-0 group-hover:opacity-100 transition-opacity text-blue-400 hover:text-blue-300",
-                onclick: move |_| {
-                    playback.play(track.id.clone());
-                },
-                "▶"
+            // Completion indicator or play button
+            if track.import_status == ImportStatus::Importing && !is_completed {
+                div {
+                    class: "w-6 text-gray-500 text-sm",
+                    "⏳"
+                }
+            } else if is_completed || track.import_status == ImportStatus::Complete {
+                // Play button (hidden by default, shown on hover)
+                button {
+                    class: "opacity-0 group-hover:opacity-100 transition-opacity text-blue-400 hover:text-blue-300",
+                    onclick: move |_| {
+                        playback.play(track.id.clone());
+                    },
+                    "▶"
+                }
+            } else {
+                // Play button (hidden by default, shown on hover)
+                button {
+                    class: "opacity-0 group-hover:opacity-100 transition-opacity text-blue-400 hover:text-blue-300",
+                    onclick: move |_| {
+                        playback.play(track.id.clone());
+                    },
+                    "▶"
+                }
             }
 
             // Track number
@@ -310,11 +483,11 @@ fn format_duration(duration_ms: i64) -> String {
     format!("{}:{:02}", minutes, seconds)
 }
 
-/// Load album and tracks from the database
-async fn load_album_details(
+/// Load album and its releases from the database
+async fn load_album_and_releases(
     album_id: &str,
     library_manager: &crate::library::SharedLibraryManager,
-) -> Result<(DbAlbum, Vec<DbTrack>), LibraryError> {
+) -> Result<(DbAlbum, Vec<DbRelease>), LibraryError> {
     // Get all albums to find the one we want
     let albums = library_manager.get().get_albums().await?;
     let album = albums
@@ -322,8 +495,11 @@ async fn load_album_details(
         .find(|a| a.id == album_id)
         .ok_or_else(|| LibraryError::Import("Album not found".to_string()))?;
 
-    // Get tracks for this album
-    let tracks = library_manager.get().get_tracks(album_id).await?;
+    // Get releases for this album
+    let releases = library_manager
+        .get()
+        .get_releases_for_album(album_id)
+        .await?;
 
-    Ok((album, tracks))
+    Ok((album, releases))
 }

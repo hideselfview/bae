@@ -2,6 +2,7 @@ use crate::import::types::ImportProgress;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc as tokio_mpsc;
+use tracing::trace;
 
 /// Tracks import progress and emits progress events during pipeline execution.
 ///
@@ -71,6 +72,14 @@ impl ImportProgressTracker {
         };
 
         // Emit progress event
+        trace!(
+            "Chunk {} complete ({}/{}), {}% done",
+            chunk_index,
+            progress_update.0,
+            self.total_chunks,
+            progress_update.1
+        );
+
         let _ = self.tx.send(ImportProgress::ProcessingProgress {
             release_id: self.release_id.clone(),
             percent: progress_update.1,
@@ -80,6 +89,8 @@ impl ImportProgressTracker {
 
         // Emit TrackComplete for each newly completed track
         for track_id in &newly_completed_tracks {
+            trace!("Track {} complete", track_id);
+
             let _ = self.tx.send(ImportProgress::TrackComplete {
                 release_id: self.release_id.clone(),
                 track_id: track_id.clone(),

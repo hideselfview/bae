@@ -1,5 +1,6 @@
 ---
 alwaysApply: true
 ---
-ALWAYS RUN COMMANDS WITH --no-pager OR EQUIVALENT FLAGS. IF
-NO SUCH FLAG EXISTS, DO | cat
+ALWAYS RUN COMMANDS WITH `--no-pager` or whatever equivalent flag if one is known.
+For example `git diff`, which needs to be run with `git --no-pager diff`, where
+`--no-pager` must be before `diff`.

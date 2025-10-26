@@ -80,13 +80,7 @@ fn create_library_manager(database: Database) -> SharedLibraryManager {
 
 fn configure_logging() {
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(tracing_subscriber::filter::LevelFilter::INFO.into())
-                .parse_lossy(
-                    "bae=info,sqlx=warn,aws_config=warn,aws_smithy=warn,aws_sdk_s3=warn,hyper=warn",
-                ),
-        )
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .with_line_number(true)
         .with_target(false)
         .with_file(true)
@@ -94,6 +88,8 @@ fn configure_logging() {
 }
 
 fn main() {
+    let config = config::Config::load();
+
     // Initialize logging with filters to suppress verbose debug logs
     configure_logging();
 
@@ -103,7 +99,6 @@ fn main() {
 
     info!("Building dependencies...");
 
-    let config = config::Config::load();
     let cache_manager = runtime_handle.block_on(create_cache_manager());
     let cloud_storage = runtime_handle.block_on(create_cloud_storage_manager(&config));
     let database = runtime_handle.block_on(create_database(&config));
