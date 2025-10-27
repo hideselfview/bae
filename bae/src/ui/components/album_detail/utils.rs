@@ -30,7 +30,7 @@ pub async fn load_album_and_releases(
 }
 
 /// Converts an empty string to None, otherwise wraps the string in Some
-pub fn maybe_not_empty_string(s: String) -> Option<String> {
+pub fn maybe_not_empty(s: String) -> Option<String> {
     if s.is_empty() {
         None
     } else {
@@ -38,18 +38,31 @@ pub fn maybe_not_empty_string(s: String) -> Option<String> {
     }
 }
 
-/// Get the selected release ID from an album resource
-pub fn get_selected_release_id(
+/// Extracts a release ID from the album resource and path parameters.
+/// Returns None if the resource is still loading, or an error string if the data is invalid.
+/// Falls back to the first release if no specific release ID is provided.
+pub fn get_selected_release_id_from_params(
     album_resource: &Resource<Result<(DbAlbum, Vec<DbRelease>), LibraryError>>,
-    maybe_release_id: Option<String>,
-) -> Option<String> {
+    maybe_release_id_param: Option<String>,
+) -> Option<Result<String, String>> {
     album_resource
         .value()
         .read()
         .as_ref()
-        .and_then(|result| result.as_ref().ok())
-        .and_then(|(_, releases)| match &maybe_release_id {
-            Some(id) => releases.iter().find(|r| &r.id == id).map(|r| r.id.clone()),
-            None => releases.first().map(|r| r.id.clone()),
+        .map(|result| match result {
+            Err(e) => Err(e.to_string()),
+            Ok((_, releases)) => {
+                if releases.is_empty() {
+                    return Err("Album has no releases (data integrity violation)".to_string());
+                }
+                match &maybe_release_id_param {
+                    Some(id) => releases
+                        .iter()
+                        .find(|r| &r.id == id)
+                        .map(|r| r.id.clone())
+                        .ok_or_else(|| format!("Release {} not found in album", id)),
+                    None => Ok(releases[0].id.clone()),
+                }
+            }
         })
 }

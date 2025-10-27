@@ -4,15 +4,78 @@ use crate::library::{use_import_service, use_library_manager};
 use crate::ui::Route;
 use dioxus::prelude::*;
 
-use super::utils::{get_selected_release_id, load_album_and_releases, maybe_not_empty_string};
+use super::back_button::BackButton;
+use super::error::AlbumDetailError;
+use super::loading::AlbumDetailLoading;
+use super::utils::{get_selected_release_id_from_params, load_album_and_releases, maybe_not_empty};
 use super::view::AlbumDetailView;
 use crate::db::{DbAlbum, DbArtist, DbRelease, DbTrack};
 use crate::library::LibraryError;
 
+/// Album detail page showing album info and tracklist
+#[component]
+pub fn AlbumDetail(
+    album_id: ReadOnlySignal<String>,
+    release_id: ReadOnlySignal<String>, // May be empty string, will default to first release
+) -> Element {
+    let maybe_release_id = use_memo(move || maybe_not_empty(release_id()));
+    let data = use_album_detail_data(album_id, maybe_release_id);
+    let import_progress = use_release_progress(data.album, maybe_release_id);
+
+    rsx! {
+        PageContainer {
+            BackButton {}
+            match data.album.value().read().as_ref() {
+                None => rsx! { AlbumDetailLoading {} },
+
+                Some(Err(e)) => rsx! { AlbumDetailError { message: format!("Failed to load album: {e}") } },
+
+                Some(Ok((album, releases))) => {
+                    let selected_release_result = get_selected_release_id_from_params(&data.album, maybe_release_id())
+                        .expect("Resource value should be present");
+
+                    if let Err(e) = selected_release_result {
+                        return rsx! { AlbumDetailError { message: format!("Failed to load release: {e}") } };
+                    }
+
+                    let selected_release_id = selected_release_result.ok().unwrap();
+
+                    rsx! {
+                        AlbumDetailView {
+                            album: album.clone(),
+                            releases: releases.clone(),
+                            artists: data.artists.value().read().as_ref().and_then(|r| r.as_ref().ok()).cloned().unwrap_or_default(),
+                            selected_release_id: selected_release_id,
+                            on_release_select: move |new_release_id: String| {
+                                navigator().push(Route::AlbumDetail {
+                                    album_id: album_id().clone(),
+                                    release_id: new_release_id,
+                                });
+                            },
+                            tracks: data.tracks.value().read().as_ref().and_then(|r| r.as_ref().ok()).cloned().unwrap_or_default(),
+                            import_progress: import_progress()
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn PageContainer(children: Element) -> Element {
+    rsx! {
+        div {
+            class: "container mx-auto p-6",
+            {children}
+        }
+    }
+}
+
 struct AlbumDetailData {
-    album_resource: Resource<Result<(DbAlbum, Vec<DbRelease>), LibraryError>>,
-    tracks_resource: Resource<Result<Vec<DbTrack>, LibraryError>>,
-    artists_resource: Resource<Result<Vec<DbArtist>, LibraryError>>,
+    album: Resource<Result<(DbAlbum, Vec<DbRelease>), LibraryError>>,
+    tracks: Resource<Result<Vec<DbTrack>, LibraryError>>,
+    artists: Resource<Result<Vec<DbArtist>, LibraryError>>,
 }
 
 fn use_album_detail_data(
@@ -30,8 +93,10 @@ fn use_album_detail_data(
         })
     };
 
-    let current_release_id =
-        use_memo(move || get_selected_release_id(&album_resource, maybe_release_id()));
+    let current_release_id = use_memo(move || {
+        get_selected_release_id_from_params(&album_resource, maybe_release_id())
+            .and_then(|r| r.ok())
+    });
 
     let tracks_resource = {
         let library_manager = library_manager.clone();
@@ -71,9 +136,9 @@ fn use_album_detail_data(
     };
 
     AlbumDetailData {
-        album_resource,
-        tracks_resource,
-        artists_resource,
+        album: album_resource,
+        tracks: tracks_resource,
+        artists: artists_resource,
     }
 }
 
@@ -91,7 +156,9 @@ fn use_release_progress(
             .as_ref()
             .and_then(|r| r.as_ref().ok())
             .map(|(_, releases)| releases.clone());
-        let selected_id = get_selected_release_id(&album_resource, maybe_release_id());
+
+        let selected_id = get_selected_release_id_from_params(&album_resource, maybe_release_id())
+            .and_then(|r| r.ok());
 
         if let Some(releases) = releases_data {
             if let Some(ref id) = selected_id {
@@ -133,77 +200,4 @@ fn use_release_progress(
     });
 
     progress
-}
-
-/// Album detail page showing album info and tracklist
-#[component]
-pub fn AlbumDetail(
-    album_id: ReadOnlySignal<String>,
-    release_id: ReadOnlySignal<String>, // May be empty string, will default to first release
-) -> Element {
-    let nav = navigator();
-    let maybe_release_id = use_memo(move || maybe_not_empty_string(release_id()));
-
-    let AlbumDetailData {
-        album_resource,
-        tracks_resource,
-        artists_resource,
-    } = use_album_detail_data(album_id, maybe_release_id);
-
-    let import_progress = use_release_progress(album_resource, maybe_release_id);
-
-    rsx! {
-        div {
-            class: "container mx-auto p-6",
-
-            div {
-                class: "mb-6",
-                Link {
-                    to: Route::Library {},
-                    class: "inline-flex items-center text-blue-400 hover:text-blue-300 transition-colors",
-                    "← Back to Library"
-                }
-            }
-
-            match album_resource.value().read().as_ref() {
-                None => rsx! {
-                    div {
-                        class: "flex justify-center items-center py-12",
-                        div {
-                            class: "animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"
-                        }
-                        p {
-                            class: "ml-4 text-gray-300",
-                            "Loading album details..."
-                        }
-                    }
-                },
-                Some(Err(e)) => rsx! {
-                    div {
-                        class: "bg-red-900 border border-red-700 text-red-100 px-4 py-3 rounded mb-4",
-                        p { "Failed to load album: {e}" }
-                    }
-                },
-                Some(Ok((album, releases))) => {
-                    let selected_id = get_selected_release_id(&album_resource, maybe_release_id());
-                    rsx! {
-                        AlbumDetailView {
-                            album: album.clone(),
-                            releases: releases.clone(),
-                            artists: artists_resource.value().read().as_ref().and_then(|r| r.as_ref().ok()).cloned().unwrap_or_default(),
-                            selected_release_id: selected_id,
-                            on_release_select: move |new_release_id: String| {
-                                nav.push(Route::AlbumDetail {
-                                    album_id: album_id().clone(),
-                                    release_id: new_release_id,
-                                });
-                            },
-                            tracks: tracks_resource.value().read().as_ref().and_then(|r| r.as_ref().ok()).cloned().unwrap_or_default(),
-                            import_progress: import_progress()
-                        }
-                    }
-                }
-            }
-        }
-    }
 }
