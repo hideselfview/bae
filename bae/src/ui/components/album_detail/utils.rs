@@ -1,5 +1,6 @@
 use crate::db::{DbAlbum, DbRelease};
 use crate::library::{LibraryError, SharedLibraryManager};
+use dioxus::prelude::*;
 
 /// Format duration from milliseconds to MM:SS
 pub fn format_duration(duration_ms: i64) -> String {
@@ -35,4 +36,20 @@ pub fn maybe_not_empty_string(s: String) -> Option<String> {
     } else {
         Some(s)
     }
+}
+
+/// Get the selected release ID from an album resource
+pub fn get_selected_release_id(
+    album_resource: &Resource<Result<(DbAlbum, Vec<DbRelease>), LibraryError>>,
+    maybe_release_id: Option<String>,
+) -> Option<String> {
+    album_resource
+        .value()
+        .read()
+        .as_ref()
+        .and_then(|result| result.as_ref().ok())
+        .and_then(|(_, releases)| match &maybe_release_id {
+            Some(id) => releases.iter().find(|r| &r.id == id).map(|r| r.id.clone()),
+            None => releases.first().map(|r| r.id.clone()),
+        })
 }

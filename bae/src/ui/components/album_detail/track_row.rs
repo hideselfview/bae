@@ -7,7 +7,7 @@ use super::utils::format_duration;
 
 /// Individual track row component
 #[component]
-pub fn TrackRow(track: DbTrack, is_completed: bool) -> Element {
+pub fn TrackRow(track: DbTrack) -> Element {
     let library_manager = use_library_manager();
     let playback = use_playback_service();
     let mut track_artists = use_signal(Vec::<DbArtist>::new);
@@ -31,20 +31,12 @@ pub fn TrackRow(track: DbTrack, is_completed: bool) -> Element {
             class: "flex items-center py-3 px-4 rounded-lg hover:bg-gray-700 transition-colors group",
 
             // Completion indicator or play button
-            if track.import_status == ImportStatus::Importing && !is_completed {
+            if track.import_status == ImportStatus::Importing || track.import_status == ImportStatus::Queued {
                 div {
                     class: "w-6 text-gray-500 text-sm",
                     "⏳"
                 }
-            } else if is_completed || track.import_status == ImportStatus::Complete {
-                button {
-                    class: "opacity-0 group-hover:opacity-100 transition-opacity text-blue-400 hover:text-blue-300",
-                    onclick: move |_| {
-                        playback.play(track.id.clone());
-                    },
-                    "▶"
-                }
-            } else {
+            } else if track.import_status == ImportStatus::Complete {
                 button {
                     class: "opacity-0 group-hover:opacity-100 transition-opacity text-blue-400 hover:text-blue-300",
                     onclick: move |_| {

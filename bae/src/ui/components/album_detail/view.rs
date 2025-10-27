@@ -14,7 +14,6 @@ pub fn AlbumDetailView(
     on_release_select: EventHandler<String>,
     tracks: Vec<DbTrack>,
     import_progress: Option<(usize, usize, u8)>,
-    completed_tracks: Vec<String>,
 ) -> Element {
     let playback = use_playback_service();
 
@@ -188,8 +187,7 @@ pub fn AlbumDetailView(
                             class: "space-y-2",
                             for track in &tracks {
                                 TrackRow {
-                                    track: track.clone(),
-                                    is_completed: completed_tracks.contains(&track.id)
+                                    track: track.clone()
                                 }
                             }
                         }
