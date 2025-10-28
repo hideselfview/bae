@@ -63,9 +63,16 @@ jobs:
       working-directory: ./bae
       run: npm ci
 
+    - name: Install Dioxus CLI
+      run: cargo install dioxus-cli
+
     - name: Check Rust formatting
       working-directory: ./bae
       run: cargo fmt -- --check
+
+    - name: Check RSX formatting
+      working-directory: ./bae
+      run: dx fmt --check
 
     - name: Run Clippy (Linux/macOS)
       if: runner.os != 'Windows'

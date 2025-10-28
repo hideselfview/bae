@@ -29,7 +29,7 @@ pub fn ImportWorkflowManager() -> Element {
                 ReleaseList {
                     master_id: master_id.clone(),
                     master_title: master_title.clone(),
-                    on_back: on_release_back
+                    on_back: on_release_back,
                 }
             }
         }

@@ -130,66 +130,50 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
     match current_step_value {
         ImportStep::DataSourceSelection => {
             rsx! {
-                div {
-                    class: "max-w-4xl mx-auto p-6",
+                div { class: "max-w-4xl mx-auto p-6",
                     // Header
-                    div {
-                        class: "mb-6",
+                    div { class: "mb-6",
                         button {
                             class: "text-blue-600 hover:text-blue-800 mb-4",
                             onclick: on_back_to_search,
                             "← Back to Search"
                         }
-                        h1 {
-                            class: "text-2xl font-bold text-white",
-                            "Import Album"
-                        }
+                        h1 { class: "text-2xl font-bold text-white", "Import Album" }
                     }
 
                     // Album Info
-                    div {
-                        class: "bg-white rounded-lg shadow p-6 mb-6",
-                        div {
-                            class: "flex items-start space-x-4",
+                    div { class: "bg-white rounded-lg shadow p-6 mb-6",
+                        div { class: "flex items-start space-x-4",
                             if let Some(thumb) = props.discogs_album.thumb() {
                                 img {
                                     class: "w-24 h-24 object-cover rounded",
                                     src: "{thumb}",
-                                    alt: "Album cover"
+                                    alt: "Album cover",
                                 }
                             } else {
-                                div {
-                                    class: "w-24 h-24 bg-gray-200 rounded flex items-center justify-center text-gray-500 text-sm",
+                                div { class: "w-24 h-24 bg-gray-200 rounded flex items-center justify-center text-gray-500 text-sm",
                                     "No Image"
                                 }
                             }
-                            div {
-                                class: "flex-1",
-                                h2 {
-                                    class: "text-xl font-semibold text-gray-900",
+                            div { class: "flex-1",
+                                h2 { class: "text-xl font-semibold text-gray-900",
                                     "{props.discogs_album.title()}"
                                 }
                                 if props.discogs_album.is_master() {
-                                    div {
-                                        class: "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mb-2",
+                                    div { class: "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mb-2",
                                         "Master Release"
                                     }
                                 }
                                 if let Some(year) = props.discogs_album.year() {
-                                    p {
-                                        class: "text-gray-600",
-                                        "Released: {year}"
-                                    }
+                                    p { class: "text-gray-600", "Released: {year}" }
                                 }
                                 if !props.discogs_album.format().is_empty() {
-                                    p {
-                                        class: "text-gray-600",
+                                    p { class: "text-gray-600",
                                         "Format: {props.discogs_album.format().join(\", \")}"
                                     }
                                 }
                                 if !props.discogs_album.label().is_empty() {
-                                    p {
-                                        class: "text-gray-600",
+                                    p { class: "text-gray-600",
                                         "Label: {props.discogs_album.label().join(\", \")}"
                                     }
                                 }
@@ -198,20 +182,13 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                     }
 
                     // Data Source Selection
-                    div {
-                        class: "bg-white rounded-lg shadow p-6",
-                        h3 {
-                            class: "text-lg font-semibold text-gray-900 mb-4",
-                            "Select Data Source"
-                        }
+                    div { class: "bg-white rounded-lg shadow p-6",
+                        h3 { class: "text-lg font-semibold text-gray-900 mb-4", "Select Data Source" }
 
-                        div {
-                            class: "border border-gray-200 rounded-lg p-4",
-                            div {
-                                class: "flex items-center justify-between",
+                        div { class: "border border-gray-200 rounded-lg p-4",
+                            div { class: "flex items-center justify-between",
                                 if selected_folder.read().is_none() {
-                                    div {
-                                        class: "text-sm font-medium text-gray-900",
+                                    div { class: "text-sm font-medium text-gray-900",
                                         "Select a folder containing your music files"
                                     }
                                 }
@@ -237,22 +214,15 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                                 }
                             }
                             if let Some(folder) = selected_folder.read().as_ref() {
-                                div {
-                                    class: "mt-2 text-sm text-gray-600",
-                                    "Selected: {folder}"
-                                }
+                                div { class: "mt-2 text-sm text-gray-600", "Selected: {folder}" }
                             }
                             if let Some(error) = folder_error.read().as_ref() {
-                                div {
-                                    class: "mt-2 text-sm text-red-600",
-                                    "Error: {error}"
-                                }
+                                div { class: "mt-2 text-sm text-red-600", "Error: {error}" }
                             }
                         }
 
                         // Import Button
-                        div {
-                            class: "mt-6 flex justify-end",
+                        div { class: "mt-6 flex justify-end",
                             button {
                                 class: "px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50",
                                 disabled: selected_folder.read().is_none(),
@@ -267,39 +237,27 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
         ImportStep::ImportError(error_msg) => {
             let error_display = error_msg.clone();
             rsx! {
-                div {
-                    class: "max-w-4xl mx-auto p-6",
-                    div {
-                        class: "text-center",
-                        div {
-                            class: "mb-6",
-                            div {
-                                class: "w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4 text-red-600 text-2xl",
+                div { class: "max-w-4xl mx-auto p-6",
+                    div { class: "text-center",
+                        div { class: "mb-6",
+                            div { class: "w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4 text-red-600 text-2xl",
                                 "✕"
                             }
-                            h1 {
-                                class: "text-2xl font-bold text-gray-900 mb-2",
-                                "Import Failed"
-                            }
-                            p {
-                                class: "text-gray-600 mb-4",
+                            h1 { class: "text-2xl font-bold text-gray-900 mb-2", "Import Failed" }
+                            p { class: "text-gray-600 mb-4",
                                 "An error occurred while importing the album."
                             }
-                            div {
-                                class: "bg-red-50 border border-red-200 rounded-lg p-4 mb-6 text-left max-w-2xl mx-auto",
-                                p {
-                                    class: "text-sm font-medium text-red-800 mb-1",
+                            div { class: "bg-red-50 border border-red-200 rounded-lg p-4 mb-6 text-left max-w-2xl mx-auto",
+                                p { class: "text-sm font-medium text-red-800 mb-1",
                                     "Error Details:"
                                 }
-                                p {
-                                    class: "text-sm text-red-700 font-mono break-words",
+                                p { class: "text-sm text-red-700 font-mono break-words",
                                     "{error_display}"
                                 }
                             }
                         }
 
-                        div {
-                            class: "space-x-4",
+                        div { class: "space-x-4",
                             button {
                                 class: "px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700",
                                 onclick: move |_| {

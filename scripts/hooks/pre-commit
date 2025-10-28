@@ -13,6 +13,16 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+echo "Running dx fmt check..."
+dx fmt --check
+
+if [ $? -ne 0 ]; then
+    echo ""
+    echo "❌ Commit rejected: RSX code is not formatted correctly"
+    echo "Run 'dx fmt' in the bae directory to fix formatting"
+    exit 1
+fi
+
 echo "✅ Code formatting check passed"
 exit 0
 

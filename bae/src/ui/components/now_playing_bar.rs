@@ -97,15 +97,11 @@ pub fn NowPlayingBar() -> Element {
                         // Track info
                         div { class: "flex-1",
                             div { class: "font-semibold", "{track.title}" }
-                            div { class: "text-sm text-gray-400",
-                                "{artist_name}"
-                            }
+                            div { class: "text-sm text-gray-400", "{artist_name}" }
                         }
 
                         // Position display
-                        div { class: "text-sm text-gray-400",
-                            "{position.as_secs()}s"
-                        }
+                        div { class: "text-sm text-gray-400", "{position.as_secs()}s" }
                     }
                 }
             }
@@ -146,15 +142,11 @@ pub fn NowPlayingBar() -> Element {
                         // Track info
                         div { class: "flex-1",
                             div { class: "font-semibold", "{track.title}" }
-                            div { class: "text-sm text-gray-400",
-                                "{artist_name}"
-                            }
+                            div { class: "text-sm text-gray-400", "{artist_name}" }
                         }
 
                         // Position display
-                        div { class: "text-sm text-gray-400",
-                            "⏸ {position.as_secs()}s"
-                        }
+                        div { class: "text-sm text-gray-400", "⏸ {position.as_secs()}s" }
                     }
                 }
             }

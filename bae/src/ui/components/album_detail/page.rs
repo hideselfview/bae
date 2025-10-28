@@ -20,40 +20,62 @@ pub fn AlbumDetail(
 ) -> Element {
     let maybe_release_id = use_memo(move || maybe_not_empty(release_id()));
     let data = use_album_detail_data(album_id, maybe_release_id);
-    let import_progress = use_release_progress(data.album, maybe_release_id);
+    let import_progress = use_release_progress(data.album_resource, data.selected_release_id);
 
     rsx! {
         PageContainer {
             BackButton {}
-            match data.album.value().read().as_ref() {
-                None => rsx! { AlbumDetailLoading {} },
-
-                Some(Err(e)) => rsx! { AlbumDetailError { message: format!("Failed to load album: {e}") } },
-
+            match data.album_resource.value().read().as_ref() {
+                None => rsx! {
+                    AlbumDetailLoading {}
+                },
+                Some(Err(e)) => rsx! {
+                    AlbumDetailError { message: format!("Failed to load album: {e}") }
+                },
                 Some(Ok((album, releases))) => {
-                    let selected_release_result = get_selected_release_id_from_params(&data.album, maybe_release_id())
+                    let selected_release_result = get_selected_release_id_from_params(
+                            &data.album_resource,
+                            maybe_release_id(),
+                        )
                         .expect("Resource value should be present");
-
                     if let Err(e) = selected_release_result {
-                        return rsx! { AlbumDetailError { message: format!("Failed to load release: {e}") } };
+                        return rsx! {
+                            AlbumDetailError { message: format!("Failed to load release: {e}") }
+                        };
                     }
-
                     let selected_release_id = selected_release_result.ok().unwrap();
-
+                    let artists = data
+                        .artists_resource
+                        .value()
+                        .read()
+                        .as_ref()
+                        .and_then(|r| r.as_ref().ok())
+                        .cloned()
+                        .unwrap_or_default();
+                    let on_release_select = move |new_release_id: String| {
+                        navigator()
+                            .push(Route::AlbumDetail {
+                                album_id: album_id().clone(),
+                                release_id: new_release_id,
+                            });
+                    };
+                    let tracks = data
+                        .tracks_resource
+                        .value()
+                        .read()
+                        .as_ref()
+                        .and_then(|r| r.as_ref().ok())
+                        .cloned()
+                        .unwrap_or_default();
                     rsx! {
                         AlbumDetailView {
                             album: album.clone(),
                             releases: releases.clone(),
-                            artists: data.artists.value().read().as_ref().and_then(|r| r.as_ref().ok()).cloned().unwrap_or_default(),
-                            selected_release_id: selected_release_id,
-                            on_release_select: move |new_release_id: String| {
-                                navigator().push(Route::AlbumDetail {
-                                    album_id: album_id().clone(),
-                                    release_id: new_release_id,
-                                });
-                            },
-                            tracks: data.tracks.value().read().as_ref().and_then(|r| r.as_ref().ok()).cloned().unwrap_or_default(),
-                            import_progress: import_progress()
+                            artists,
+                            selected_release_id,
+                            on_release_select,
+                            tracks,
+                            import_progress,
                         }
                     }
                 }
@@ -65,22 +87,20 @@ pub fn AlbumDetail(
 #[component]
 fn PageContainer(children: Element) -> Element {
     rsx! {
-        div {
-            class: "container mx-auto p-6",
-            {children}
-        }
+        div { class: "container mx-auto p-6", {children} }
     }
 }
 
 struct AlbumDetailData {
-    album: Resource<Result<(DbAlbum, Vec<DbRelease>), LibraryError>>,
-    tracks: Resource<Result<Vec<DbTrack>, LibraryError>>,
-    artists: Resource<Result<Vec<DbArtist>, LibraryError>>,
+    album_resource: Resource<Result<(DbAlbum, Vec<DbRelease>), LibraryError>>,
+    tracks_resource: Resource<Result<Vec<DbTrack>, LibraryError>>,
+    artists_resource: Resource<Result<Vec<DbArtist>, LibraryError>>,
+    selected_release_id: Memo<Option<String>>,
 }
 
 fn use_album_detail_data(
     album_id: ReadOnlySignal<String>,
-    maybe_release_id: Memo<Option<String>>,
+    maybe_release_id_param: Memo<Option<String>>,
 ) -> AlbumDetailData {
     let library_manager = use_library_manager();
 
@@ -93,15 +113,18 @@ fn use_album_detail_data(
         })
     };
 
-    let current_release_id = use_memo(move || {
-        get_selected_release_id_from_params(&album_resource, maybe_release_id())
+    // The page params may or may not have a release ID, but there must always
+    // be some release in order for this page to be displayed (we don't expect
+    // to have albums without releases listed in the library).
+    let selected_release_id = use_memo(move || {
+        get_selected_release_id_from_params(&album_resource, maybe_release_id_param())
             .and_then(|r| r.ok())
     });
 
     let tracks_resource = {
         let library_manager = library_manager.clone();
         use_resource(move || {
-            let release_id = current_release_id();
+            let release_id = selected_release_id();
             let library_manager = library_manager.clone();
             async move {
                 match release_id {
@@ -136,15 +159,16 @@ fn use_album_detail_data(
     };
 
     AlbumDetailData {
-        album: album_resource,
-        tracks: tracks_resource,
-        artists: artists_resource,
+        album_resource,
+        tracks_resource,
+        artists_resource,
+        selected_release_id,
     }
 }
 
 fn use_release_progress(
     album_resource: Resource<Result<(DbAlbum, Vec<DbRelease>), LibraryError>>,
-    maybe_release_id: Memo<Option<String>>,
+    selected_release_id: Memo<Option<String>>,
 ) -> Signal<Option<(usize, usize, u8)>> {
     let import_service = use_import_service();
     let mut progress = use_signal(|| None::<(usize, usize, u8)>);
@@ -157,45 +181,46 @@ fn use_release_progress(
             .and_then(|r| r.as_ref().ok())
             .map(|(_, releases)| releases.clone());
 
-        let selected_id = get_selected_release_id_from_params(&album_resource, maybe_release_id())
-            .and_then(|r| r.ok());
+        let Some(releases) = releases_data else {
+            return;
+        };
+        let Some(ref id) = selected_release_id() else {
+            return;
+        };
+        let Some(release) = releases.iter().find(|r| &r.id == id) else {
+            return;
+        };
 
-        if let Some(releases) = releases_data {
-            if let Some(ref id) = selected_id {
-                if let Some(release) = releases.iter().find(|r| &r.id == id) {
-                    if release.import_status == ImportStatus::Importing
-                        || release.import_status == ImportStatus::Queued
-                    {
-                        let release_id = release.id.clone();
-                        let import_service = import_service.clone();
+        let is_importing = release.import_status == ImportStatus::Importing
+            || release.import_status == ImportStatus::Queued;
 
-                        spawn(async move {
-                            let mut progress_rx = import_service.subscribe_release(release_id);
+        if is_importing {
+            let release_id = release.id.clone();
+            let import_service = import_service.clone();
 
-                            while let Some(progress_event) = progress_rx.recv().await {
-                                match progress_event {
-                                    ImportProgress::ProcessingProgress {
-                                        current,
-                                        total,
-                                        percent,
-                                        ..
-                                    } => {
-                                        progress.set(Some((current, total, percent)));
-                                    }
-                                    ImportProgress::Complete { .. }
-                                    | ImportProgress::Failed { .. } => {
-                                        progress.set(None);
-                                        break;
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        });
-                    } else {
-                        progress.set(None);
+            spawn(async move {
+                let mut progress_rx = import_service.subscribe_release(release_id);
+
+                while let Some(progress_event) = progress_rx.recv().await {
+                    match progress_event {
+                        ImportProgress::ProcessingProgress {
+                            current,
+                            total,
+                            percent,
+                            ..
+                        } => {
+                            progress.set(Some((current, total, percent)));
+                        }
+                        ImportProgress::Complete { .. } | ImportProgress::Failed { .. } => {
+                            progress.set(None);
+                            break;
+                        }
+                        _ => {}
                     }
                 }
-            }
+            });
+        } else {
+            progress.set(None);
         }
     });
 

@@ -8,16 +8,11 @@ pub fn SearchMastersStatus() -> Element {
 
     rsx! {
         if *album_import_ctx.is_searching_masters.read() {
-            div {
-                class: "text-center py-8",
-                p {
-                    class: "text-gray-600",
-                    "Searching..."
-                }
+            div { class: "text-center py-8",
+                p { class: "text-gray-600", "Searching..." }
             }
         } else if let Some(error) = album_import_ctx.error_message.read().as_ref() {
-            div {
-                class: "bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4",
+            div { class: "bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4",
                 "{error}"
             }
         }

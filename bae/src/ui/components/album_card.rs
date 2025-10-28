@@ -32,33 +32,29 @@ pub fn AlbumCard(album: DbAlbum, artists: Vec<DbArtist>) -> Element {
                 let album_id = album.id.clone();
                 let navigator = navigator();
                 move |_| {
-                    navigator.push(Route::AlbumDetail {
-                    album_id: album_id.clone(),
-                    release_id: String::new(),
-                });
+                    navigator
+                        .push(Route::AlbumDetail {
+                            album_id: album_id.clone(),
+                            release_id: String::new(),
+                        });
                 }
             },
 
             // Album cover
-            div {
-                class: "aspect-square bg-gray-700 flex items-center justify-center relative",
+            div { class: "aspect-square bg-gray-700 flex items-center justify-center relative",
                 if let Some(cover_url) = &album.cover_art_url {
                     img {
                         src: "{cover_url}",
                         alt: "Album cover for {album.title}",
-                        class: "w-full h-full object-cover"
+                        class: "w-full h-full object-cover",
                     }
                 } else {
-                    div {
-                        class: "text-gray-500 text-4xl",
-                        "🎵"
-                    }
+                    div { class: "text-gray-500 text-4xl", "🎵" }
                 }
             }
 
             // Album info
-            div {
-                class: "p-4",
+            div { class: "p-4",
                 h3 {
                     class: "font-bold text-white text-lg mb-1 truncate",
                     title: "{album.title}",
@@ -70,10 +66,7 @@ pub fn AlbumCard(album: DbAlbum, artists: Vec<DbArtist>) -> Element {
                     "{artist_name}"
                 }
                 if let Some(year) = album.year {
-                    p {
-                        class: "text-gray-500 text-xs mt-1",
-                        "{year}"
-                    }
+                    p { class: "text-gray-500 text-xs mt-1", "{year}" }
                 }
             }
         }

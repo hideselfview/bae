@@ -82,18 +82,12 @@ pub fn Library() -> Element {
     });
 
     rsx! {
-        div {
-            class: "container mx-auto p-6",
-            div {
-                class: "flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6",
-                h1 {
-                    class: "text-3xl font-bold text-white mb-4 sm:mb-0",
-                    "Music Library"
-                }
+        div { class: "container mx-auto p-6",
+            div { class: "flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6",
+                h1 { class: "text-3xl font-bold text-white mb-4 sm:mb-0", "Music Library" }
 
                 // Search bar
-                div {
-                    class: "relative",
+                div { class: "relative",
                     input {
                         r#type: "text",
                         placeholder: "Search albums or artists...",
@@ -101,48 +95,27 @@ pub fn Library() -> Element {
                         value: "{search_query()}",
                         oninput: move |evt| search_query.set(evt.value()),
                     }
-                    div {
-                        class: "absolute right-3 top-2.5 text-gray-400",
-                        "🔍"
-                    }
+                    div { class: "absolute right-3 top-2.5 text-gray-400", "🔍" }
                 }
             }
 
             if loading() {
-                div {
-                    class: "flex justify-center items-center py-12",
-                    div {
-                        class: "animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"
-                    }
-                    p {
-                        class: "ml-4 text-gray-300",
-                        "Loading your music library..."
-                    }
+                div { class: "flex justify-center items-center py-12",
+                    div { class: "animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500" }
+                    p { class: "ml-4 text-gray-300", "Loading your music library..." }
                 }
             } else if let Some(err) = error() {
-                div {
-                    class: "bg-red-900 border border-red-700 text-red-100 px-4 py-3 rounded mb-4",
+                div { class: "bg-red-900 border border-red-700 text-red-100 px-4 py-3 rounded mb-4",
                     p { "{err}" }
-                    p {
-                        class: "text-sm mt-2",
-                        "Make sure you've imported some albums first!"
-                    }
+                    p { class: "text-sm mt-2", "Make sure you've imported some albums first!" }
                 }
             } else if albums().is_empty() {
-                div {
-                    class: "text-center py-12",
-                    div {
-                        class: "text-gray-400 text-6xl mb-4",
-                        "🎵"
-                    }
-                    h2 {
-                        class: "text-2xl font-bold text-gray-300 mb-2",
+                div { class: "text-center py-12",
+                    div { class: "text-gray-400 text-6xl mb-4", "🎵" }
+                    h2 { class: "text-2xl font-bold text-gray-300 mb-2",
                         "No albums in your library yet"
                     }
-                    p {
-                        class: "text-gray-500 mb-4",
-                        "Import your first album to get started!"
-                    }
+                    p { class: "text-gray-500 mb-4", "Import your first album to get started!" }
                     Link {
                         to: Route::ImportWorkflowManager {},
                         class: "inline-block bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded",
@@ -150,18 +123,10 @@ pub fn Library() -> Element {
                     }
                 }
             } else if filtered_albums().is_empty() {
-                div {
-                    class: "text-center py-12",
-                    div {
-                        class: "text-gray-400 text-6xl mb-4",
-                        "🔍"
-                    }
-                    h2 {
-                        class: "text-2xl font-bold text-gray-300 mb-2",
-                        "No albums found"
-                    }
-                    p {
-                        class: "text-gray-500 mb-4",
+                div { class: "text-center py-12",
+                    div { class: "text-gray-400 text-6xl mb-4", "🔍" }
+                    h2 { class: "text-2xl font-bold text-gray-300 mb-2", "No albums found" }
+                    p { class: "text-gray-500 mb-4",
                         "Try a different search term or browse all albums"
                     }
                     button {
@@ -174,18 +139,20 @@ pub fn Library() -> Element {
                 div {
                     // Results counter
                     if !search_query().is_empty() {
-                        div {
-                            class: "mb-4 text-gray-400 text-sm",
-                            {format!("Found {} album{} matching \"{}\"",
-                                filtered_albums().len(),
-                                if filtered_albums().len() == 1 { "" } else { "s" },
-                                search_query()
-                            )}
+                        div { class: "mb-4 text-gray-400 text-sm",
+                            {
+                                format!(
+                                    "Found {} album{} matching \"{}\"",
+                                    filtered_albums().len(),
+                                    if filtered_albums().len() == 1 { "" } else { "s" },
+                                    search_query(),
+                                )
+                            }
                         }
                     }
                     AlbumGrid {
                         albums: filtered_albums(),
-                        album_artists: album_artists()
+                        album_artists: album_artists(),
                     }
                 }
             }
@@ -197,12 +164,11 @@ pub fn Library() -> Element {
 #[component]
 fn AlbumGrid(albums: Vec<DbAlbum>, album_artists: HashMap<String, Vec<DbArtist>>) -> Element {
     rsx! {
-        div {
-            class: "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6",
+        div { class: "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6",
             for album in albums {
                 AlbumCard {
                     album: album.clone(),
-                    artists: album_artists.get(&album.id).cloned().unwrap_or_default()
+                    artists: album_artists.get(&album.id).cloned().unwrap_or_default(),
                 }
             }
         }

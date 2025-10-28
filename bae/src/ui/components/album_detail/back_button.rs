@@ -5,8 +5,7 @@ use dioxus::prelude::*;
 #[component]
 pub fn BackButton() -> Element {
     rsx! {
-        div {
-            class: "mb-6",
+        div { class: "mb-6",
             Link {
                 to: Route::Library {},
                 class: "inline-flex items-center text-blue-400 hover:text-blue-300 transition-colors",

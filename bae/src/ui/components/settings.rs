@@ -36,9 +36,7 @@ pub fn Settings() -> Element {
                 }
             }
 
-            p { class: "text-sm text-gray-500 mt-4",
-                "Settings management UI coming soon..."
-            }
+            p { class: "text-sm text-gray-500 mt-4", "Settings management UI coming soon..." }
         }
     }
 }

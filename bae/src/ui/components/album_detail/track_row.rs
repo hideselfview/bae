@@ -27,15 +27,13 @@ pub fn TrackRow(track: DbTrack) -> Element {
     });
 
     rsx! {
-        div {
-            class: "flex items-center py-3 px-4 rounded-lg hover:bg-gray-700 transition-colors group",
+        div { class: "flex items-center py-3 px-4 rounded-lg hover:bg-gray-700 transition-colors group",
 
             // Completion indicator or play button
-            if track.import_status == ImportStatus::Importing || track.import_status == ImportStatus::Queued {
-                div {
-                    class: "w-6 text-gray-500 text-sm",
-                    "⏳"
-                }
+            if track.import_status == ImportStatus::Importing
+                || track.import_status == ImportStatus::Queued
+            {
+                div { class: "w-6 text-gray-500 text-sm", "⏳" }
             } else if track.import_status == ImportStatus::Complete {
                 button {
                     class: "opacity-0 group-hover:opacity-100 transition-opacity text-blue-400 hover:text-blue-300",
@@ -47,8 +45,7 @@ pub fn TrackRow(track: DbTrack) -> Element {
             }
 
             // Track number
-            div {
-                class: "w-12 text-right text-gray-400 text-sm font-mono",
+            div { class: "w-12 text-right text-gray-400 text-sm font-mono",
                 if let Some(track_num) = track.track_number {
                     "{track_num}."
                 } else {
@@ -57,15 +54,12 @@ pub fn TrackRow(track: DbTrack) -> Element {
             }
 
             // Track info
-            div {
-                class: "flex-1 ml-4",
-                h3 {
-                    class: "text-white font-medium group-hover:text-blue-300 transition-colors",
+            div { class: "flex-1 ml-4",
+                h3 { class: "text-white font-medium group-hover:text-blue-300 transition-colors",
                     "{track.title}"
                 }
                 if !track_artists().is_empty() {
-                    p {
-                        class: "text-gray-400 text-sm",
+                    p { class: "text-gray-400 text-sm",
                         {
                             let artists = track_artists();
                             if artists.len() == 1 {
@@ -79,8 +73,7 @@ pub fn TrackRow(track: DbTrack) -> Element {
             }
 
             // Duration (if available)
-            div {
-                class: "text-gray-400 text-sm font-mono",
+            div { class: "text-gray-400 text-sm font-mono",
                 if let Some(duration_ms) = track.duration_ms {
                     {format_duration(duration_ms)}
                 } else {

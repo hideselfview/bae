@@ -14,9 +14,7 @@ pub fn App() -> Element {
         document::Link { rel: "stylesheet", href: MAIN_CSS }
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
         AlbumImportContextProvider {
-            div { class: "pb-24",
-                Router::<Route> {}
-            }
+            div { class: "pb-24", Router::<Route> {} }
             NowPlayingBar {}
         }
     }

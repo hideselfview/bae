@@ -32,37 +32,45 @@ pub fn SearchMastersList() -> Element {
         return rsx! {
             ImportWorkflow {
                 discogs_album: item.clone(),
-                on_back: move |_| selected_import_item.set(None)
+                on_back: move |_| selected_import_item.set(None),
             }
         };
     }
 
     if album_import_ctx.search_results.read().is_empty() {
-        return rsx! { div {} };
+        return rsx! {
+            div {}
+        };
     }
 
     rsx! {
-        div {
-            class: "overflow-x-auto",
-            table {
-                class: "w-full border-collapse bg-white rounded-lg shadow-lg text-left",
+        div { class: "overflow-x-auto",
+            table { class: "w-full border-collapse bg-white rounded-lg shadow-lg text-left",
                 thead {
-                    tr {
-                        class: "bg-gray-50",
-                        th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider", "Cover" }
-                        th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider", "Title" }
-                        th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider", "Year" }
-                        th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider", "Label" }
-                        th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider", "Actions" }
+                    tr { class: "bg-gray-50",
+                        th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
+                            "Cover"
+                        }
+                        th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
+                            "Title"
+                        }
+                        th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
+                            "Year"
+                        }
+                        th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
+                            "Label"
+                        }
+                        th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
+                            "Actions"
+                        }
                     }
                 }
-                tbody {
-                    class: "divide-y divide-gray-200",
+                tbody { class: "divide-y divide-gray-200",
                     for result in album_import_ctx.search_results.read().iter() {
                         SearchMastersItem {
                             key: "{result.id}",
                             result: result.clone(),
-                            on_import: on_import_item.clone()
+                            on_import: on_import_item.clone(),
                         }
                     }
                 }
