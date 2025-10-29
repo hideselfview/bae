@@ -19,6 +19,9 @@ Thumbs.db
 # Node
 node_modules/
 
+# Generated Tailwind CSS
+bae/assets/tailwind.css
+
 # Development environment
 .env
 
