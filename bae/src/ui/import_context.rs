@@ -19,8 +19,6 @@ pub struct ImportContext {
     pub search_results: Signal<Vec<DiscogsSearchResult>>,
     pub is_searching_masters: Signal<bool>,
     pub is_loading_versions: Signal<bool>,
-    pub loading_master_id: Signal<Option<String>>,
-    pub loading_release_id: Signal<Option<String>>,
     pub error_message: Signal<Option<String>>,
     pub current_view: Signal<SearchView>,
     client: DiscogsClient,
@@ -33,8 +31,6 @@ impl ImportContext {
             search_results: use_signal(Vec::new),
             is_searching_masters: use_signal(|| false),
             is_loading_versions: use_signal(|| false),
-            loading_master_id: use_signal(|| None),
-            loading_release_id: use_signal(|| None),
             error_message: use_signal(|| None),
             current_view: use_signal(|| SearchView::SearchResults),
             client: DiscogsClient::new(config.discogs_api_key.clone()),
@@ -88,14 +84,11 @@ impl ImportContext {
         self.search_results.set(Vec::new());
         self.is_searching_masters.set(false);
         self.is_loading_versions.set(false);
-        self.loading_master_id.set(None);
-        self.loading_release_id.set(None);
         self.error_message.set(None);
         self.current_view.set(SearchView::SearchResults);
     }
 
     pub async fn import_master(&mut self, master_id: String) -> Result<DiscogsAlbum, String> {
-        self.loading_master_id.set(Some(master_id.clone()));
         self.error_message.set(None);
 
         // Find the thumbnail from search results
@@ -106,7 +99,7 @@ impl ImportContext {
             .find(|result| result.id.to_string() == master_id)
             .and_then(|result| result.thumb.clone());
 
-        let result = match self.client.get_master(&master_id).await {
+        match self.client.get_master(&master_id).await {
             Ok(mut master) => {
                 // If master has no thumbnail but search results had one, use the search thumbnail
                 if master.thumb.is_none() && search_thumb.is_some() {
@@ -120,10 +113,7 @@ impl ImportContext {
                 self.error_message.set(Some(error.clone()));
                 Err(error)
             }
-        };
-
-        self.loading_master_id.set(None);
-        result
+        }
     }
 
     pub async fn get_master_versions(
@@ -151,10 +141,9 @@ impl ImportContext {
         release_id: String,
         master_id: String,
     ) -> Result<DiscogsAlbum, String> {
-        self.loading_release_id.set(Some(release_id.clone()));
         self.error_message.set(None);
 
-        let result = match self.client.get_release(&release_id).await {
+        match self.client.get_release(&release_id).await {
             Ok(mut release) => {
                 release.master_id = Some(master_id);
                 Ok(DiscogsAlbum::Release(release))
@@ -164,10 +153,7 @@ impl ImportContext {
                 self.error_message.set(Some(error.clone()));
                 Err(error)
             }
-        };
-
-        self.loading_release_id.set(None);
-        result
+        }
     }
 }
 

@@ -1,5 +1,4 @@
 use crate::discogs::DiscogsMasterReleaseVersion;
-use crate::ui::import_context::ImportContext;
 use dioxus::prelude::*;
 
 #[derive(Props, PartialEq, Clone)]
@@ -10,7 +9,6 @@ pub struct ReleaseItemProps {
 
 #[component]
 pub fn ReleaseItem(props: ReleaseItemProps) -> Element {
-    let album_import_ctx = use_context::<ImportContext>();
     rsx! {
         tr { class: "hover:bg-gray-50",
             td { class: "px-4 py-3",
@@ -51,29 +49,12 @@ pub fn ReleaseItem(props: ReleaseItemProps) -> Element {
                 }
             }
             td { class: "px-4 py-3 text-sm",
-                {
-                    let is_this_loading = album_import_ctx
-                        .loading_release_id
-                        .read()
-                        .as_ref()
-                        .map(|id| id == &props.result.id.to_string())
-                        .unwrap_or(false);
-
-                    if is_this_loading {
-                        rsx! {
-                            span { class: "text-gray-500", "Loading..." }
-                        }
-                    } else {
-                        rsx! {
-                            button {
-                                class: "text-green-600 hover:text-green-800 underline",
-                                onclick: move |_| {
-                                    props.on_import.call(props.result.clone());
-                                },
-                                "Add to Library"
-                            }
-                        }
-                    }
+                button {
+                    class: "text-green-600 hover:text-green-800 underline",
+                    onclick: move |_| {
+                        props.on_import.call(props.result.clone());
+                    },
+                    "Add to Library"
                 }
             }
         }

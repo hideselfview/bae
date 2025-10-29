@@ -2,40 +2,24 @@ use super::{
     super::import_workflow::ImportWorkflow, form::SearchMastersForm, list::SearchMastersList,
     status::SearchMastersStatus,
 };
-use crate::{discogs::DiscogsAlbum, ui::import_context::ImportContext};
 use dioxus::prelude::*;
 
 /// Main search masters page that orchestrates the search UI components
 #[component]
 pub fn SearchMastersPage() -> Element {
-    let album_import_ctx = use_context::<ImportContext>();
-    let mut selected_import_item = use_signal(|| None::<DiscogsAlbum>);
+    let mut selected_master_id = use_signal(|| None::<String>);
 
-    let on_import_item = {
-        let album_import_ctx = album_import_ctx.clone();
-
-        move |master_id: String| {
-            let mut album_import_ctx = album_import_ctx.clone();
-
-            spawn(async move {
-                match album_import_ctx.import_master(master_id).await {
-                    Ok(import_item) => {
-                        selected_import_item.set(Some(import_item));
-                    }
-                    Err(_) => {
-                        // Error is already handled by album_import_ctx
-                    }
-                }
-            });
-        }
+    let on_import_item = move |master_id: String| {
+        selected_master_id.set(Some(master_id));
     };
 
     // If an item is selected for import, show the import workflow without search UI
-    if let Some(item) = selected_import_item.read().as_ref() {
+    if let Some(master_id) = selected_master_id.read().as_ref() {
         return rsx! {
             ImportWorkflow {
-                discogs_album: item.clone(),
-                on_back: move |_| selected_import_item.set(None),
+                master_id: master_id.clone(),
+                release_id: None,
+                on_back: move |_| selected_master_id.set(None),
             }
         };
     }

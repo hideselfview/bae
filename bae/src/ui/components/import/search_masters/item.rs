@@ -10,7 +10,7 @@ pub struct SearchMastersItemProps {
 
 #[component]
 pub fn SearchMastersItem(props: SearchMastersItemProps) -> Element {
-    let album_import_ctx = use_context::<ImportContext>();
+    let mut album_import_ctx = use_context::<ImportContext>();
 
     rsx! {
         tr { class: "hover:bg-gray-50",
@@ -52,7 +52,6 @@ pub fn SearchMastersItem(props: SearchMastersItemProps) -> Element {
                     onclick: {
                         let master_id = props.result.id.to_string();
                         let master_title = props.result.title.clone();
-                        let mut album_import_ctx = album_import_ctx.clone();
                         move |_| {
                             album_import_ctx
                                 .navigate_to_releases(master_id.clone(), master_title.clone());
@@ -60,33 +59,16 @@ pub fn SearchMastersItem(props: SearchMastersItemProps) -> Element {
                     },
                     "View Releases"
                 }
-                {
-                    let is_this_loading = album_import_ctx
-                        .loading_master_id
-                        .read()
-                        .as_ref()
-                        .map(|id| id == &props.result.id.to_string())
-                        .unwrap_or(false);
-
-                    if is_this_loading {
-                        rsx! {
-                            span { class: "text-gray-500", "Loading..." }
+                button {
+                    class: "text-green-600 hover:text-green-800 underline",
+                    onclick: {
+                        let master_id = props.result.id.to_string();
+                        let on_import = props.on_import;
+                        move |_| {
+                            on_import.call(master_id.clone());
                         }
-                    } else {
-                        rsx! {
-                            button {
-                                class: "text-green-600 hover:text-green-800 underline",
-                                onclick: {
-                                    let master_id = props.result.id.to_string();
-                                    let on_import = props.on_import;
-                                    move |_| {
-                                        on_import.call(master_id.clone());
-                                    }
-                                },
-                                "Add to Library"
-                            }
-                        }
-                    }
+                    },
+                    "Add to Library"
                 }
             }
         }

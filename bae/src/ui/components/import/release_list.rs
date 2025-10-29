@@ -7,7 +7,7 @@ use dioxus::prelude::*;
 pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandler<()>) -> Element {
     let album_import_ctx = use_context::<ImportContext>();
     let mut release_results = use_signal(Vec::<DiscogsMasterReleaseVersion>::new);
-    let mut selected_import_item = use_signal(|| None::<crate::discogs::DiscogsAlbum>);
+    let mut selected_import_item = use_signal(|| None::<(String, String)>);
 
     let master_id_for_effect = master_id.clone();
 
@@ -34,36 +34,25 @@ pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandle
 
     let on_import_release = {
         let master_id_for_import = master_id.clone();
-        let album_import_ctx = album_import_ctx.clone();
 
         move |version: DiscogsMasterReleaseVersion| {
             let release_id = version.id.to_string();
-            let master_id = master_id_for_import.clone();
-            let mut album_import_ctx = album_import_ctx.clone();
-
-            spawn(async move {
-                match album_import_ctx.import_release(release_id, master_id).await {
-                    Ok(import_item) => {
-                        selected_import_item.set(Some(import_item));
-                    }
-                    Err(_) => {
-                        // Error is already handled by album_import_ctx
-                    }
-                }
-            });
+            selected_import_item.set(Some((release_id, master_id_for_import.clone())));
         }
     };
 
-    let on_back_from_import = {
-        move |_| {
-            selected_import_item.set(None);
-        }
+    let on_back_from_import = move |_| {
+        selected_import_item.set(None);
     };
 
     // If an item is selected for import, show the import workflow
-    if let Some(item) = selected_import_item.read().as_ref() {
+    if let Some((release_id, master_id_for_workflow)) = selected_import_item.read().as_ref() {
         return rsx! {
-            ImportWorkflow { discogs_album: item.clone(), on_back: on_back_from_import }
+            ImportWorkflow {
+                master_id: master_id_for_workflow.clone(),
+                release_id: Some(release_id.clone()),
+                on_back: on_back_from_import,
+            }
         };
     }
 

@@ -49,12 +49,14 @@ pub fn on_folder_selected(folder_path: String) -> Result<(), String> {
 
 #[derive(Props, PartialEq, Clone)]
 pub struct ImportWorkflowProps {
-    pub discogs_album: DiscogsAlbum,
+    pub master_id: String,
+    pub release_id: Option<String>,
     pub on_back: EventHandler<()>,
 }
 
 #[derive(PartialEq, Clone)]
 pub enum ImportStep {
+    Loading,
     DataSourceSelection,
     ImportError(String),
 }
@@ -64,9 +66,41 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
     let import_service = use_import_service();
     let navigator = use_navigator();
     let import_context = use_context::<ImportContext>();
-    let mut current_step = use_signal(|| ImportStep::DataSourceSelection);
+    let mut current_step = use_signal(|| ImportStep::Loading);
+    let mut discogs_album = use_signal(|| None::<DiscogsAlbum>);
     let mut selected_folder = use_signal(|| None::<String>);
     let mut folder_error = use_signal(|| None::<String>);
+
+    // Load the album data on mount
+    use_effect({
+        let master_id = props.master_id.clone();
+        let release_id = props.release_id.clone();
+        let import_context = import_context.clone();
+
+        move || {
+            let master_id = master_id.clone();
+            let release_id = release_id.clone();
+            let mut import_context = import_context.clone();
+
+            spawn(async move {
+                let result = if let Some(release_id) = release_id {
+                    import_context.import_release(release_id, master_id).await
+                } else {
+                    import_context.import_master(master_id).await
+                };
+
+                match result {
+                    Ok(album) => {
+                        discogs_album.set(Some(album));
+                        current_step.set(ImportStep::DataSourceSelection);
+                    }
+                    Err(e) => {
+                        current_step.set(ImportStep::ImportError(e));
+                    }
+                }
+            });
+        }
+    });
 
     let mut on_folder_select = move |folder_path: String| {
         selected_folder.set(Some(folder_path));
@@ -79,13 +113,15 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
     };
 
     let on_start_import = {
-        let discogs_album = props.discogs_album.clone();
         let import_service = import_service.clone();
         let import_context = import_context.clone();
 
         move |_| {
-            if let Some(folder) = selected_folder.read().as_ref() {
-                let discogs_album = discogs_album.clone();
+            if let (Some(folder), Some(album)) = (
+                selected_folder.read().as_ref(),
+                discogs_album.read().as_ref(),
+            ) {
+                let discogs_album = album.clone();
                 let import_service = import_service.clone();
                 let folder = folder.clone();
                 let mut import_context = import_context.clone();
@@ -136,7 +172,39 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
     let current_step_value = current_step.read().clone();
 
     match current_step_value {
+        ImportStep::Loading => {
+            rsx! {
+                div { class: "max-w-4xl mx-auto p-6",
+                    div { class: "mb-6",
+                        button {
+                            class: "text-blue-600 hover:text-blue-800 mb-4",
+                            onclick: on_back_to_search,
+                            "← Back to Search"
+                        }
+                        h1 { class: "text-2xl font-bold text-white", "Import Album" }
+                    }
+                    div { class: "bg-white rounded-lg shadow p-6 text-center",
+                        p { class: "text-gray-600", "Loading album details..." }
+                    }
+                }
+            }
+        }
         ImportStep::DataSourceSelection => {
+            let album = discogs_album.read();
+            let album_ref = album.as_ref();
+
+            if album_ref.is_none() {
+                return rsx! {
+                    div { class: "max-w-4xl mx-auto p-6",
+                        div { class: "bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded",
+                            "Failed to load album data"
+                        }
+                    }
+                };
+            }
+
+            let album_data = album_ref.unwrap();
+
             rsx! {
                 div { class: "max-w-4xl mx-auto p-6",
                     // Header
@@ -152,7 +220,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                     // Album Info
                     div { class: "bg-white rounded-lg shadow p-6 mb-6",
                         div { class: "flex items-start space-x-4",
-                            if let Some(thumb) = props.discogs_album.thumb() {
+                            if let Some(thumb) = album_data.thumb() {
                                 img {
                                     class: "w-24 h-24 object-cover rounded",
                                     src: "{thumb}",
@@ -165,24 +233,24 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                             }
                             div { class: "flex-1",
                                 h2 { class: "text-xl font-semibold text-gray-900",
-                                    "{props.discogs_album.title()}"
+                                    "{album_data.title()}"
                                 }
-                                if props.discogs_album.is_master() {
+                                if album_data.is_master() {
                                     div { class: "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mb-2",
                                         "Master Release"
                                     }
                                 }
-                                if let Some(year) = props.discogs_album.year() {
+                                if let Some(year) = album_data.year() {
                                     p { class: "text-gray-600", "Released: {year}" }
                                 }
-                                if !props.discogs_album.format().is_empty() {
+                                if !album_data.format().is_empty() {
                                     p { class: "text-gray-600",
-                                        "Format: {props.discogs_album.format().join(\", \")}"
+                                        "Format: {album_data.format().join(\", \")}"
                                     }
                                 }
-                                if !props.discogs_album.label().is_empty() {
+                                if !album_data.label().is_empty() {
                                     p { class: "text-gray-600",
-                                        "Label: {props.discogs_album.label().join(\", \")}"
+                                        "Label: {album_data.label().join(\", \")}"
                                     }
                                 }
                             }
