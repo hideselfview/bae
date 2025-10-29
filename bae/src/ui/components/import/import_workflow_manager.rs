@@ -6,10 +6,9 @@ use dioxus::prelude::*;
 #[component]
 pub fn ImportWorkflowManager() -> Element {
     let album_import_ctx = use_context::<ImportContext>();
-    let album_import_ctx_clone = album_import_ctx.clone();
 
     let on_release_back = {
-        let mut album_import_ctx = album_import_ctx_clone.clone();
+        let mut album_import_ctx = album_import_ctx.clone();
         move |_| album_import_ctx.navigate_back_to_search()
     };
 

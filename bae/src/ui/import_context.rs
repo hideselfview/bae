@@ -83,6 +83,17 @@ impl ImportContext {
         self.current_view.set(SearchView::SearchResults);
     }
 
+    pub fn reset(&mut self) {
+        self.search_query.set(String::new());
+        self.search_results.set(Vec::new());
+        self.is_searching_masters.set(false);
+        self.is_loading_versions.set(false);
+        self.is_importing_master.set(false);
+        self.is_importing_release.set(false);
+        self.error_message.set(None);
+        self.current_view.set(SearchView::SearchResults);
+    }
+
     pub async fn import_master(&mut self, master_id: String) -> Result<DiscogsAlbum, String> {
         self.is_importing_master.set(true);
         self.error_message.set(None);

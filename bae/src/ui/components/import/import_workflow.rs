@@ -1,6 +1,7 @@
 use crate::discogs::DiscogsAlbum;
 use crate::import::ImportRequestParams;
 use crate::library::use_import_service;
+use crate::ui::import_context::ImportContext;
 use crate::ui::Route;
 use dioxus::prelude::*;
 use rfd::AsyncFileDialog;
@@ -62,6 +63,7 @@ pub enum ImportStep {
 pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
     let import_service = use_import_service();
     let navigator = use_navigator();
+    let import_context = use_context::<ImportContext>();
     let mut current_step = use_signal(|| ImportStep::DataSourceSelection);
     let mut selected_folder = use_signal(|| None::<String>);
     let mut folder_error = use_signal(|| None::<String>);
@@ -79,12 +81,14 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
     let on_start_import = {
         let discogs_album = props.discogs_album.clone();
         let import_service = import_service.clone();
+        let import_context = import_context.clone();
 
         move |_| {
             if let Some(folder) = selected_folder.read().as_ref() {
                 let discogs_album = discogs_album.clone();
                 let import_service = import_service.clone();
                 let folder = folder.clone();
+                let mut import_context = import_context.clone();
 
                 spawn(async move {
                     info!(
@@ -105,11 +109,15 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                                 "Release queued for import with ID: {} (album: {})",
                                 release_id, album_id
                             );
+
                             // Navigate to album detail page to show import progress for this specific release
                             navigator.push(Route::AlbumDetail {
                                 album_id,
                                 release_id,
                             });
+
+                            // Reset import state after navigation (so next visit to import page is fresh)
+                            import_context.reset();
                         }
                         Err(e) => {
                             error!("Failed to validate/queue import: {}", e);
