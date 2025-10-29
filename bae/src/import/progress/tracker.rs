@@ -234,15 +234,12 @@ mod tests {
 
         // Verify progress events were sent (49 release Progress + 49*2 track Progress + 2 Complete)
         let mut release_progress_count = 0;
-        let mut track_progress_count = 0;
         let mut complete_count = 0;
         while let Ok(event) = rx.try_recv() {
             match event {
                 ImportProgress::Progress { id, .. } => {
                     if id == "test-album" {
                         release_progress_count += 1;
-                    } else {
-                        track_progress_count += 1;
                     }
                 }
                 ImportProgress::Complete { .. } => complete_count += 1,
