@@ -1,41 +1,15 @@
-use super::{super::import_workflow::ImportWorkflow, item::SearchMastersItem};
-use crate::{discogs::DiscogsAlbum, ui::import_context::ImportContext};
+use super::item::SearchMastersItem;
+use crate::ui::import_context::ImportContext;
 use dioxus::prelude::*;
 
+#[derive(Props, Clone, PartialEq)]
+pub struct SearchMastersListProps {
+    pub on_import: EventHandler<String>,
+}
+
 #[component]
-pub fn SearchMastersList() -> Element {
+pub fn SearchMastersList(props: SearchMastersListProps) -> Element {
     let album_import_ctx = use_context::<ImportContext>();
-    let mut selected_import_item = use_signal(|| None::<DiscogsAlbum>);
-
-    let on_import_item = {
-        let album_import_ctx = album_import_ctx.clone();
-
-        move |master_id: String| {
-            let mut album_import_ctx = album_import_ctx.clone();
-
-            spawn(async move {
-                // Fetch full master details using the search context
-                match album_import_ctx.import_master(master_id).await {
-                    Ok(import_item) => {
-                        selected_import_item.set(Some(import_item));
-                    }
-                    Err(_) => {
-                        // Error is already handled by album_import_ctx
-                    }
-                }
-            });
-        }
-    };
-
-    // If an item is selected for import, show the import workflow
-    if let Some(item) = selected_import_item.read().as_ref() {
-        return rsx! {
-            ImportWorkflow {
-                discogs_album: item.clone(),
-                on_back: move |_| selected_import_item.set(None),
-            }
-        };
-    }
 
     if album_import_ctx.search_results.read().is_empty() {
         return rsx! {
@@ -70,7 +44,7 @@ pub fn SearchMastersList() -> Element {
                         SearchMastersItem {
                             key: "{result.id}",
                             result: result.clone(),
-                            on_import: on_import_item.clone(),
+                            on_import: props.on_import,
                         }
                     }
                 }
