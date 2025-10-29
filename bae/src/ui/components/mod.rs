@@ -2,6 +2,7 @@ pub mod album_card;
 pub mod album_detail;
 pub mod app;
 pub mod import;
+pub mod import_hooks;
 pub mod library;
 pub mod navbar;
 pub mod now_playing_bar;
@@ -10,6 +11,7 @@ pub mod settings;
 
 pub use album_detail::AlbumDetail;
 pub use app::App;
+pub use import_hooks::use_track_progress;
 pub use library::Library;
 pub use navbar::Navbar;
 pub use now_playing_bar::NowPlayingBar;

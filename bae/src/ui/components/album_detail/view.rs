@@ -84,7 +84,7 @@ pub fn AlbumDetailView(
                             }
                         },
                         if import_progress().is_some() {
-                            "⏳ Importing..."
+                            "Importing..."
                         } else {
                             "▶ Play Album"
                         }
@@ -137,7 +137,10 @@ pub fn AlbumDetailView(
                     } else {
                         div { class: "space-y-2",
                             for track in &tracks {
-                                TrackRow { track: track.clone() }
+                                TrackRow {
+                                    track: track.clone(),
+                                    release_id: selected_release_id.clone().unwrap_or_default(),
+                                }
                             }
                         }
                     }
