@@ -4,32 +4,13 @@ use crate::ui::import_context::ImportContext;
 use dioxus::prelude::*;
 
 #[component]
-pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandler<()>) -> Element {
+pub fn ReleaseList(
+    master_id: String,
+    master_title: String,
+    versions: Vec<DiscogsMasterReleaseVersion>,
+    on_back: EventHandler<()>,
+) -> Element {
     let album_import_ctx = use_context::<ImportContext>();
-    let mut release_results = use_signal(Vec::<DiscogsMasterReleaseVersion>::new);
-
-    let master_id_for_effect = master_id.clone();
-
-    // Load releases on component mount
-    use_effect({
-        let album_import_ctx = album_import_ctx.clone();
-
-        move || {
-            let master_id = master_id_for_effect.clone();
-            let mut album_import_ctx = album_import_ctx.clone();
-
-            spawn(async move {
-                match album_import_ctx.get_master_versions(master_id).await {
-                    Ok(versions) => {
-                        release_results.set(versions);
-                    }
-                    Err(_) => {
-                        // Error is already handled by album_import_ctx
-                    }
-                }
-            });
-        }
-    });
 
     let on_import_release = {
         let master_id_for_import = master_id.clone();
@@ -66,7 +47,7 @@ pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandle
                 }
             }
 
-            if !release_results.read().is_empty() {
+            if !versions.is_empty() {
                 div { class: "overflow-x-auto",
                     table { class: "w-full border-collapse bg-white rounded-lg shadow-lg",
                         thead {
@@ -98,7 +79,7 @@ pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandle
                             }
                         }
                         tbody { class: "divide-y divide-gray-200",
-                            for result in release_results.read().iter() {
+                            for result in versions.iter() {
                                 ReleaseItem {
                                     key: "{result.id}",
                                     result: result.clone(),

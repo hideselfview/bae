@@ -70,10 +70,6 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
     let mut selected_folder = use_signal(|| None::<String>);
     let mut folder_error = use_signal(|| None::<String>);
 
-    // Store master_id and master_title for back navigation
-    let master_id_for_back = props.master_id.clone();
-    let mut master_title_for_back = use_signal(String::new);
-
     // Load the album data on mount
     use_effect({
         let master_id = props.master_id.clone();
@@ -94,7 +90,6 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
 
                 match result {
                     Ok(album) => {
-                        master_title_for_back.set(album.title().to_string());
                         discogs_album.set(Some(album));
                         current_step.set(WorkflowStep::DataSourceSelection);
                     }
@@ -169,22 +164,10 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
         }
     };
 
-    let on_back_to_search = {
+    let on_back = {
         let mut import_context = import_context.clone();
-        let release_id = props.release_id.clone();
-        let master_id = master_id_for_back.clone();
-
         move |_| {
-            if release_id.is_some() {
-                // If we came from release list, go back to release list
-                import_context.navigate_back_from_import(
-                    master_id.clone(),
-                    master_title_for_back.read().clone(),
-                );
-            } else {
-                // If we came from search results, go back to search
-                import_context.navigate_back_to_search();
-            }
+            import_context.navigate_back();
         }
     };
 
@@ -203,7 +186,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                     div { class: "mb-6",
                         button {
                             class: "text-blue-600 hover:text-blue-800 mb-4",
-                            onclick: on_back_to_search,
+                            onclick: on_back,
                             "{back_button_text}"
                         }
                         h1 { class: "text-2xl font-bold text-white", "Import Album" }
@@ -236,7 +219,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                     div { class: "mb-6",
                         button {
                             class: "text-blue-600 hover:text-blue-800 mb-4",
-                            onclick: on_back_to_search,
+                            onclick: on_back,
                             "{back_button_text}"
                         }
                         h1 { class: "text-2xl font-bold text-white", "Import Album" }
@@ -418,7 +401,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                             }
                             button {
                                 class: "px-6 py-2 bg-gray-600 text-white rounded hover:bg-gray-700",
-                                onclick: on_back_to_search,
+                                onclick: on_back,
                                 "{back_button_text.trim_start_matches(\"← \")}"
                             }
                         }

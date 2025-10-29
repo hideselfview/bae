@@ -17,11 +17,16 @@ pub fn SearchMastersItem(props: SearchMastersItemProps) -> Element {
             td {
                 class: "px-4 py-3 cursor-pointer",
                 onclick: {
-                    let mut ctx = album_import_ctx.clone();
+                    let ctx = album_import_ctx.clone();
                     let master_id = props.result.id.to_string();
                     let master_title = props.result.title.clone();
                     move |_| {
-                        ctx.navigate_to_releases(master_id.clone(), master_title.clone());
+                        let mut ctx = ctx.clone();
+                        let master_id = master_id.clone();
+                        let master_title = master_title.clone();
+                        spawn(async move {
+                            ctx.navigate_to_releases(master_id, master_title).await;
+                        });
                     }
                 },
                 if let Some(thumb) = &props.result.thumb {
@@ -39,11 +44,16 @@ pub fn SearchMastersItem(props: SearchMastersItemProps) -> Element {
             td {
                 class: "px-4 py-3 text-sm font-medium text-gray-900 cursor-pointer",
                 onclick: {
-                    let mut ctx = album_import_ctx.clone();
+                    let ctx = album_import_ctx.clone();
                     let master_id = props.result.id.to_string();
                     let master_title = props.result.title.clone();
                     move |_| {
-                        ctx.navigate_to_releases(master_id.clone(), master_title.clone());
+                        let mut ctx = ctx.clone();
+                        let master_id = master_id.clone();
+                        let master_title = master_title.clone();
+                        spawn(async move {
+                            ctx.navigate_to_releases(master_id, master_title).await;
+                        });
                     }
                 },
                 "{props.result.title}"
@@ -51,11 +61,16 @@ pub fn SearchMastersItem(props: SearchMastersItemProps) -> Element {
             td {
                 class: "px-4 py-3 text-sm text-gray-500 cursor-pointer",
                 onclick: {
-                    let mut ctx = album_import_ctx.clone();
+                    let ctx = album_import_ctx.clone();
                     let master_id = props.result.id.to_string();
                     let master_title = props.result.title.clone();
                     move |_| {
-                        ctx.navigate_to_releases(master_id.clone(), master_title.clone());
+                        let mut ctx = ctx.clone();
+                        let master_id = master_id.clone();
+                        let master_title = master_title.clone();
+                        spawn(async move {
+                            ctx.navigate_to_releases(master_id, master_title).await;
+                        });
                     }
                 },
                 if let Some(year) = &props.result.year {
@@ -67,11 +82,16 @@ pub fn SearchMastersItem(props: SearchMastersItemProps) -> Element {
             td {
                 class: "px-4 py-3 text-sm text-gray-500 cursor-pointer",
                 onclick: {
-                    let mut ctx = album_import_ctx.clone();
+                    let ctx = album_import_ctx.clone();
                     let master_id = props.result.id.to_string();
                     let master_title = props.result.title.clone();
                     move |_| {
-                        ctx.navigate_to_releases(master_id.clone(), master_title.clone());
+                        let mut ctx = ctx.clone();
+                        let master_id = master_id.clone();
+                        let master_title = master_title.clone();
+                        spawn(async move {
+                            ctx.navigate_to_releases(master_id, master_title).await;
+                        });
                     }
                 },
                 if let Some(labels) = &props.result.label {

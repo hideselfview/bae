@@ -10,6 +10,7 @@ pub enum ImportStep {
     ReleaseDetails {
         master_id: String,
         master_title: String,
+        versions: Vec<DiscogsMasterReleaseVersion>,
     },
     ImportWorkflow {
         master_id: String,
@@ -24,11 +25,18 @@ pub struct ImportContext {
     pub is_searching_masters: Signal<bool>,
     pub is_loading_versions: Signal<bool>,
     pub error_message: Signal<Option<String>>,
-    pub current_step: Signal<ImportStep>,
+    pub navigation_stack: Signal<Vec<ImportStep>>,
     client: DiscogsClient,
 }
 
 impl ImportContext {
+    pub fn current_step(&self) -> ImportStep {
+        self.navigation_stack
+            .read()
+            .last()
+            .cloned()
+            .unwrap_or(ImportStep::SearchResults)
+    }
     pub fn new(config: &crate::config::Config) -> Self {
         Self {
             search_query: use_signal(String::new),
@@ -36,7 +44,7 @@ impl ImportContext {
             is_searching_masters: use_signal(|| false),
             is_loading_versions: use_signal(|| false),
             error_message: use_signal(|| None),
-            current_step: use_signal(|| ImportStep::SearchResults),
+            navigation_stack: use_signal(|| vec![ImportStep::SearchResults]),
             client: DiscogsClient::new(config.discogs_api_key.clone()),
         }
     }
@@ -72,29 +80,41 @@ impl ImportContext {
         });
     }
 
-    pub fn navigate_to_releases(&mut self, master_id: String, master_title: String) {
-        self.current_step.set(ImportStep::ReleaseDetails {
-            master_id,
-            master_title,
-        });
+    pub async fn navigate_to_releases(&mut self, master_id: String, master_title: String) {
+        self.is_loading_versions.set(true);
+        self.error_message.set(None);
+
+        match self.client.get_master_versions(&master_id).await {
+            Ok(versions) => {
+                let step = ImportStep::ReleaseDetails {
+                    master_id,
+                    master_title,
+                    versions,
+                };
+                self.navigation_stack.write().push(step);
+            }
+            Err(e) => {
+                self.error_message
+                    .set(Some(format!("Failed to load releases: {}", e)));
+            }
+        }
+
+        self.is_loading_versions.set(false);
     }
 
     pub fn navigate_to_import_workflow(&mut self, master_id: String, release_id: Option<String>) {
-        self.current_step.set(ImportStep::ImportWorkflow {
+        let step = ImportStep::ImportWorkflow {
             master_id,
             release_id,
-        });
+        };
+        self.navigation_stack.write().push(step);
     }
 
-    pub fn navigate_back_to_search(&mut self) {
-        self.current_step.set(ImportStep::SearchResults);
-    }
-
-    pub fn navigate_back_from_import(&mut self, master_id: String, master_title: String) {
-        self.current_step.set(ImportStep::ReleaseDetails {
-            master_id,
-            master_title,
-        });
+    pub fn navigate_back(&mut self) {
+        let mut stack = self.navigation_stack.write();
+        if stack.len() > 1 {
+            stack.pop();
+        }
     }
 
     pub fn reset(&mut self) {
@@ -103,7 +123,7 @@ impl ImportContext {
         self.is_searching_masters.set(false);
         self.is_loading_versions.set(false);
         self.error_message.set(None);
-        self.current_step.set(ImportStep::SearchResults);
+        self.navigation_stack.set(vec![ImportStep::SearchResults]);
     }
 
     pub async fn import_master(&mut self, master_id: String) -> Result<DiscogsAlbum, String> {
@@ -132,26 +152,6 @@ impl ImportContext {
                 Err(error)
             }
         }
-    }
-
-    pub async fn get_master_versions(
-        &mut self,
-        master_id: String,
-    ) -> Result<Vec<DiscogsMasterReleaseVersion>, String> {
-        self.is_loading_versions.set(true);
-        self.error_message.set(None);
-
-        let result = match self.client.get_master_versions(&master_id).await {
-            Ok(versions) => Ok(versions),
-            Err(e) => {
-                let error = format!("Failed to load releases: {}", e);
-                self.error_message.set(Some(error.clone()));
-                Err(error)
-            }
-        };
-
-        self.is_loading_versions.set(false);
-        result
     }
 
     pub async fn import_release(

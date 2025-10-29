@@ -1,0 +1,11 @@
+---
+alwaysApply: true
+---
+# Pre-existing Issues
+
+**Do not attempt to fix pre-existing linter errors, compiler warnings, or test failures that are unrelated to the current work.**
+
+When you encounter errors from `cargo check`, `cargo clippy`, or tests:
+1. Determine if the error is in code you just modified or created
+2. If the error exists in untouched code from before the session, ignore it
+3. Only fix errors that you introduced in the current session
