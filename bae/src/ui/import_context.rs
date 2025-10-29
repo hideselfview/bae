@@ -19,8 +19,8 @@ pub struct ImportContext {
     pub search_results: Signal<Vec<DiscogsSearchResult>>,
     pub is_searching_masters: Signal<bool>,
     pub is_loading_versions: Signal<bool>,
-    pub is_importing_master: Signal<bool>,
-    pub is_importing_release: Signal<bool>,
+    pub loading_master_id: Signal<Option<String>>,
+    pub loading_release_id: Signal<Option<String>>,
     pub error_message: Signal<Option<String>>,
     pub current_view: Signal<SearchView>,
     client: DiscogsClient,
@@ -33,8 +33,8 @@ impl ImportContext {
             search_results: use_signal(Vec::new),
             is_searching_masters: use_signal(|| false),
             is_loading_versions: use_signal(|| false),
-            is_importing_master: use_signal(|| false),
-            is_importing_release: use_signal(|| false),
+            loading_master_id: use_signal(|| None),
+            loading_release_id: use_signal(|| None),
             error_message: use_signal(|| None),
             current_view: use_signal(|| SearchView::SearchResults),
             client: DiscogsClient::new(config.discogs_api_key.clone()),
@@ -88,14 +88,14 @@ impl ImportContext {
         self.search_results.set(Vec::new());
         self.is_searching_masters.set(false);
         self.is_loading_versions.set(false);
-        self.is_importing_master.set(false);
-        self.is_importing_release.set(false);
+        self.loading_master_id.set(None);
+        self.loading_release_id.set(None);
         self.error_message.set(None);
         self.current_view.set(SearchView::SearchResults);
     }
 
     pub async fn import_master(&mut self, master_id: String) -> Result<DiscogsAlbum, String> {
-        self.is_importing_master.set(true);
+        self.loading_master_id.set(Some(master_id.clone()));
         self.error_message.set(None);
 
         // Find the thumbnail from search results
@@ -113,8 +113,7 @@ impl ImportContext {
                     master.thumb = search_thumb;
                     debug!("Using search thumbnail for master {}", master.title);
                 }
-                let import_item = DiscogsAlbum::Master(master);
-                Ok(import_item)
+                Ok(DiscogsAlbum::Master(master))
             }
             Err(e) => {
                 let error = format!("Failed to fetch master details: {}", e);
@@ -123,7 +122,7 @@ impl ImportContext {
             }
         };
 
-        self.is_importing_master.set(false);
+        self.loading_master_id.set(None);
         result
     }
 
@@ -152,14 +151,13 @@ impl ImportContext {
         release_id: String,
         master_id: String,
     ) -> Result<DiscogsAlbum, String> {
-        self.is_importing_release.set(true);
+        self.loading_release_id.set(Some(release_id.clone()));
         self.error_message.set(None);
 
         let result = match self.client.get_release(&release_id).await {
             Ok(mut release) => {
                 release.master_id = Some(master_id);
-                let import_item = DiscogsAlbum::Release(release);
-                Ok(import_item)
+                Ok(DiscogsAlbum::Release(release))
             }
             Err(e) => {
                 let error = format!("Failed to fetch release details: {}", e);
@@ -168,7 +166,7 @@ impl ImportContext {
             }
         };
 
-        self.is_importing_release.set(false);
+        self.loading_release_id.set(None);
         result
     }
 }

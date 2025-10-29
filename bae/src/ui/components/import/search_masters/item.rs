@@ -60,19 +60,32 @@ pub fn SearchMastersItem(props: SearchMastersItemProps) -> Element {
                     },
                     "View Releases"
                 }
-                if *album_import_ctx.is_importing_master.read() {
-                    span { class: "text-gray-500", "Importing..." }
-                } else {
-                    button {
-                        class: "text-green-600 hover:text-green-800 underline",
-                        onclick: {
-                            let master_id = props.result.id.to_string();
-                            let on_import = props.on_import;
-                            move |_| {
-                                on_import.call(master_id.clone());
+                {
+                    let is_this_loading = album_import_ctx
+                        .loading_master_id
+                        .read()
+                        .as_ref()
+                        .map(|id| id == &props.result.id.to_string())
+                        .unwrap_or(false);
+
+                    if is_this_loading {
+                        rsx! {
+                            span { class: "text-gray-500", "Loading..." }
+                        }
+                    } else {
+                        rsx! {
+                            button {
+                                class: "text-green-600 hover:text-green-800 underline",
+                                onclick: {
+                                    let master_id = props.result.id.to_string();
+                                    let on_import = props.on_import;
+                                    move |_| {
+                                        on_import.call(master_id.clone());
+                                    }
+                                },
+                                "Add to Library"
                             }
-                        },
-                        "Add to Library"
+                        }
                     }
                 }
             }
