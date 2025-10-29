@@ -10,11 +10,20 @@ pub struct SearchMastersItemProps {
 
 #[component]
 pub fn SearchMastersItem(props: SearchMastersItemProps) -> Element {
-    let mut album_import_ctx = use_context::<ImportContext>();
+    let album_import_ctx = use_context::<ImportContext>();
 
     rsx! {
         tr { class: "hover:bg-gray-50",
-            td { class: "px-4 py-3",
+            td {
+                class: "px-4 py-3 cursor-pointer",
+                onclick: {
+                    let mut ctx = album_import_ctx.clone();
+                    let master_id = props.result.id.to_string();
+                    let master_title = props.result.title.clone();
+                    move |_| {
+                        ctx.navigate_to_releases(master_id.clone(), master_title.clone());
+                    }
+                },
                 if let Some(thumb) = &props.result.thumb {
                     img {
                         class: "w-12 h-12 object-cover rounded",
@@ -27,15 +36,44 @@ pub fn SearchMastersItem(props: SearchMastersItemProps) -> Element {
                     }
                 }
             }
-            td { class: "px-4 py-3 text-sm font-medium text-gray-900", "{props.result.title}" }
-            td { class: "px-4 py-3 text-sm text-gray-500",
+            td {
+                class: "px-4 py-3 text-sm font-medium text-gray-900 cursor-pointer",
+                onclick: {
+                    let mut ctx = album_import_ctx.clone();
+                    let master_id = props.result.id.to_string();
+                    let master_title = props.result.title.clone();
+                    move |_| {
+                        ctx.navigate_to_releases(master_id.clone(), master_title.clone());
+                    }
+                },
+                "{props.result.title}"
+            }
+            td {
+                class: "px-4 py-3 text-sm text-gray-500 cursor-pointer",
+                onclick: {
+                    let mut ctx = album_import_ctx.clone();
+                    let master_id = props.result.id.to_string();
+                    let master_title = props.result.title.clone();
+                    move |_| {
+                        ctx.navigate_to_releases(master_id.clone(), master_title.clone());
+                    }
+                },
                 if let Some(year) = &props.result.year {
                     "{year}"
                 } else {
                     "Unknown"
                 }
             }
-            td { class: "px-4 py-3 text-sm text-gray-500",
+            td {
+                class: "px-4 py-3 text-sm text-gray-500 cursor-pointer",
+                onclick: {
+                    let mut ctx = album_import_ctx.clone();
+                    let master_id = props.result.id.to_string();
+                    let master_title = props.result.title.clone();
+                    move |_| {
+                        ctx.navigate_to_releases(master_id.clone(), master_title.clone());
+                    }
+                },
                 if let Some(labels) = &props.result.label {
                     if let Some(first_label) = labels.first() {
                         "{first_label}"
@@ -46,19 +84,7 @@ pub fn SearchMastersItem(props: SearchMastersItemProps) -> Element {
                     "Unknown"
                 }
             }
-            td { class: "px-4 py-3 text-sm space-x-2",
-                button {
-                    class: "text-blue-600 hover:text-blue-800 underline",
-                    onclick: {
-                        let master_id = props.result.id.to_string();
-                        let master_title = props.result.title.clone();
-                        move |_| {
-                            album_import_ctx
-                                .navigate_to_releases(master_id.clone(), master_title.clone());
-                        }
-                    },
-                    "View Releases"
-                }
+            td { class: "px-4 py-3 text-sm",
                 button {
                     class: "text-green-600 hover:text-green-800 underline",
                     onclick: {
