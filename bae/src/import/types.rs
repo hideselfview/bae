@@ -13,26 +13,10 @@ pub enum ImportRequestParams {
 /// Progress updates during import
 #[derive(Debug, Clone)]
 pub enum ImportProgress {
-    Started {
-        release_id: String,
-    },
-    ProcessingProgress {
-        release_id: String,
-        current: usize,
-        total: usize,
-        percent: u8,
-    },
-    TrackComplete {
-        release_id: String,
-        track_id: String,
-    },
-    Complete {
-        release_id: String,
-    },
-    Failed {
-        release_id: String,
-        error: String,
-    },
+    Started { id: String },
+    Progress { id: String, percent: u8 },
+    Complete { id: String },
+    Failed { id: String, error: String },
 }
 
 /// Links a database track (already inserted with status='importing') to its source audio file.

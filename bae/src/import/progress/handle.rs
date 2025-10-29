@@ -12,50 +12,24 @@ type SubscriptionId = u64;
 /// Filter criteria for progress subscriptions
 #[derive(Debug, Clone)]
 enum SubscriptionFilter {
-    Release {
-        release_id: String,
-    },
-    Track {
-        release_id: String,
-        track_id: String,
-    },
+    Release { release_id: String },
+    Track { track_id: String },
 }
 
 impl SubscriptionFilter {
     fn matches(&self, progress: &ImportProgress) -> bool {
         match self {
             SubscriptionFilter::Release { release_id } => match progress {
-                ImportProgress::Started {
-                    release_id: rid, ..
-                } => rid == release_id,
-                ImportProgress::ProcessingProgress {
-                    release_id: rid, ..
-                } => rid == release_id,
-                ImportProgress::TrackComplete {
-                    release_id: rid, ..
-                } => rid == release_id,
-                ImportProgress::Complete { release_id: rid } => rid == release_id,
-                ImportProgress::Failed {
-                    release_id: rid, ..
-                } => rid == release_id,
+                ImportProgress::Started { id } => id == release_id,
+                ImportProgress::Progress { id, .. } => id == release_id,
+                ImportProgress::Complete { id } => id == release_id,
+                ImportProgress::Failed { id, .. } => id == release_id,
             },
-            SubscriptionFilter::Track {
-                release_id,
-                track_id,
-            } => match progress {
-                ImportProgress::TrackComplete {
-                    release_id: rid,
-                    track_id: tid,
-                } => rid == release_id && tid == track_id,
-                // Also include release-level updates for context
-                ImportProgress::Started {
-                    release_id: rid, ..
-                } => rid == release_id,
-                ImportProgress::Complete { release_id: rid } => rid == release_id,
-                ImportProgress::Failed {
-                    release_id: rid, ..
-                } => rid == release_id,
-                _ => false,
+            SubscriptionFilter::Track { track_id } => match progress {
+                ImportProgress::Started { id } => id == track_id,
+                ImportProgress::Progress { id, .. } => id == track_id,
+                ImportProgress::Complete { id } => id == track_id,
+                ImportProgress::Failed { id, .. } => id == track_id,
             },
         }
     }
@@ -144,17 +118,13 @@ impl ImportProgressHandle {
     /// Subscription is automatically removed when receiver is dropped
     pub fn subscribe_track(
         &self,
-        release_id: String,
         track_id: String,
     ) -> tokio_mpsc::UnboundedReceiver<ImportProgress> {
         let (tx, rx) = tokio_mpsc::unbounded_channel();
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
 
         let subscription = Subscription {
-            filter: SubscriptionFilter::Track {
-                release_id,
-                track_id,
-            },
+            filter: SubscriptionFilter::Track { track_id },
             tx,
         };
 

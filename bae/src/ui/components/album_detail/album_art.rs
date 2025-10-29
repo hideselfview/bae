@@ -5,7 +5,7 @@ use dioxus::prelude::*;
 pub fn AlbumArt(
     title: String,
     cover_url: Option<String>,
-    import_progress: ReadOnlySignal<Option<(usize, usize, u8)>>,
+    import_progress: ReadOnlySignal<Option<u8>>,
 ) -> Element {
     rsx! {
         div { class: "aspect-square bg-gray-700 rounded-lg flex items-center justify-center overflow-hidden relative",
@@ -19,7 +19,7 @@ pub fn AlbumArt(
                 div { class: "text-gray-500 text-6xl", "🎵" }
             }
 
-            if let Some((_current, _total, percent)) = import_progress() {
+            if let Some(percent) = import_progress() {
                 div { class: "absolute inset-0 bg-black/50 flex items-center justify-center",
                     div { class: "w-[30%] aspect-square",
                         svg {

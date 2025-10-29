@@ -13,7 +13,8 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
     let library_manager = use_library_manager();
     let playback = use_playback_service();
     let mut track_artists = use_signal(Vec::<DbArtist>::new);
-    let track_progress = use_track_progress(release_id, track.id.clone(), track.import_status);
+    let track_progress = use_track_progress(track.id.clone(), track.import_status);
+    // let track_progress = use_signal(|| TrackImportState::Importing { percent: 12 });
 
     // Load artists for this track (for compilations/features)
     use_effect({
@@ -35,6 +36,7 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
         TrackImportState::Queued | TrackImportState::Importing { .. }
     );
     let is_complete = matches!(progress_state, TrackImportState::Complete);
+    let is_failed = matches!(progress_state, TrackImportState::Failed);
 
     let progress_percent = if let TrackImportState::Importing { percent } = progress_state {
         percent
@@ -52,6 +54,13 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
                 div {
                     class: "absolute inset-0 bg-blue-500 opacity-10 transition-all duration-300",
                     style: "width: {progress_percent}%",
+                }
+            }
+
+            // Failed state background
+            if is_failed {
+                div {
+                    class: "absolute inset-0 bg-red-500 opacity-10",
                 }
             }
 
@@ -74,7 +83,13 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
                 // Track number
                 div {
                     class: "w-12 text-right text-sm font-mono",
-                    class: if is_importing { "text-gray-600" } else { "text-gray-400" },
+                    class: if is_failed {
+                        "text-red-400"
+                    } else if is_importing {
+                        "text-gray-600"
+                    } else {
+                        "text-gray-400"
+                    },
                     if let Some(track_num) = track.track_number {
                         "{track_num}."
                     } else {
@@ -86,7 +101,9 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
                 div { class: "flex-1 ml-4",
                     h3 {
                         class: "font-medium transition-colors",
-                        class: if is_importing {
+                        class: if is_failed {
+                            "text-red-300"
+                        } else if is_importing {
                             "text-gray-500"
                         } else {
                             "text-white group-hover:text-blue-300"
@@ -96,7 +113,13 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
                     if !track_artists().is_empty() {
                         p {
                             class: "text-sm",
-                            class: if is_importing { "text-gray-600" } else { "text-gray-400" },
+                            class: if is_failed {
+                                "text-red-400"
+                            } else if is_importing {
+                                "text-gray-600"
+                            } else {
+                                "text-gray-400"
+                            },
                             {
                                 let artists = track_artists();
                                 if artists.len() == 1 {
@@ -112,7 +135,13 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
                 // Duration (if available)
                 div {
                     class: "text-sm font-mono",
-                    class: if is_importing { "text-gray-600" } else { "text-gray-400" },
+                    class: if is_failed {
+                        "text-red-400"
+                    } else if is_importing {
+                        "text-gray-600"
+                    } else {
+                        "text-gray-400"
+                    },
                     if let Some(duration_ms) = track.duration_ms {
                         {format_duration(duration_ms)}
                     } else {

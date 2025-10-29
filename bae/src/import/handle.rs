@@ -170,10 +170,9 @@ impl ImportHandle {
     /// Returns a filtered receiver that yields only updates for the specified track
     pub fn subscribe_track(
         &self,
-        release_id: String,
         track_id: String,
     ) -> tokio::sync::mpsc::UnboundedReceiver<ImportProgress> {
-        self.progress_handle.subscribe_track(release_id, track_id)
+        self.progress_handle.subscribe_track(track_id)
     }
 }
 

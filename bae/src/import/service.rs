@@ -139,7 +139,7 @@ impl ImportService {
 
         // Send started progress
         let _ = self.progress_tx.send(ImportProgress::Started {
-            release_id: db_release.id.clone(),
+            id: db_release.id.clone(),
         });
 
         // Analyze album layout: files → chunks → tracks
@@ -220,9 +220,9 @@ impl ImportService {
             .map_err(|e| format!("Failed to mark release complete: {}", e))?;
 
         // Send completion event
-        let _ = self.progress_tx.send(ImportProgress::Complete {
-            release_id: db_release.id,
-        });
+        let _ = self
+            .progress_tx
+            .send(ImportProgress::Complete { id: db_release.id });
 
         info!("Import completed successfully for {}", db_album.title);
         Ok(())

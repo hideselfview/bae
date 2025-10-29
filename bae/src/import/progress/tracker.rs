@@ -52,7 +52,7 @@ impl ImportProgressTracker {
     /// Updates internal state, checks all tracks for completion, emits progress events.
     /// Returns newly completed track IDs for database persistence.
     pub fn on_chunk_complete(&self, chunk_index: i32) -> Vec<String> {
-        let (newly_completed_tracks, progress_update) = {
+        let (newly_completed_tracks, progress_update, track_progress_updates) = {
             let mut completed = self.completed_chunks.lock().unwrap();
             let mut already_completed = self.completed_tracks.lock().unwrap();
 
@@ -67,8 +67,25 @@ impl ImportProgressTracker {
                 already_completed.insert(track_id.clone());
             }
 
+            // Calculate progress for all tracks that are not yet complete
+            let mut track_progress = Vec::new();
+            for (track_id, &total_for_track) in self.track_chunk_counts.iter() {
+                if !already_completed.contains(track_id) {
+                    let completed_for_track = self
+                        .chunk_to_track
+                        .iter()
+                        .filter(|(idx, track_ids)| {
+                            track_ids.contains(track_id) && completed.contains(idx)
+                        })
+                        .count();
+
+                    let percent = calculate_progress(completed_for_track, total_for_track);
+                    track_progress.push((track_id.clone(), percent));
+                }
+            }
+
             let percent = calculate_progress(completed.len(), self.total_chunks);
-            (newly_completed, (completed.len(), percent))
+            (newly_completed, (completed.len(), percent), track_progress)
         };
 
         // Emit progress event
@@ -80,20 +97,28 @@ impl ImportProgressTracker {
             progress_update.1
         );
 
-        let _ = self.tx.send(ImportProgress::ProcessingProgress {
-            release_id: self.release_id.clone(),
+        // Emit release-level progress
+        let _ = self.tx.send(ImportProgress::Progress {
+            id: self.release_id.clone(),
             percent: progress_update.1,
-            current: progress_update.0,
-            total: self.total_chunks,
         });
 
-        // Emit TrackComplete for each newly completed track
+        // Emit track-level progress for each track that's still importing
+        for (track_id, percent) in track_progress_updates {
+            trace!("Track {} progress: {}%", track_id, percent);
+
+            let _ = self.tx.send(ImportProgress::Progress {
+                id: track_id.clone(),
+                percent,
+            });
+        }
+
+        // Emit Complete for each newly completed track
         for track_id in &newly_completed_tracks {
             trace!("Track {} complete", track_id);
 
-            let _ = self.tx.send(ImportProgress::TrackComplete {
-                release_id: self.release_id.clone(),
-                track_id: track_id.clone(),
+            let _ = self.tx.send(ImportProgress::Complete {
+                id: track_id.clone(),
             });
         }
 
@@ -207,17 +232,27 @@ mod tests {
             "Track 2 should be complete"
         );
 
-        // Verify progress events were sent (49 ProcessingProgress + 2 TrackComplete)
-        let mut progress_count = 0;
-        let mut track_complete_count = 0;
+        // Verify progress events were sent (49 release Progress + 49*2 track Progress + 2 Complete)
+        let mut release_progress_count = 0;
+        let mut track_progress_count = 0;
+        let mut complete_count = 0;
         while let Ok(event) = rx.try_recv() {
             match event {
-                ImportProgress::ProcessingProgress { .. } => progress_count += 1,
-                ImportProgress::TrackComplete { .. } => track_complete_count += 1,
+                ImportProgress::Progress { id, .. } => {
+                    if id == "test-album" {
+                        release_progress_count += 1;
+                    } else {
+                        track_progress_count += 1;
+                    }
+                }
+                ImportProgress::Complete { .. } => complete_count += 1,
                 _ => {}
             }
         }
-        assert_eq!(progress_count, 49, "Expected 49 ProcessingProgress events");
-        assert_eq!(track_complete_count, 2, "Expected 2 TrackComplete events");
+        assert_eq!(
+            release_progress_count, 49,
+            "Expected 49 release Progress events"
+        );
+        assert_eq!(complete_count, 2, "Expected 2 Complete events");
     }
 }
