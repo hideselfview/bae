@@ -112,11 +112,11 @@ pub fn ReleaseItem(props: ReleaseItemProps) -> Element {
             }
             td { class: "px-4 py-3 text-sm",
                 button {
-                    class: "text-green-600 hover:text-green-800 underline",
+                    class: "text-green-600 hover:text-green-800 underline whitespace-nowrap",
                     onclick: move |_| {
                         props.on_import.call(props.result.clone());
                     },
-                    "Add to Library"
+                    "Add Release"
                 }
             }
         }

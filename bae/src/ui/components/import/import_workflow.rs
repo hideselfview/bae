@@ -278,6 +278,56 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                                         "Label: {album_data.label().join(\", \")}"
                                     }
                                 }
+                                // Discogs links
+                                div { class: "flex flex-col gap-1 mt-2 text-sm text-gray-600",
+                                    match album_data {
+                                        crate::discogs::DiscogsAlbum::Master(master) => {
+                                            rsx! {
+                                                div {
+                                                    "Discogs Album: "
+                                                    a {
+                                                        href: "https://www.discogs.com/master/{master.id}",
+                                                        target: "_blank",
+                                                        rel: "noopener noreferrer",
+                                                        class: "text-blue-600 hover:text-blue-800 underline",
+                                                        "{master.id}"
+                                                    }
+                                                }
+                                                div {
+                                                    "Release: None"
+                                                }
+                                            }
+                                        }
+                                        crate::discogs::DiscogsAlbum::Release(release) => {
+                                            rsx! {
+                                                div {
+                                                    "Discogs Album: "
+                                                    if let Some(master_id) = &release.master_id {
+                                                        a {
+                                                            href: "https://www.discogs.com/master/{master_id}",
+                                                            target: "_blank",
+                                                            rel: "noopener noreferrer",
+                                                            class: "text-blue-600 hover:text-blue-800 underline",
+                                                            "{master_id}"
+                                                        }
+                                                    } else {
+                                                        "None"
+                                                    }
+                                                }
+                                                div {
+                                                    "Discogs Release: "
+                                                    a {
+                                                        href: "https://www.discogs.com/release/{release.id}",
+                                                        target: "_blank",
+                                                        rel: "noopener noreferrer",
+                                                        class: "text-blue-600 hover:text-blue-800 underline",
+                                                        "{release.id}"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

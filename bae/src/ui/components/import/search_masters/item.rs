@@ -86,7 +86,7 @@ pub fn SearchMastersItem(props: SearchMastersItemProps) -> Element {
             }
             td { class: "px-4 py-3 text-sm",
                 button {
-                    class: "text-green-600 hover:text-green-800 underline",
+                    class: "text-green-600 hover:text-green-800 underline whitespace-nowrap",
                     onclick: {
                         let master_id = props.result.id.to_string();
                         let on_import = props.on_import;
@@ -94,7 +94,7 @@ pub fn SearchMastersItem(props: SearchMastersItemProps) -> Element {
                             on_import.call(master_id.clone());
                         }
                     },
-                    "Add to Library"
+                    "Add Album"
                 }
             }
         }
