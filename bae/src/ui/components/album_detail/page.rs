@@ -167,11 +167,18 @@ fn use_album_detail_data(
 }
 
 fn use_release_progress(
-    album_resource: Resource<Result<(DbAlbum, Vec<DbRelease>), LibraryError>>,
-    selected_release_id: Memo<Option<String>>,
+    _album_resource: Resource<Result<(DbAlbum, Vec<DbRelease>), LibraryError>>,
+    _selected_release_id: Memo<Option<String>>,
 ) -> Signal<Option<(usize, usize, u8)>> {
-    let import_service = use_import_service();
+    let _import_service = use_import_service();
+
+    // Progress tuple: (current_chunks, total_chunks, percent_complete)
+    // Uncomment to test UI states:
     let mut progress = use_signal(|| None::<(usize, usize, u8)>);
+
+    let import_service = use_import_service();
+    let album_resource = _album_resource;
+    let selected_release_id = _selected_release_id;
 
     use_effect(move || {
         let releases_data = album_resource

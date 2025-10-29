@@ -20,11 +20,31 @@ pub fn AlbumArt(
             }
 
             if let Some((_current, _total, percent)) = import_progress() {
-                div { class: "absolute inset-0 bg-black bg-opacity-30 flex items-center justify-center",
-                    div { class: "w-[30%] h-[30%] flex flex-col items-center justify-center gap-3",
-                        div { class: "w-full aspect-square border-4 border-blue-500 border-t-transparent rounded-full animate-spin" }
-                        div { class: "text-white text-sm font-medium whitespace-nowrap",
-                            "{percent}%"
+                div { class: "absolute inset-0 bg-black/50 flex items-center justify-center",
+                    div { class: "w-[30%] aspect-square",
+                        svg {
+                            class: "transform -rotate-90",
+                            view_box: "0 0 100 100",
+                            circle {
+                                cx: "50",
+                                cy: "50",
+                                r: "45",
+                                fill: "none",
+                                stroke: "rgba(255, 255, 255, 0.2)",
+                                stroke_width: "8",
+                            }
+                            circle {
+                                cx: "50",
+                                cy: "50",
+                                r: "45",
+                                fill: "none",
+                                stroke: "#3b82f6",
+                                stroke_width: "8",
+                                stroke_dasharray: "283",
+                                stroke_dashoffset: "{283.0 - (283.0 * percent as f32 / 100.0)}",
+                                stroke_linecap: "round",
+                                class: "transition-all duration-300",
+                            }
                         }
                     }
                 }

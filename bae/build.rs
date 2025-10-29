@@ -20,6 +20,8 @@ fn main() {
                     "cargo:error=STDOUT: {}",
                     String::from_utf8_lossy(&output.stdout)
                 );
+            } else {
+                println!("cargo:warning=Tailwind CSS generated successfully");
             }
         }
         Err(e) => {
