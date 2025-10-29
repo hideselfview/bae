@@ -51,11 +51,10 @@ pub fn on_folder_selected(folder_path: String) -> Result<(), String> {
 pub struct ImportWorkflowProps {
     pub master_id: String,
     pub release_id: Option<String>,
-    pub on_back: EventHandler<()>,
 }
 
 #[derive(PartialEq, Clone)]
-pub enum ImportStep {
+pub enum WorkflowStep {
     Loading,
     DataSourceSelection,
     ImportError(String),
@@ -66,10 +65,14 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
     let import_service = use_import_service();
     let navigator = use_navigator();
     let import_context = use_context::<ImportContext>();
-    let mut current_step = use_signal(|| ImportStep::Loading);
+    let mut current_step = use_signal(|| WorkflowStep::Loading);
     let mut discogs_album = use_signal(|| None::<DiscogsAlbum>);
     let mut selected_folder = use_signal(|| None::<String>);
     let mut folder_error = use_signal(|| None::<String>);
+
+    // Store master_id and master_title for back navigation
+    let master_id_for_back = props.master_id.clone();
+    let mut master_title_for_back = use_signal(String::new);
 
     // Load the album data on mount
     use_effect({
@@ -91,11 +94,12 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
 
                 match result {
                     Ok(album) => {
+                        master_title_for_back.set(album.title().to_string());
                         discogs_album.set(Some(album));
-                        current_step.set(ImportStep::DataSourceSelection);
+                        current_step.set(WorkflowStep::DataSourceSelection);
                     }
                     Err(e) => {
-                        current_step.set(ImportStep::ImportError(e));
+                        current_step.set(WorkflowStep::ImportError(e));
                     }
                 }
             });
@@ -157,7 +161,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                         }
                         Err(e) => {
                             error!("Failed to validate/queue import: {}", e);
-                            current_step.set(ImportStep::ImportError(e));
+                            current_step.set(WorkflowStep::ImportError(e));
                         }
                     }
                 });
@@ -165,21 +169,42 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
         }
     };
 
-    let on_back_to_search = move |_| {
-        props.on_back.call(());
+    let on_back_to_search = {
+        let mut import_context = import_context.clone();
+        let release_id = props.release_id.clone();
+        let master_id = master_id_for_back.clone();
+
+        move |_| {
+            if release_id.is_some() {
+                // If we came from release list, go back to release list
+                import_context.navigate_back_from_import(
+                    master_id.clone(),
+                    master_title_for_back.read().clone(),
+                );
+            } else {
+                // If we came from search results, go back to search
+                import_context.navigate_back_to_search();
+            }
+        }
+    };
+
+    let back_button_text = if props.release_id.is_some() {
+        "← Back to Releases"
+    } else {
+        "← Back to Search"
     };
 
     let current_step_value = current_step.read().clone();
 
     match current_step_value {
-        ImportStep::Loading => {
+        WorkflowStep::Loading => {
             rsx! {
                 div { class: "max-w-4xl mx-auto p-6",
                     div { class: "mb-6",
                         button {
                             class: "text-blue-600 hover:text-blue-800 mb-4",
                             onclick: on_back_to_search,
-                            "← Back to Search"
+                            "{back_button_text}"
                         }
                         h1 { class: "text-2xl font-bold text-white", "Import Album" }
                     }
@@ -189,7 +214,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                 }
             }
         }
-        ImportStep::DataSourceSelection => {
+        WorkflowStep::DataSourceSelection => {
             let album = discogs_album.read();
             let album_ref = album.as_ref();
 
@@ -212,7 +237,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                         button {
                             class: "text-blue-600 hover:text-blue-800 mb-4",
                             onclick: on_back_to_search,
-                            "← Back to Search"
+                            "{back_button_text}"
                         }
                         h1 { class: "text-2xl font-bold text-white", "Import Album" }
                     }
@@ -310,7 +335,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                 }
             }
         }
-        ImportStep::ImportError(error_msg) => {
+        WorkflowStep::ImportError(error_msg) => {
             let error_display = error_msg.clone();
             rsx! {
                 div { class: "max-w-4xl mx-auto p-6",
@@ -337,14 +362,14 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                             button {
                                 class: "px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700",
                                 onclick: move |_| {
-                                    current_step.set(ImportStep::DataSourceSelection);
+                                    current_step.set(WorkflowStep::DataSourceSelection);
                                 },
                                 "Try Again"
                             }
                             button {
                                 class: "px-6 py-2 bg-gray-600 text-white rounded hover:bg-gray-700",
                                 onclick: on_back_to_search,
-                                "Back to Search"
+                                "{back_button_text.trim_start_matches(\"← \")}"
                             }
                         }
                     }

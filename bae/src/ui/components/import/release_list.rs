@@ -1,4 +1,4 @@
-use super::{import_workflow::ImportWorkflow, release_item::ReleaseItem};
+use super::release_item::ReleaseItem;
 use crate::discogs::DiscogsMasterReleaseVersion;
 use crate::ui::import_context::ImportContext;
 use dioxus::prelude::*;
@@ -7,7 +7,6 @@ use dioxus::prelude::*;
 pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandler<()>) -> Element {
     let album_import_ctx = use_context::<ImportContext>();
     let mut release_results = use_signal(Vec::<DiscogsMasterReleaseVersion>::new);
-    let mut selected_import_item = use_signal(|| None::<(String, String)>);
 
     let master_id_for_effect = master_id.clone();
 
@@ -34,27 +33,14 @@ pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandle
 
     let on_import_release = {
         let master_id_for_import = master_id.clone();
+        let mut album_import_ctx = album_import_ctx.clone();
 
         move |version: DiscogsMasterReleaseVersion| {
             let release_id = version.id.to_string();
-            selected_import_item.set(Some((release_id, master_id_for_import.clone())));
+            album_import_ctx
+                .navigate_to_import_workflow(master_id_for_import.clone(), Some(release_id));
         }
     };
-
-    let on_back_from_import = move |_| {
-        selected_import_item.set(None);
-    };
-
-    // If an item is selected for import, show the import workflow
-    if let Some((release_id, master_id_for_workflow)) = selected_import_item.read().as_ref() {
-        return rsx! {
-            ImportWorkflow {
-                master_id: master_id_for_workflow.clone(),
-                release_id: Some(release_id.clone()),
-                on_back: on_back_from_import,
-            }
-        };
-    }
 
     rsx! {
         div { class: "container mx-auto p-6",

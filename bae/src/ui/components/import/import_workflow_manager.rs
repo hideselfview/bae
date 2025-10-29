@@ -1,5 +1,7 @@
-use super::{release_list::ReleaseList, search_masters::SearchMastersPage};
-use crate::ui::import_context::{ImportContext, SearchView};
+use super::{
+    import_workflow::ImportWorkflow, release_list::ReleaseList, search_masters::SearchMastersPage,
+};
+use crate::ui::import_context::{ImportContext, ImportStep};
 use dioxus::prelude::*;
 
 /// Manages the import workflow and navigation between search and releases views
@@ -12,15 +14,15 @@ pub fn ImportWorkflowManager() -> Element {
         move |_| album_import_ctx.navigate_back_to_search()
     };
 
-    let current_view = album_import_ctx.current_view.read().clone();
+    let current_step = album_import_ctx.current_step.read().clone();
 
-    match current_view {
-        SearchView::SearchResults => {
+    match current_step {
+        ImportStep::SearchResults => {
             rsx! {
                 SearchMastersPage {}
             }
         }
-        SearchView::ReleaseDetails {
+        ImportStep::ReleaseDetails {
             master_id,
             master_title,
         } => {
@@ -29,6 +31,17 @@ pub fn ImportWorkflowManager() -> Element {
                     master_id: master_id.clone(),
                     master_title: master_title.clone(),
                     on_back: on_release_back,
+                }
+            }
+        }
+        ImportStep::ImportWorkflow {
+            master_id,
+            release_id,
+        } => {
+            rsx! {
+                ImportWorkflow {
+                    master_id: master_id.clone(),
+                    release_id: release_id.clone(),
                 }
             }
         }

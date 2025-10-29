@@ -5,11 +5,15 @@ use dioxus::prelude::*;
 use tracing::debug;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum SearchView {
+pub enum ImportStep {
     SearchResults,
     ReleaseDetails {
         master_id: String,
         master_title: String,
+    },
+    ImportWorkflow {
+        master_id: String,
+        release_id: Option<String>,
     },
 }
 
@@ -20,7 +24,7 @@ pub struct ImportContext {
     pub is_searching_masters: Signal<bool>,
     pub is_loading_versions: Signal<bool>,
     pub error_message: Signal<Option<String>>,
-    pub current_view: Signal<SearchView>,
+    pub current_step: Signal<ImportStep>,
     client: DiscogsClient,
 }
 
@@ -32,7 +36,7 @@ impl ImportContext {
             is_searching_masters: use_signal(|| false),
             is_loading_versions: use_signal(|| false),
             error_message: use_signal(|| None),
-            current_view: use_signal(|| SearchView::SearchResults),
+            current_step: use_signal(|| ImportStep::SearchResults),
             client: DiscogsClient::new(config.discogs_api_key.clone()),
         }
     }
@@ -69,14 +73,28 @@ impl ImportContext {
     }
 
     pub fn navigate_to_releases(&mut self, master_id: String, master_title: String) {
-        self.current_view.set(SearchView::ReleaseDetails {
+        self.current_step.set(ImportStep::ReleaseDetails {
             master_id,
             master_title,
         });
     }
 
+    pub fn navigate_to_import_workflow(&mut self, master_id: String, release_id: Option<String>) {
+        self.current_step.set(ImportStep::ImportWorkflow {
+            master_id,
+            release_id,
+        });
+    }
+
     pub fn navigate_back_to_search(&mut self) {
-        self.current_view.set(SearchView::SearchResults);
+        self.current_step.set(ImportStep::SearchResults);
+    }
+
+    pub fn navigate_back_from_import(&mut self, master_id: String, master_title: String) {
+        self.current_step.set(ImportStep::ReleaseDetails {
+            master_id,
+            master_title,
+        });
     }
 
     pub fn reset(&mut self) {
@@ -85,7 +103,7 @@ impl ImportContext {
         self.is_searching_masters.set(false);
         self.is_loading_versions.set(false);
         self.error_message.set(None);
-        self.current_view.set(SearchView::SearchResults);
+        self.current_step.set(ImportStep::SearchResults);
     }
 
     pub async fn import_master(&mut self, master_id: String) -> Result<DiscogsAlbum, String> {
