@@ -109,6 +109,7 @@ struct Image {
     #[serde(rename = "type")]
     image_type: String,
     uri: String,
+    uri150: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -348,13 +349,16 @@ impl DiscogsClient {
                 })
                 .collect();
 
-            let cover_image = release.images.as_ref().and_then(|images| {
+            let primary_image = release.images.as_ref().and_then(|images| {
                 images
                     .iter()
                     .find(|img| img.image_type == "primary")
                     .or_else(|| images.first())
-                    .map(|img| img.uri.clone())
             });
+
+            let cover_image = primary_image.map(|img| img.uri.clone());
+            let thumb =
+                primary_image.and_then(|img| img.uri150.clone().or_else(|| Some(img.uri.clone())));
 
             Ok(DiscogsRelease {
                 id: release.id.to_string(),
@@ -371,7 +375,7 @@ impl DiscogsClient {
                 country: release.country,
                 label: Vec::new(), // Not available in detailed release
                 cover_image,
-                thumb: None, // Not available in detailed release
+                thumb,
                 artists,
                 tracklist,
                 master_id: release.master_id.map(|id| id.to_string()), // Use master_id from detailed release
