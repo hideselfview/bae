@@ -46,6 +46,10 @@ pub fn ReleaseList(
                 div { class: "bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4",
                     "{error}"
                 }
+            } else if versions.is_empty() {
+                div { class: "text-center py-8",
+                    p { class: "text-gray-600", "No releases found for this master." }
+                }
             }
 
             if !versions.is_empty() {
