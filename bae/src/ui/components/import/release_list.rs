@@ -13,9 +13,11 @@ pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandle
     let versions_resource = {
         let master_id = master_id.clone();
         let client = client.clone();
+
         use_resource(move || {
             let master_id = master_id.clone();
             let client = client.clone();
+
             async move {
                 client
                     .get_master_versions(&master_id)
