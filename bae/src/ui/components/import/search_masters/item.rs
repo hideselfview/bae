@@ -113,9 +113,7 @@ pub fn SearchMastersItem(props: SearchMastersItemProps) -> Element {
                                 let ctx = ctx.clone();
                                 let master_id = master_id.clone();
                                 let master_title = master_title.clone();
-                                spawn(async move {
-                                    ctx.navigate_to_releases(master_id, master_title).await;
-                                });
+                                ctx.navigate_to_releases(master_id, master_title);
                             }
                         },
                         "View releases"

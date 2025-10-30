@@ -26,13 +26,11 @@ pub fn ImportWorkflowManager() -> Element {
         ImportStep::ReleaseDetails {
             master_id,
             master_title,
-            versions,
         } => {
             rsx! {
                 ReleaseList {
                     master_id: master_id.clone(),
                     master_title: master_title.clone(),
-                    versions: versions.clone(),
                     on_back: on_release_back,
                 }
             }

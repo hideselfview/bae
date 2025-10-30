@@ -1,17 +1,35 @@
 use super::release_item::ReleaseItem;
+use crate::discogs::client::DiscogsError;
 use crate::discogs::DiscogsMasterReleaseVersion;
 use crate::ui::import_context::ImportContext;
 use dioxus::prelude::*;
 use std::rc::Rc;
 
 #[component]
-pub fn ReleaseList(
-    master_id: String,
-    master_title: String,
-    versions: Vec<DiscogsMasterReleaseVersion>,
-    on_back: EventHandler<()>,
-) -> Element {
+pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandler<()>) -> Element {
     let album_import_ctx = use_context::<Rc<ImportContext>>();
+    let client = album_import_ctx.client();
+
+    let versions_resource = {
+        let master_id = master_id.clone();
+        let client = client.clone();
+        use_resource(move || {
+            let master_id = master_id.clone();
+            let client = client.clone();
+            async move {
+                client
+                    .get_master_versions(&master_id)
+                    .await
+                    .map_err(|e| match e {
+                        DiscogsError::RateLimit => "Rate limit exceeded".to_string(),
+                        DiscogsError::InvalidApiKey => "Invalid API key".to_string(),
+                        DiscogsError::NotFound => "Master not found".to_string(),
+                        DiscogsError::Request(e) => format!("Request failed: {}", e),
+                        DiscogsError::Serialization(e) => format!("Parsing error: {}", e),
+                    })
+            }
+        })
+    };
 
     let on_import_release = {
         let master_id_for_import = master_id.clone();
@@ -37,62 +55,63 @@ pub fn ReleaseList(
                 }
             }
 
-
-            if *album_import_ctx.is_loading_versions.read() {
-                div { class: "text-center py-8",
-                    p { class: "text-gray-600", "Loading releases..." }
-                }
-            } else if let Some(error) = album_import_ctx.error_message.read().as_ref() {
-                div { class: "bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4",
-                    "{error}"
-                }
-            } else if versions.is_empty() {
-                div { class: "text-center py-8",
-                    p { class: "text-gray-600", "No releases found for this master." }
-                }
-            }
-
-            if !versions.is_empty() {
-                div { class: "overflow-x-auto",
-                    table { class: "w-full border-collapse bg-white rounded-lg shadow-lg",
-                        thead {
-                            tr { class: "bg-gray-50",
-                                th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
-                                    "Cover"
-                                }
-                                th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
-                                    "Title"
-                                }
-                                th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
-                                    "Label"
-                                }
-                                th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
-                                    "Catalog #"
-                                }
-                                th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
-                                    "Country"
-                                }
-                                th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
-                                    "Format"
-                                }
-                                th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
-                                    "Released"
-                                }
-                                th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
-                                    "Actions"
-                                }
-                            }
+            if let Some(result) = versions_resource.value().read().as_ref() {
+                if let Err(error) = result {
+                    div { class: "bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4",
+                        "{error}"
+                    }
+                } else if let Ok(versions) = result {
+                    if versions.is_empty() {
+                        div { class: "text-center py-8",
+                            p { class: "text-gray-600", "No releases found for this master." }
                         }
-                        tbody { class: "divide-y divide-gray-200",
-                            for result in versions.iter() {
-                                ReleaseItem {
-                                    key: "{result.id}",
-                                    result: result.clone(),
-                                    on_import: on_import_release.clone(),
+                    } else {
+                        div { class: "overflow-x-auto",
+                            table { class: "w-full border-collapse bg-white rounded-lg shadow-lg",
+                                thead {
+                                    tr { class: "bg-gray-50",
+                                        th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
+                                            "Cover"
+                                        }
+                                        th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
+                                            "Title"
+                                        }
+                                        th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
+                                            "Label"
+                                        }
+                                        th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
+                                            "Catalog #"
+                                        }
+                                        th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
+                                            "Country"
+                                        }
+                                        th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
+                                            "Format"
+                                        }
+                                        th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
+                                            "Released"
+                                        }
+                                        th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
+                                            "Actions"
+                                        }
+                                    }
+                                }
+                                tbody { class: "divide-y divide-gray-200",
+                                    for result in versions.iter() {
+                                        ReleaseItem {
+                                            key: "{result.id}",
+                                            result: result.clone(),
+                                            on_import: on_import_release.clone(),
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
+                }
+            } else {
+                div { class: "text-center py-8",
+                    p { class: "text-gray-600", "Loading releases..." }
                 }
             }
         }

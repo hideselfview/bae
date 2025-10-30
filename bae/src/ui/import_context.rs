@@ -1,6 +1,6 @@
 use crate::config::use_config;
 use crate::discogs::client::DiscogsSearchResult;
-use crate::discogs::{DiscogsAlbum, DiscogsClient, DiscogsMasterReleaseVersion};
+use crate::discogs::{DiscogsAlbum, DiscogsClient};
 use dioxus::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -12,7 +12,6 @@ pub enum ImportStep {
     ReleaseDetails {
         master_id: String,
         master_title: String,
-        versions: Vec<DiscogsMasterReleaseVersion>,
     },
     ImportWorkflow {
         master_id: String,
@@ -91,29 +90,13 @@ impl ImportContext {
         *self.search_task.borrow_mut() = Some(task);
     }
 
-    pub async fn navigate_to_releases(&self, master_id: String, master_title: String) {
-        let mut is_loading_versions = self.is_loading_versions;
-        let mut error_message = self.error_message;
+    pub fn navigate_to_releases(&self, master_id: String, master_title: String) {
         let mut navigation_stack = self.navigation_stack;
-
-        is_loading_versions.set(true);
-        error_message.set(None);
-
-        match self.client.get_master_versions(&master_id).await {
-            Ok(versions) => {
-                let step = ImportStep::ReleaseDetails {
-                    master_id,
-                    master_title,
-                    versions,
-                };
-                navigation_stack.write().push(step);
-            }
-            Err(e) => {
-                error_message.set(Some(format!("Failed to load releases: {}", e)));
-            }
-        }
-
-        is_loading_versions.set(false);
+        let step = ImportStep::ReleaseDetails {
+            master_id,
+            master_title,
+        };
+        navigation_stack.write().push(step);
     }
 
     pub fn navigate_to_import_workflow(&self, master_id: String, release_id: Option<String>) {
@@ -131,6 +114,10 @@ impl ImportContext {
         if stack.len() > 1 {
             stack.pop();
         }
+    }
+
+    pub fn client(&self) -> DiscogsClient {
+        self.client.clone()
     }
 
     pub fn reset(&self) {
