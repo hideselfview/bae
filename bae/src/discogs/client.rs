@@ -248,7 +248,7 @@ impl DiscogsClient {
     }
 
     /// Get versions of a master release
-    pub async fn get_master_versions(
+    pub async fn get_master_releases(
         &self,
         master_id: &str,
     ) -> Result<Vec<DiscogsMasterReleaseVersion>, DiscogsError> {

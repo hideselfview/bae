@@ -20,7 +20,7 @@ pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandle
 
             async move {
                 client
-                    .get_master_versions(&master_id)
+                    .get_master_releases(&master_id)
                     .await
                     .map_err(|e| match e {
                         DiscogsError::RateLimit => "Rate limit exceeded".to_string(),
