@@ -1,10 +1,11 @@
 use crate::ui::import_context::ImportContext;
 use dioxus::prelude::*;
+use std::rc::Rc;
 
 /// Displays loading and error states for search masters operations
 #[component]
 pub fn SearchMastersStatus() -> Element {
-    let album_import_ctx = use_context::<ImportContext>();
+    let album_import_ctx = use_context::<Rc<ImportContext>>();
 
     rsx! {
         if *album_import_ctx.is_searching_masters.read() {

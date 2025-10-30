@@ -1,10 +1,11 @@
 use crate::ui::import_context::ImportContext;
 use dioxus::prelude::*;
+use std::rc::Rc;
 
 /// Search masters input form with text field and search button
 #[component]
 pub fn SearchMastersForm() -> Element {
-    let album_import_ctx = use_context::<ImportContext>();
+    let album_import_ctx = use_context::<Rc<ImportContext>>();
     let mut search_query = album_import_ctx.search_query;
 
     rsx! {
@@ -36,6 +37,7 @@ pub fn SearchMastersForm() -> Element {
             button {
                 class: "px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium",
                 onclick: {
+                    let album_import_ctx = album_import_ctx.clone();
                     move |_| {
                         let query = search_query.read().clone();
                         album_import_ctx.search_albums(query);

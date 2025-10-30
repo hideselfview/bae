@@ -2,6 +2,7 @@ use super::release_item::ReleaseItem;
 use crate::discogs::DiscogsMasterReleaseVersion;
 use crate::ui::import_context::ImportContext;
 use dioxus::prelude::*;
+use std::rc::Rc;
 
 #[component]
 pub fn ReleaseList(
@@ -10,11 +11,11 @@ pub fn ReleaseList(
     versions: Vec<DiscogsMasterReleaseVersion>,
     on_back: EventHandler<()>,
 ) -> Element {
-    let album_import_ctx = use_context::<ImportContext>();
+    let album_import_ctx = use_context::<Rc<ImportContext>>();
 
     let on_import_release = {
         let master_id_for_import = master_id.clone();
-        let mut album_import_ctx = album_import_ctx.clone();
+        let album_import_ctx = album_import_ctx.clone();
 
         move |version: DiscogsMasterReleaseVersion| {
             let release_id = version.id.to_string();

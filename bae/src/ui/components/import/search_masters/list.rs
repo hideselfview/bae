@@ -1,6 +1,7 @@
 use super::item::SearchMastersItem;
 use crate::ui::import_context::ImportContext;
 use dioxus::prelude::*;
+use std::rc::Rc;
 
 #[derive(Props, Clone, PartialEq)]
 pub struct SearchMastersListProps {
@@ -9,7 +10,7 @@ pub struct SearchMastersListProps {
 
 #[component]
 pub fn SearchMastersList(props: SearchMastersListProps) -> Element {
-    let album_import_ctx = use_context::<ImportContext>();
+    let album_import_ctx = use_context::<Rc<ImportContext>>();
 
     if album_import_ctx.search_results.read().is_empty() {
         return rsx! {

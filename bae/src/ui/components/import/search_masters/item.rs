@@ -1,6 +1,7 @@
 use crate::discogs::client::DiscogsSearchResult;
 use crate::ui::import_context::ImportContext;
 use dioxus::prelude::*;
+use std::rc::Rc;
 
 #[derive(Props, PartialEq, Clone)]
 pub struct SearchMastersItemProps {
@@ -10,7 +11,7 @@ pub struct SearchMastersItemProps {
 
 #[component]
 pub fn SearchMastersItem(props: SearchMastersItemProps) -> Element {
-    let album_import_ctx = use_context::<ImportContext>();
+    let album_import_ctx = use_context::<Rc<ImportContext>>();
 
     rsx! {
         tr { class: "hover:bg-gray-50",
@@ -21,7 +22,7 @@ pub fn SearchMastersItem(props: SearchMastersItemProps) -> Element {
                     let master_id = props.result.id.to_string();
                     let master_title = props.result.title.clone();
                     move |_| {
-                        let mut ctx = ctx.clone();
+                        let ctx = ctx.clone();
                         let master_id = master_id.clone();
                         let master_title = master_title.clone();
                         spawn(async move {
@@ -48,7 +49,7 @@ pub fn SearchMastersItem(props: SearchMastersItemProps) -> Element {
                     let master_id = props.result.id.to_string();
                     let master_title = props.result.title.clone();
                     move |_| {
-                        let mut ctx = ctx.clone();
+                        let ctx = ctx.clone();
                         let master_id = master_id.clone();
                         let master_title = master_title.clone();
                         spawn(async move {
@@ -65,7 +66,7 @@ pub fn SearchMastersItem(props: SearchMastersItemProps) -> Element {
                     let master_id = props.result.id.to_string();
                     let master_title = props.result.title.clone();
                     move |_| {
-                        let mut ctx = ctx.clone();
+                        let ctx = ctx.clone();
                         let master_id = master_id.clone();
                         let master_title = master_title.clone();
                         spawn(async move {
@@ -86,7 +87,7 @@ pub fn SearchMastersItem(props: SearchMastersItemProps) -> Element {
                     let master_id = props.result.id.to_string();
                     let master_title = props.result.title.clone();
                     move |_| {
-                        let mut ctx = ctx.clone();
+                        let ctx = ctx.clone();
                         let master_id = master_id.clone();
                         let master_title = master_title.clone();
                         spawn(async move {

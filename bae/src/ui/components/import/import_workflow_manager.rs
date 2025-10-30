@@ -3,14 +3,15 @@ use super::{
 };
 use crate::ui::import_context::{ImportContext, ImportStep};
 use dioxus::prelude::*;
+use std::rc::Rc;
 
 /// Manages the import workflow and navigation between search and releases views
 #[component]
 pub fn ImportWorkflowManager() -> Element {
-    let album_import_ctx = use_context::<ImportContext>();
+    let album_import_ctx = use_context::<Rc<ImportContext>>();
 
     let on_release_back = {
-        let mut album_import_ctx = album_import_ctx.clone();
+        let album_import_ctx = album_import_ctx.clone();
         move |_| album_import_ctx.navigate_back()
     };
 

@@ -1,14 +1,15 @@
 use super::{form::SearchMastersForm, list::SearchMastersList, status::SearchMastersStatus};
 use crate::ui::import_context::ImportContext;
 use dioxus::prelude::*;
+use std::rc::Rc;
 
 /// Main search masters page that orchestrates the search UI components
 #[component]
 pub fn SearchMastersPage() -> Element {
-    let album_import_ctx = use_context::<ImportContext>();
+    let album_import_ctx = use_context::<Rc<ImportContext>>();
 
     let on_import_item = {
-        let mut album_import_ctx = album_import_ctx.clone();
+        let album_import_ctx = album_import_ctx.clone();
         move |master_id: String| {
             album_import_ctx.navigate_to_import_workflow(master_id, None);
         }

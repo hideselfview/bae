@@ -6,6 +6,7 @@ use crate::ui::Route;
 use dioxus::prelude::*;
 use rfd::AsyncFileDialog;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use tracing::{error, info};
 
 /// Import workflow functions using the LibraryManager
@@ -64,7 +65,7 @@ pub enum WorkflowStep {
 pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
     let import_service = use_import_service();
     let navigator = use_navigator();
-    let import_context = use_context::<ImportContext>();
+    let import_context = use_context::<Rc<ImportContext>>();
     let mut current_step = use_signal(|| WorkflowStep::Loading);
     let mut discogs_album = use_signal(|| None::<DiscogsAlbum>);
     let mut selected_folder = use_signal(|| None::<String>);
@@ -79,7 +80,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
         move || {
             let master_id = master_id.clone();
             let release_id = release_id.clone();
-            let mut import_context = import_context.clone();
+            let import_context = import_context.clone();
 
             spawn(async move {
                 let result = if let Some(release_id) = release_id {
@@ -123,7 +124,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                 let discogs_album = album.clone();
                 let import_service = import_service.clone();
                 let folder = folder.clone();
-                let mut import_context = import_context.clone();
+                let import_context = import_context.clone();
 
                 spawn(async move {
                     info!(
@@ -165,7 +166,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
     };
 
     let on_back = {
-        let mut import_context = import_context.clone();
+        let import_context = import_context.clone();
         move |_| {
             import_context.navigate_back();
         }

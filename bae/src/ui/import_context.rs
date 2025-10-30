@@ -2,6 +2,8 @@ use crate::config::use_config;
 use crate::discogs::client::DiscogsSearchResult;
 use crate::discogs::{DiscogsAlbum, DiscogsClient, DiscogsMasterReleaseVersion};
 use dioxus::prelude::*;
+use std::cell::RefCell;
+use std::rc::Rc;
 use tracing::debug;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -18,7 +20,6 @@ pub enum ImportStep {
     },
 }
 
-#[derive(Clone)]
 pub struct ImportContext {
     pub search_query: Signal<String>,
     pub search_results: Signal<Vec<DiscogsSearchResult>>,
@@ -26,6 +27,7 @@ pub struct ImportContext {
     pub is_loading_versions: Signal<bool>,
     pub error_message: Signal<Option<String>>,
     pub navigation_stack: Signal<Vec<ImportStep>>,
+    search_task: Rc<RefCell<Option<Task>>>,
     client: DiscogsClient,
 }
 
@@ -45,6 +47,7 @@ impl ImportContext {
             is_loading_versions: use_signal(|| false),
             error_message: use_signal(|| None),
             navigation_stack: use_signal(|| vec![ImportStep::SearchResults]),
+            search_task: Rc::new(RefCell::new(None)),
             client: DiscogsClient::new(config.discogs_api_key.clone()),
         }
     }
@@ -57,6 +60,11 @@ impl ImportContext {
             return;
         }
 
+        // Cancel previous search if still running
+        if let Some(old_task) = self.search_task.borrow_mut().take() {
+            old_task.cancel();
+        }
+
         // Copy signals to avoid borrowing conflicts (Signal implements Copy)
         let mut is_searching = self.is_searching_masters;
         let mut error_message = self.error_message;
@@ -66,7 +74,7 @@ impl ImportContext {
 
         let client = self.client.clone();
 
-        spawn(async move {
+        let task = spawn(async move {
             match client.search_masters(&query, "").await {
                 Ok(results) => {
                     search_results.set(results);
@@ -78,11 +86,18 @@ impl ImportContext {
 
             is_searching.set(false);
         });
+
+        // Store the new task
+        *self.search_task.borrow_mut() = Some(task);
     }
 
-    pub async fn navigate_to_releases(&mut self, master_id: String, master_title: String) {
-        self.is_loading_versions.set(true);
-        self.error_message.set(None);
+    pub async fn navigate_to_releases(&self, master_id: String, master_title: String) {
+        let mut is_loading_versions = self.is_loading_versions;
+        let mut error_message = self.error_message;
+        let mut navigation_stack = self.navigation_stack;
+
+        is_loading_versions.set(true);
+        error_message.set(None);
 
         match self.client.get_master_versions(&master_id).await {
             Ok(versions) => {
@@ -91,43 +106,52 @@ impl ImportContext {
                     master_title,
                     versions,
                 };
-                self.navigation_stack.write().push(step);
+                navigation_stack.write().push(step);
             }
             Err(e) => {
-                self.error_message
-                    .set(Some(format!("Failed to load releases: {}", e)));
+                error_message.set(Some(format!("Failed to load releases: {}", e)));
             }
         }
 
-        self.is_loading_versions.set(false);
+        is_loading_versions.set(false);
     }
 
-    pub fn navigate_to_import_workflow(&mut self, master_id: String, release_id: Option<String>) {
+    pub fn navigate_to_import_workflow(&self, master_id: String, release_id: Option<String>) {
+        let mut navigation_stack = self.navigation_stack;
         let step = ImportStep::ImportWorkflow {
             master_id,
             release_id,
         };
-        self.navigation_stack.write().push(step);
+        navigation_stack.write().push(step);
     }
 
-    pub fn navigate_back(&mut self) {
-        let mut stack = self.navigation_stack.write();
+    pub fn navigate_back(&self) {
+        let mut navigation_stack = self.navigation_stack;
+        let mut stack = navigation_stack.write();
         if stack.len() > 1 {
             stack.pop();
         }
     }
 
-    pub fn reset(&mut self) {
-        self.search_query.set(String::new());
-        self.search_results.set(Vec::new());
-        self.is_searching_masters.set(false);
-        self.is_loading_versions.set(false);
-        self.error_message.set(None);
-        self.navigation_stack.set(vec![ImportStep::SearchResults]);
+    pub fn reset(&self) {
+        let mut search_query = self.search_query;
+        let mut search_results = self.search_results;
+        let mut is_searching_masters = self.is_searching_masters;
+        let mut is_loading_versions = self.is_loading_versions;
+        let mut error_message = self.error_message;
+        let mut navigation_stack = self.navigation_stack;
+
+        search_query.set(String::new());
+        search_results.set(Vec::new());
+        is_searching_masters.set(false);
+        is_loading_versions.set(false);
+        error_message.set(None);
+        navigation_stack.set(vec![ImportStep::SearchResults]);
     }
 
-    pub async fn import_master(&mut self, master_id: String) -> Result<DiscogsAlbum, String> {
-        self.error_message.set(None);
+    pub async fn import_master(&self, master_id: String) -> Result<DiscogsAlbum, String> {
+        let mut error_message = self.error_message;
+        error_message.set(None);
 
         // Find the thumbnail from search results
         let search_thumb = self
@@ -148,18 +172,19 @@ impl ImportContext {
             }
             Err(e) => {
                 let error = format!("Failed to fetch master details: {}", e);
-                self.error_message.set(Some(error.clone()));
+                error_message.set(Some(error.clone()));
                 Err(error)
             }
         }
     }
 
     pub async fn import_release(
-        &mut self,
+        &self,
         release_id: String,
         master_id: String,
     ) -> Result<DiscogsAlbum, String> {
-        self.error_message.set(None);
+        let mut error_message = self.error_message;
+        error_message.set(None);
 
         match self.client.get_release(&release_id).await {
             Ok(mut release) => {
@@ -168,7 +193,7 @@ impl ImportContext {
             }
             Err(e) => {
                 let error = format!("Failed to fetch release details: {}", e);
-                self.error_message.set(Some(error.clone()));
+                error_message.set(Some(error.clone()));
                 Err(error)
             }
         }
@@ -181,7 +206,7 @@ pub fn AlbumImportContextProvider(children: Element) -> Element {
     let config = use_config();
     let album_import_ctx = ImportContext::new(&config);
 
-    use_context_provider(move || album_import_ctx);
+    use_context_provider(move || Rc::new(album_import_ctx));
 
     rsx! {
         {children}
