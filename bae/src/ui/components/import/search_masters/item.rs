@@ -6,7 +6,6 @@ use std::rc::Rc;
 #[derive(Props, PartialEq, Clone)]
 pub struct SearchMastersItemProps {
     pub result: DiscogsSearchResult,
-    pub on_import: EventHandler<String>,
 }
 
 #[component]
@@ -20,14 +19,10 @@ pub fn SearchMastersItem(props: SearchMastersItemProps) -> Element {
                 onclick: {
                     let ctx = album_import_ctx.clone();
                     let master_id = props.result.id.to_string();
-                    let master_title = props.result.title.clone();
                     move |_| {
                         let ctx = ctx.clone();
                         let master_id = master_id.clone();
-                        let master_title = master_title.clone();
-                        spawn(async move {
-                            ctx.navigate_to_releases(master_id, master_title).await;
-                        });
+                        ctx.navigate_to_import_workflow(master_id, None);
                     }
                 },
                 if let Some(thumb) = &props.result.thumb {
@@ -47,14 +42,10 @@ pub fn SearchMastersItem(props: SearchMastersItemProps) -> Element {
                 onclick: {
                     let ctx = album_import_ctx.clone();
                     let master_id = props.result.id.to_string();
-                    let master_title = props.result.title.clone();
                     move |_| {
                         let ctx = ctx.clone();
                         let master_id = master_id.clone();
-                        let master_title = master_title.clone();
-                        spawn(async move {
-                            ctx.navigate_to_releases(master_id, master_title).await;
-                        });
+                        ctx.navigate_to_import_workflow(master_id, None);
                     }
                 },
                 "{props.result.title}"
@@ -64,14 +55,10 @@ pub fn SearchMastersItem(props: SearchMastersItemProps) -> Element {
                 onclick: {
                     let ctx = album_import_ctx.clone();
                     let master_id = props.result.id.to_string();
-                    let master_title = props.result.title.clone();
                     move |_| {
                         let ctx = ctx.clone();
                         let master_id = master_id.clone();
-                        let master_title = master_title.clone();
-                        spawn(async move {
-                            ctx.navigate_to_releases(master_id, master_title).await;
-                        });
+                        ctx.navigate_to_import_workflow(master_id, None);
                     }
                 },
                 if let Some(year) = &props.result.year {
@@ -85,14 +72,10 @@ pub fn SearchMastersItem(props: SearchMastersItemProps) -> Element {
                 onclick: {
                     let ctx = album_import_ctx.clone();
                     let master_id = props.result.id.to_string();
-                    let master_title = props.result.title.clone();
                     move |_| {
                         let ctx = ctx.clone();
                         let master_id = master_id.clone();
-                        let master_title = master_title.clone();
-                        spawn(async move {
-                            ctx.navigate_to_releases(master_id, master_title).await;
-                        });
+                        ctx.navigate_to_import_workflow(master_id, None);
                     }
                 },
                 if let Some(labels) = &props.result.label {
@@ -106,16 +89,37 @@ pub fn SearchMastersItem(props: SearchMastersItemProps) -> Element {
                 }
             }
             td { class: "px-4 py-3 text-sm",
-                button {
-                    class: "text-green-600 hover:text-green-800 underline whitespace-nowrap",
-                    onclick: {
-                        let master_id = props.result.id.to_string();
-                        let on_import = props.on_import;
-                        move |_| {
-                            on_import.call(master_id.clone());
-                        }
-                    },
-                    "Add Album"
+                div { class: "flex gap-2",
+                    button {
+                        class: "text-green-600 hover:text-green-800 underline whitespace-nowrap",
+                        onclick: {
+                            let ctx = album_import_ctx.clone();
+                            let master_id = props.result.id.to_string();
+                            move |_| {
+                                let ctx = ctx.clone();
+                                let master_id = master_id.clone();
+                                ctx.navigate_to_import_workflow(master_id, None);
+                            }
+                        },
+                        "Import album"
+                    }
+                    button {
+                        class: "text-green-600 hover:text-green-800 underline whitespace-nowrap",
+                        onclick: {
+                            let ctx = album_import_ctx.clone();
+                            let master_id = props.result.id.to_string();
+                            let master_title = props.result.title.clone();
+                            move |_| {
+                                let ctx = ctx.clone();
+                                let master_id = master_id.clone();
+                                let master_title = master_title.clone();
+                                spawn(async move {
+                                    ctx.navigate_to_releases(master_id, master_title).await;
+                                });
+                            }
+                        },
+                        "View releases"
+                    }
                 }
             }
         }

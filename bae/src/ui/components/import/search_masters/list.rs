@@ -3,13 +3,8 @@ use crate::ui::import_context::ImportContext;
 use dioxus::prelude::*;
 use std::rc::Rc;
 
-#[derive(Props, Clone, PartialEq)]
-pub struct SearchMastersListProps {
-    pub on_import: EventHandler<String>,
-}
-
 #[component]
-pub fn SearchMastersList(props: SearchMastersListProps) -> Element {
+pub fn SearchMastersList() -> Element {
     let album_import_ctx = use_context::<Rc<ImportContext>>();
 
     if album_import_ctx.search_results.read().is_empty() {
@@ -45,7 +40,6 @@ pub fn SearchMastersList(props: SearchMastersListProps) -> Element {
                         SearchMastersItem {
                             key: "{result.id}",
                             result: result.clone(),
-                            on_import: props.on_import,
                         }
                     }
                 }

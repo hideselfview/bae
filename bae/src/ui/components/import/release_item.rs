@@ -116,7 +116,7 @@ pub fn ReleaseItem(props: ReleaseItemProps) -> Element {
                     onclick: move |_| {
                         props.on_import.call(props.result.clone());
                     },
-                    "Add Release"
+                    "Import release"
                 }
             }
         }
