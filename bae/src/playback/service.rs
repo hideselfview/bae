@@ -721,24 +721,26 @@ impl PlaybackService {
 
         let decoder_duration = decoder.duration();
 
-        // Clamp seek position to track duration (don't seek past the end)
-        let clamped_position = if let Some(duration) = decoder_duration {
-            position.min(duration)
-        } else {
-            position
-        };
-
-        if clamped_position != position {
-            info!(
-                "Seek position {} clamped to track duration {}",
-                position.as_secs_f64(),
-                clamped_position.as_secs_f64()
-            );
+        // Check if seeking past the end - return error instead of clamping
+        if let Some(duration) = decoder_duration {
+            if position > duration {
+                error!(
+                    "Cannot seek past end of track: requested {}, track duration {}",
+                    position.as_secs_f64(),
+                    duration.as_secs_f64()
+                );
+                // Send error notification through progress channel
+                let _ = self.progress_tx.send(PlaybackProgress::SeekError {
+                    requested_position: position,
+                    track_duration: duration,
+                });
+                return;
+            }
         }
 
-        // Seek decoder to desired position (clamped if needed)
+        // Seek decoder to desired position
         let mut decoder = decoder;
-        if let Err(e) = decoder.seek(clamped_position) {
+        if let Err(e) = decoder.seek(position) {
             error!("Failed to seek decoder: {:?}", e);
             self.stop().await;
             return;
@@ -856,8 +858,8 @@ impl PlaybackService {
 
         self.stream = Some(stream);
 
-        // Update shared position (use clamped position)
-        *self.current_position_shared.lock().unwrap() = Some(clamped_position);
+        // Update shared position
+        *self.current_position_shared.lock().unwrap() = Some(position);
         self.current_duration = decoder_duration;
 
         // If we were paused, keep it paused; otherwise play
@@ -875,13 +877,13 @@ impl PlaybackService {
             let state = if was_paused {
                 PlaybackState::Paused {
                     track: track.clone(),
-                    position: clamped_position,
+                    position,
                     duration: decoder_duration,
                 }
             } else {
                 PlaybackState::Playing {
                     track: track.clone(),
-                    position: clamped_position,
+                    position,
                     duration: decoder_duration,
                 }
             };

@@ -59,6 +59,7 @@ impl EncryptionService {
 
     /// Create an encryption service with a raw key (for testing)
     #[cfg(feature = "test-utils")]
+    #[allow(unused)] // Used in tests
     pub fn new_with_key(key_bytes: Vec<u8>) -> Self {
         if key_bytes.len() != 32 {
             panic!("Invalid key length, expected 32 bytes");

@@ -17,4 +17,8 @@ pub enum PlaybackProgress {
     TrackCompleted {
         track_id: String,
     },
+    SeekError {
+        requested_position: Duration,
+        track_duration: Duration,
+    },
 }
