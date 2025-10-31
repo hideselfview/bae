@@ -20,28 +20,19 @@ pub fn ReleaseItem(props: ReleaseItemProps) -> Element {
                         on_import.call(result.clone());
                     }
                 },
-                if let Some(thumb) = &props.result.thumb {
-                    img {
-                        class: "w-10 h-10 object-cover rounded",
-                        src: "{thumb}",
-                        alt: "Album cover",
-                    }
-                } else {
-                    div { class: "w-12 h-12 bg-gray-200 rounded flex items-center justify-center",
-                        "No Image"
+                div { class: "w-20 h-20 aspect-square rounded overflow-hidden",
+                    if let Some(thumb) = &props.result.thumb {
+                        img {
+                            class: "w-full h-full object-cover",
+                            src: "{thumb}",
+                            alt: "Album cover",
+                        }
+                    } else {
+                        div { class: "w-full h-full bg-gray-200 flex items-center justify-center",
+                            "No Image"
+                        }
                     }
                 }
-            }
-            td {
-                class: "px-4 py-3 text-sm font-medium text-gray-900 cursor-pointer",
-                onclick: {
-                    let on_import = props.on_import;
-                    let result = props.result.clone();
-                    move |_| {
-                        on_import.call(result.clone());
-                    }
-                },
-                "{props.result.title}"
             }
             td {
                 class: "px-4 py-3 text-sm text-gray-500 cursor-pointer",
@@ -67,7 +58,9 @@ pub fn ReleaseItem(props: ReleaseItemProps) -> Element {
                         on_import.call(result.clone());
                     }
                 },
-                "{props.result.catno}"
+                for catno in props.result.catno.split(',').map(|s| s.trim()) {
+                    div { "{catno}" }
+                }
             }
             td {
                 class: "px-4 py-3 text-sm text-gray-500 cursor-pointer",

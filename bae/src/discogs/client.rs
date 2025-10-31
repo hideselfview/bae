@@ -57,12 +57,13 @@ struct MasterVersionsResponse {
 struct VersionResponse {
     id: u64,
     title: String,
-    format: String,
     label: String,
     catno: String,
     country: String,
     released: Option<String>,
     thumb: Option<String>,
+    #[serde(default)]
+    major_formats: Vec<String>,
 }
 
 /// Artist credit in Discogs API responses
@@ -293,7 +294,7 @@ impl DiscogsClient {
                 .map(|v| DiscogsMasterReleaseVersion {
                     id: v.id,
                     title: v.title,
-                    format: v.format,
+                    format: v.major_formats.first().cloned().unwrap_or_default(),
                     label: v.label,
                     catno: v.catno,
                     country: v.country,

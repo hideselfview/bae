@@ -108,9 +108,6 @@ pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandle
                                             "Cover"
                                         }
                                         th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
-                                            "Title"
-                                        }
-                                        th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
                                             "Label"
                                         }
                                         th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
