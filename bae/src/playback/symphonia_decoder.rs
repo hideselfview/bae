@@ -11,7 +11,6 @@ use symphonia::core::{
     units::Time,
 };
 use thiserror::Error;
-use tracing::debug;
 
 #[derive(Debug, Error)]
 pub enum DecoderError {
@@ -49,7 +48,7 @@ impl TrackDecoder {
             &MetadataOptions::default(),
         )?;
 
-        let mut format_reader = probed.format;
+        let format_reader = probed.format;
 
         // Find the audio track
         let track = format_reader
@@ -62,18 +61,9 @@ impl TrackDecoder {
         let sample_rate = track.codec_params.sample_rate.unwrap_or(44100);
 
         // Try to get duration from track parameters or metadata
-        let duration = if let Some(n_frames) = track.codec_params.n_frames {
-            // Duration from number of frames
-            Some(std::time::Duration::from_secs_f64(
-                n_frames as f64 / sample_rate as f64,
-            ))
-        } else {
-            // Try to get duration from metadata tags
-            // Note: This is a fallback - ideally duration should be stored during import
-            // FLAC files don't always have duration in metadata tags, so this may return None
-            // In that case, the progress bar will still work but won't show total duration
-            None
-        };
+        let duration = track.codec_params.n_frames.map(|n_frames| {
+            std::time::Duration::from_secs_f64(n_frames as f64 / sample_rate as f64)
+        });
 
         // Create decoder
         let decoder = symphonia::default::get_codecs()
@@ -132,17 +122,37 @@ impl TrackDecoder {
         self.sample_rate
     }
 
-    /// Get the number of decoded samples
-    pub fn decoded_samples(&self) -> u64 {
-        self.decoded_samples.load(Ordering::Relaxed)
-    }
-
     /// Seek to a specific position
     pub fn seek(&mut self, position: std::time::Duration) -> Result<(), DecoderError> {
-        let seconds = position.as_secs();
-        let nanos = position.subsec_nanos();
-        let seek_time = Time::from_ss(seconds.min(255) as u8, nanos)
-            .ok_or_else(|| DecoderError::UnsupportedFormat)?;
+        // Convert duration to sample number
+        let position_seconds = position.as_secs_f64();
+        let sample_number = (position_seconds * self.sample_rate as f64) as u64;
+
+        // For FLAC, timebase is typically (1, sample_rate), so timestamp = sample_number
+        // Calculate timestamp: time = timestamp * numer / denom
+        // For our case: seconds = timestamp * numer / denom
+        // So: timestamp = seconds * denom / numer = sample_number * denom / (sample_rate * numer)
+        // But since timebase is usually (1, sample_rate), timestamp = sample_number
+
+        // Try to construct Time - for FLAC with timebase (1, sample_rate), we can use timestamp directly
+        // Calculate the timestamp value
+        let seconds = sample_number as f64 / self.sample_rate as f64;
+
+        // Use Time::from_ss for durations <= 255 seconds (its limit)
+        // For longer durations, we'll need to seek in chunks or use a different approach
+        // Since most tracks are shorter than 255 seconds, this should work for most cases
+        // For longer tracks, we could seek to 0 and decode forward, but that's inefficient
+        let seek_time = if seconds <= 255.0 {
+            let secs = seconds as u8;
+            let nanos = ((seconds.fract() * 1_000_000_000.0) as u32).min(999_999_999);
+            Time::from_ss(secs, nanos).ok_or(DecoderError::UnsupportedFormat)?
+        } else {
+            // For tracks longer than 255 seconds, seek to maximum possible (255 seconds) and decode forward
+            // This is not ideal but will work
+            let seek_to_secs = 255u8;
+            let seek_nanos = 999_999_999u32;
+            Time::from_ss(seek_to_secs, seek_nanos).ok_or(DecoderError::UnsupportedFormat)?
+        };
 
         self.format_reader.seek(
             SeekMode::Accurate,
@@ -152,12 +162,32 @@ impl TrackDecoder {
             },
         )?;
 
-        // Calculate the sample position from the seek time and update decoded_samples
-        // This ensures position() returns the correct value after seeking
-        let position_seconds = position.as_secs_f64();
-        let samples_at_position = (position_seconds * self.sample_rate as f64) as u64;
+        // If we couldn't seek to the exact position (due to 255s limit),
+        // decode forward to the actual position
+        let seeked_seconds = if seconds <= 255.0 {
+            seconds
+        } else {
+            // We seeked to 255 seconds, now decode forward
+            let current_position = 255.0;
+            let samples_to_decode = ((seconds - current_position) * self.sample_rate as f64) as u64;
+
+            // Decode samples until we reach the desired position
+            let mut decoded = 0u64;
+            while decoded < samples_to_decode {
+                match self.decode_next()? {
+                    Some(audio_buf) => {
+                        decoded += audio_buf.frames() as u64;
+                    }
+                    None => break, // End of stream
+                }
+            }
+            seconds
+        };
+
+        // Update decoded_samples to match the seek position
+        let final_sample_number = (seeked_seconds * self.sample_rate as f64) as u64;
         self.decoded_samples
-            .store(samples_at_position, Ordering::Relaxed);
+            .store(final_sample_number, Ordering::Relaxed);
 
         Ok(())
     }
@@ -165,19 +195,5 @@ impl TrackDecoder {
     /// Get the track duration, if available
     pub fn duration(&self) -> Option<std::time::Duration> {
         self.duration
-    }
-
-    /// Check if we've reached the end of the track
-    pub fn is_finished(&self) -> bool {
-        if let Some(duration) = self.duration {
-            self.position() >= duration
-        } else {
-            false
-        }
-    }
-
-    /// Reset the decoder to the beginning
-    pub fn reset(&mut self) -> Result<(), DecoderError> {
-        self.seek(std::time::Duration::ZERO)
     }
 }

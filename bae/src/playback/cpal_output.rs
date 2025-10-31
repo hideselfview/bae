@@ -1,5 +1,5 @@
 use crate::playback::symphonia_decoder::{DecoderError, TrackDecoder};
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, HostTrait};
 use cpal::{Device, Stream, StreamConfig};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc;
@@ -92,7 +92,7 @@ impl AudioOutput {
 
         // Create a new command channel for this stream
         // This allows us to create multiple streams without reusing the same receiver
-        let (command_tx_for_stream, mut command_rx) = mpsc::channel();
+        let (command_tx_for_stream, command_rx) = mpsc::channel();
 
         // Update our command_tx to point to the new sender
         self.command_tx = command_tx_for_stream;
@@ -244,9 +244,8 @@ impl AudioOutput {
                                                 converted.push(sample_buffer[base_idx + 1]);
                                             } else {
                                                 // Fallback: fill with zeros
-                                                for _ in 0..channels {
-                                                    converted.push(0.0);
-                                                }
+                                                converted
+                                                    .extend(std::iter::repeat_n(0.0, channels));
                                             }
                                         }
                                         sample_buffer = converted;
@@ -294,14 +293,6 @@ impl AudioOutput {
 
     pub fn send_command(&self, cmd: AudioCommand) {
         let _ = self.command_tx.send(cmd);
-    }
-
-    pub fn is_playing(&self) -> bool {
-        self.is_playing.load(Ordering::SeqCst)
-    }
-
-    pub fn is_paused(&self) -> bool {
-        self.is_paused.load(Ordering::SeqCst)
     }
 
     pub fn set_volume(&self, volume: f32) {

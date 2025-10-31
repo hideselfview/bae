@@ -373,6 +373,7 @@ mod tests {
     use crate::cloud_storage::CloudStorageManager;
     use crate::db::{Database, DbChunk, DbFile, DbFileChunk, DbTrackPosition};
     use crate::encryption::EncryptionService;
+    #[cfg(feature = "test-utils")]
     use crate::test_support::MockCloudStorage;
     use std::sync::Arc;
     use tempfile::TempDir;
