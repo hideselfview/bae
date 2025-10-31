@@ -1,5 +1,6 @@
 use crate::db::{DbArtist, DbTrack};
 use crate::library::use_library_manager;
+use crate::playback::{PlaybackProgress, PlaybackState};
 use dioxus::prelude::*;
 
 use super::super::import_hooks::TrackImportState;
@@ -15,6 +16,49 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
     let mut track_artists = use_signal(Vec::<DbArtist>::new);
     let track_progress = use_track_progress(track.id.clone(), track.import_status);
     // let track_progress = use_signal(|| TrackImportState::Importing { percent: 12 });
+
+    // Track playback state for this track
+    let mut is_currently_playing = use_signal(|| false);
+    let mut is_currently_paused = use_signal(|| false);
+
+    // Subscribe to playback progress to track if this track is playing
+    use_effect({
+        let track_id = track.id.clone();
+        let playback = playback.clone();
+        move || {
+            let mut progress_rx = playback.subscribe_progress();
+            let track_id = track_id.clone();
+            let mut is_currently_playing = is_currently_playing;
+            let mut is_currently_paused = is_currently_paused;
+            spawn(async move {
+                while let Some(progress) = progress_rx.recv().await {
+                    match progress {
+                        PlaybackProgress::StateChanged { state } => match state {
+                            PlaybackState::Playing {
+                                track: playing_track,
+                                ..
+                            } => {
+                                is_currently_playing.set(playing_track.id == track_id);
+                                is_currently_paused.set(false);
+                            }
+                            PlaybackState::Paused {
+                                track: paused_track,
+                                ..
+                            } => {
+                                is_currently_playing.set(false);
+                                is_currently_paused.set(paused_track.id == track_id);
+                            }
+                            _ => {
+                                is_currently_playing.set(false);
+                                is_currently_paused.set(false);
+                            }
+                        },
+                        _ => {}
+                    }
+                }
+            });
+        }
+    });
 
     // Load artists for this track (for compilations/features)
     use_effect({
@@ -67,14 +111,32 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
             // Content (with relative positioning to stay above progress bar)
             div { class: "relative flex items-center w-full",
 
-                // Play button (only show when complete)
+                // Play/Pause button (only show when complete)
                 if is_complete {
-                    button {
-                        class: "w-6 opacity-0 group-hover:opacity-100 transition-opacity text-blue-400 hover:text-blue-300",
-                        onclick: move |_| {
-                            playback.play(track.id.clone());
-                        },
-                        "▶"
+                    if is_currently_playing() {
+                        button {
+                            class: "w-6 text-blue-400 hover:text-blue-300",
+                            onclick: move |_| {
+                                playback.pause();
+                            },
+                            "⏸"
+                        }
+                    } else if is_currently_paused() {
+                        button {
+                            class: "w-6 text-blue-400 hover:text-blue-300",
+                            onclick: move |_| {
+                                playback.resume();
+                            },
+                            "▶"
+                        }
+                    } else {
+                        button {
+                            class: "w-6 opacity-0 group-hover:opacity-100 transition-opacity text-blue-400 hover:text-blue-300",
+                            onclick: move |_| {
+                                playback.play(track.id.clone());
+                            },
+                            "▶"
+                        }
                     }
                 } else {
                     div { class: "w-6" }

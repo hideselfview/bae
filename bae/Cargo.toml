@@ -36,12 +36,12 @@ tower-http = { version = "0.5", features = ["cors", "fs"] }
 hyper = { version = "1.0", features = ["full"] }
 nom = "7.1"              # Parser combinator for CUE format
 symphonia = { version = "0.5", features = ["flac"] }  # Audio processing for precise seeking
+cpal = "0.15"           # Cross-platform audio I/O
 dotenvy = "0.15"        # .env file loading for dev mode
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }  # Logging configuration
 futures = "0.3.31"
 tokio-stream = "0.1.17"
-rodio = "0.21"
 
 [dev-dependencies]
 tempfile = "3.8"
