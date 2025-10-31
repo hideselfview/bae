@@ -67,22 +67,51 @@ fn TrackInfoZone(
     }
 }
 
+fn format_duration(duration: std::time::Duration) -> String {
+    let total_secs = duration.as_secs();
+    let mins = total_secs / 60;
+    let secs = total_secs % 60;
+    format!("{:02}:{:02}", mins, secs)
+}
+
 #[component]
 fn PositionZone(
     position: ReadOnlySignal<Option<std::time::Duration>>,
+    duration: ReadOnlySignal<Option<std::time::Duration>>,
     is_paused: ReadOnlySignal<bool>,
+    on_seek: EventHandler<std::time::Duration>,
 ) -> Element {
     rsx! {
         if let Some(position) = position() {
-            div { class: "text-sm text-gray-400",
-                if is_paused() {
-                    "⏸ {position.as_secs()}s"
+            div { class: "flex items-center gap-2 text-sm text-gray-400",
+                span { class: "w-12 text-right", "{format_duration(position)}" }
+                if let Some(duration) = duration() {
+                    input {
+                        r#type: "range",
+                        class: "w-64 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer",
+                        style: "background: linear-gradient(to right, #3b82f6 0%, #3b82f6 {(position.as_secs_f64() / duration.as_secs_f64().max(1.0) * 100.0)}%, #374151 {(position.as_secs_f64() / duration.as_secs_f64().max(1.0) * 100.0)}%, #374151 100%);",
+                        min: "0",
+                        max: "{duration.as_secs()}",
+                        value: "{position.as_secs()}",
+                        onchange: move |evt| {
+                            if let Ok(secs) = evt.value().parse::<u64>() {
+                                on_seek.call(std::time::Duration::from_secs(secs));
+                            }
+                        },
+                    }
+                    span { class: "w-12", "{format_duration(duration)}" }
                 } else {
-                    "{position.as_secs()}s"
+                    div { class: "w-64 h-2 bg-gray-700 rounded-lg",
+                        div {
+                            class: "h-full bg-blue-600 rounded-lg",
+                            style: "width: 50%;",
+                        }
+                    }
+                    span { class: "w-12", "--:--" }
                 }
             }
         } else {
-            div { class: "w-16" }
+            div { class: "w-72" }
         }
     }
 }
@@ -126,16 +155,28 @@ pub fn NowPlayingBar() -> Element {
                             }
                         }
                         PlaybackProgress::PositionUpdate { position, .. } => {
-                            // Update position in state
-                            if let PlaybackState::Playing { ref track, .. } = state() {
+                            // Update position in state, preserving duration
+                            if let PlaybackState::Playing {
+                                ref track,
+                                duration,
+                                ..
+                            } = state()
+                            {
                                 state.set(PlaybackState::Playing {
                                     track: track.clone(),
                                     position,
+                                    duration: duration.clone(),
                                 });
-                            } else if let PlaybackState::Paused { ref track, .. } = state() {
+                            } else if let PlaybackState::Paused {
+                                ref track,
+                                duration,
+                                ..
+                            } = state()
+                            {
                                 state.set(PlaybackState::Paused {
                                     track: track.clone(),
                                     position,
+                                    duration: duration.clone(),
                                 });
                             }
                         }
@@ -161,6 +202,12 @@ pub fn NowPlayingBar() -> Element {
         }
         _ => None,
     });
+    let duration = use_memo(move || match state() {
+        PlaybackState::Playing { duration, .. } | PlaybackState::Paused { duration, .. } => {
+            duration.clone()
+        }
+        _ => None,
+    });
     let is_playing = use_memo(move || matches!(state(), PlaybackState::Playing { .. }));
     let is_paused = use_memo(move || matches!(state(), PlaybackState::Paused { .. }));
     let loading_track_id = use_memo(move || match state() {
@@ -174,6 +221,7 @@ pub fn NowPlayingBar() -> Element {
     let playback_pause = playback.clone();
     let playback_resume = playback.clone();
     let playback_next = playback.clone();
+    let playback_seek = playback.clone();
 
     rsx! {
         div { class: "fixed bottom-0 left-0 right-0 bg-gray-800 text-white p-4 border-t border-gray-700",
@@ -193,7 +241,9 @@ pub fn NowPlayingBar() -> Element {
                 }
                 PositionZone {
                     position,
+                    duration,
                     is_paused,
+                    on_seek: move |duration| playback_seek.seek(duration),
                 }
             }
         }

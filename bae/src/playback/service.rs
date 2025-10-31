@@ -3,12 +3,13 @@ use crate::cloud_storage::CloudStorageManager;
 use crate::db::DbTrack;
 use crate::encryption::EncryptionService;
 use crate::library::LibraryManager;
-use rodio::{OutputStream, OutputStreamBuilder, Sink};
+use crate::playback::cpal_output::AudioOutput;
+use crate::playback::progress::{PlaybackProgress, PlaybackProgressHandle};
+use crate::playback::symphonia_decoder::TrackDecoder;
+use cpal::traits::StreamTrait;
 use std::collections::VecDeque;
-use std::io::{BufReader, Cursor};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use std::sync::{mpsc, Arc};
+use tokio::sync::mpsc as tokio_mpsc;
 use tracing::{error, info};
 
 /// Playback commands sent to the service
@@ -32,10 +33,12 @@ pub enum PlaybackState {
     Playing {
         track: DbTrack,
         position: std::time::Duration,
+        duration: Option<std::time::Duration>,
     },
     Paused {
         track: DbTrack,
         position: std::time::Duration,
+        duration: Option<std::time::Duration>,
     },
     Loading {
         track_id: String,
@@ -45,9 +48,8 @@ pub enum PlaybackState {
 /// Handle to the playback service for sending commands
 #[derive(Clone)]
 pub struct PlaybackHandle {
-    command_tx: mpsc::UnboundedSender<PlaybackCommand>,
-    state: Arc<Mutex<PlaybackState>>,
-    is_playing: Arc<AtomicBool>,
+    command_tx: tokio_mpsc::UnboundedSender<PlaybackCommand>,
+    progress_handle: PlaybackProgressHandle,
 }
 
 impl PlaybackHandle {
@@ -88,11 +90,12 @@ impl PlaybackHandle {
     }
 
     pub async fn get_state(&self) -> PlaybackState {
-        self.state.lock().await.clone()
+        // Deprecated - use subscribe_progress instead
+        PlaybackState::Stopped
     }
 
-    pub fn is_playing(&self) -> bool {
-        self.is_playing.load(Ordering::SeqCst)
+    pub fn subscribe_progress(&self) -> tokio_mpsc::UnboundedReceiver<PlaybackProgress> {
+        self.progress_handle.subscribe_all()
     }
 }
 
@@ -103,15 +106,14 @@ pub struct PlaybackService {
     cache: CacheManager,
     encryption_service: EncryptionService,
     chunk_size_bytes: usize,
-    command_rx: mpsc::UnboundedReceiver<PlaybackCommand>,
+    command_rx: tokio_mpsc::UnboundedReceiver<PlaybackCommand>,
+    progress_tx: tokio_mpsc::UnboundedSender<PlaybackProgress>,
     queue: VecDeque<String>, // track IDs
     current_track: Option<DbTrack>,
-    state: Arc<Mutex<PlaybackState>>,
-    is_playing: Arc<AtomicBool>,
-
-    // Rodio audio components
-    _stream: OutputStream,
-    sink: Option<Sink>,
+    current_audio_data: Option<Vec<u8>>, // Cached audio data for seeking
+    audio_output: AudioOutput,
+    stream: Option<cpal::Stream>,
+    next_decoder: Option<TrackDecoder>, // Preloaded for gapless playback
 }
 
 impl PlaybackService {
@@ -121,27 +123,44 @@ impl PlaybackService {
         cache: CacheManager,
         encryption_service: EncryptionService,
         chunk_size_bytes: usize,
-        _runtime_handle: tokio::runtime::Handle,
+        runtime_handle: tokio::runtime::Handle,
     ) -> PlaybackHandle {
-        let (command_tx, command_rx) = mpsc::unbounded_channel();
-        let state = Arc::new(Mutex::new(PlaybackState::Stopped));
-        let is_playing = Arc::new(AtomicBool::new(false));
+        let (command_tx, command_rx) = tokio_mpsc::unbounded_channel();
+        let (progress_tx, progress_rx) = tokio_mpsc::unbounded_channel();
+
+        let progress_handle = PlaybackProgressHandle::new(progress_rx, runtime_handle.clone());
 
         let handle = PlaybackHandle {
             command_tx: command_tx.clone(),
-            state: state.clone(),
-            is_playing: is_playing.clone(),
+            progress_handle: progress_handle.clone(),
         };
 
-        // Spawn the service task on a dedicated thread (OutputStream isn't Send-safe)
+        // Spawn task to listen for track completion and auto-advance
+        let command_tx_for_completion = command_tx.clone();
+        let progress_handle_for_completion = progress_handle.clone();
+        runtime_handle.spawn(async move {
+            let mut progress_rx = progress_handle_for_completion.subscribe_all();
+            while let Some(progress) = progress_rx.recv().await {
+                if let PlaybackProgress::TrackCompleted { .. } = progress {
+                    // Auto-advance to next track
+                    let _ = command_tx_for_completion.send(PlaybackCommand::Next);
+                }
+            }
+        });
+
+        // Spawn the service task on a dedicated thread (CPAL Stream isn't Send-safe)
         std::thread::spawn(move || {
             // Create a new tokio runtime for this thread
             let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
 
             rt.block_on(async move {
-                // Initialize rodio output stream in the task
-                let stream = OutputStreamBuilder::open_default_stream()
-                    .expect("Failed to initialize audio output");
+                let audio_output = match AudioOutput::new() {
+                    Ok(output) => output,
+                    Err(e) => {
+                        error!("Failed to initialize audio output: {:?}", e);
+                        return;
+                    }
+                };
 
                 let mut service = PlaybackService {
                     library_manager,
@@ -150,12 +169,13 @@ impl PlaybackService {
                     encryption_service,
                     chunk_size_bytes,
                     command_rx,
+                    progress_tx,
                     queue: VecDeque::new(),
                     current_track: None,
-                    state,
-                    is_playing,
-                    _stream: stream,
-                    sink: None,
+                    current_audio_data: None,
+                    audio_output,
+                    stream: None,
+                    next_decoder: None,
                 };
 
                 service.run().await;
@@ -184,41 +204,19 @@ impl PlaybackService {
                     }
                 }
                 PlaybackCommand::Pause => {
-                    if let Some(sink) = &self.sink {
-                        sink.pause();
-                        self.is_playing.store(false, Ordering::SeqCst);
-
-                        if let Some(track) = &self.current_track {
-                            let position = self.get_current_position();
-                            *self.state.lock().await = PlaybackState::Paused {
-                                track: track.clone(),
-                                position,
-                            };
-                        }
-                    }
+                    self.pause().await;
                 }
                 PlaybackCommand::Resume => {
-                    if let Some(sink) = &self.sink {
-                        sink.play();
-                        self.is_playing.store(true, Ordering::SeqCst);
-
-                        if let Some(track) = &self.current_track {
-                            let position = self.get_current_position();
-                            *self.state.lock().await = PlaybackState::Playing {
-                                track: track.clone(),
-                                position,
-                            };
-                        }
-                    }
+                    self.resume().await;
                 }
                 PlaybackCommand::Stop => {
-                    self.stop();
+                    self.stop().await;
                 }
                 PlaybackCommand::Next => {
                     if let Some(next_track) = self.queue.pop_front() {
                         self.play_track(&next_track).await;
                     } else {
-                        self.stop();
+                        self.stop().await;
                     }
                 }
                 PlaybackCommand::Previous => {
@@ -229,14 +227,10 @@ impl PlaybackService {
                     }
                 }
                 PlaybackCommand::Seek(position) => {
-                    if let Some(sink) = &self.sink {
-                        let _ = sink.try_seek(position);
-                    }
+                    self.seek(position).await;
                 }
                 PlaybackCommand::SetVolume(volume) => {
-                    if let Some(sink) = &self.sink {
-                        sink.set_volume(volume.clamp(0.0, 1.0));
-                    }
+                    self.audio_output.set_volume(volume);
                 }
             }
         }
@@ -248,21 +242,23 @@ impl PlaybackService {
         info!("Playing track: {}", track_id);
 
         // Update state to loading
-        *self.state.lock().await = PlaybackState::Loading {
-            track_id: track_id.to_string(),
-        };
+        let _ = self.progress_tx.send(PlaybackProgress::StateChanged {
+            state: PlaybackState::Loading {
+                track_id: track_id.to_string(),
+            },
+        });
 
         // Fetch track metadata
         let track = match self.library_manager.get_track(track_id).await {
             Ok(Some(track)) => track,
             Ok(None) => {
                 error!("Track not found: {}", track_id);
-                self.stop();
+                self.stop().await;
                 return;
             }
             Err(e) => {
                 error!("Failed to fetch track: {}", e);
-                self.stop();
+                self.stop().await;
                 return;
             }
         };
@@ -281,7 +277,7 @@ impl PlaybackService {
             Ok(data) => data,
             Err(e) => {
                 error!("Failed to reassemble track: {}", e);
-                self.stop();
+                self.stop().await;
                 return;
             }
         };
@@ -291,7 +287,7 @@ impl PlaybackService {
         // Validate FLAC header
         if audio_data.len() < 4 {
             error!("Audio data too small: {} bytes", audio_data.len());
-            self.stop();
+            self.stop().await;
             return;
         }
 
@@ -300,61 +296,309 @@ impl PlaybackService {
                 "Invalid FLAC header: expected 'fLaC', got {:?}",
                 &audio_data[0..4.min(audio_data.len())]
             );
-            error!(
-                "First 16 bytes: {:?}",
-                &audio_data[0..16.min(audio_data.len())]
-            );
-            self.stop();
+            self.stop().await;
             return;
         }
 
         info!("Valid FLAC header detected");
 
-        // Create audio source from buffer with buffered reading
-        let cursor = Cursor::new(audio_data);
-        let buf_reader = BufReader::new(cursor);
-        let source = match rodio::Decoder::new(buf_reader) {
+        // Create decoder
+        let decoder = match TrackDecoder::new(audio_data.clone()) {
             Ok(decoder) => decoder,
             Err(e) => {
-                error!("Failed to decode audio: {}", e);
-                self.stop();
+                error!("Failed to create decoder: {:?}", e);
+                self.stop().await;
                 return;
             }
         };
 
-        // Create a new sink connected to the existing output stream
-        let sink = rodio::Sink::connect_new(self._stream.mixer());
-        sink.append(source);
-        sink.play();
+        info!("Decoder created, sample rate: {} Hz", decoder.sample_rate());
+        let track_duration = decoder.duration();
+        if let Some(dur) = track_duration {
+            info!("Track duration: {:?}", dur);
+        } else {
+            info!("Track duration not available");
+        }
 
-        self.sink = Some(sink);
-        self.current_track = Some(track.clone());
-        self.is_playing.store(true, Ordering::SeqCst);
+        // Cache audio data for seeking
+        self.current_audio_data = Some(audio_data);
 
-        *self.state.lock().await = PlaybackState::Playing {
-            track,
-            position: std::time::Duration::ZERO,
+        // Stop current stream if playing
+        if let Some(stream) = self.stream.take() {
+            drop(stream);
+        }
+
+        // Create channels for position updates and completion
+        let (position_tx, position_rx) = mpsc::channel();
+        let (completion_tx, completion_rx) = mpsc::channel();
+
+        // Create audio stream
+        let stream = match self
+            .audio_output
+            .create_stream(decoder, position_tx, completion_tx)
+        {
+            Ok(stream) => {
+                info!("Audio stream created successfully");
+                stream
+            }
+            Err(e) => {
+                error!("Failed to create audio stream: {:?}", e);
+                self.stop().await;
+                return;
+            }
         };
 
-        // TODO: Auto-advance to next track when current track finishes
-        // Need to find a way to monitor sink completion without cloning
+        // Start playback
+        if let Err(e) = stream.play() {
+            error!("Failed to start stream: {:?}", e);
+            self.stop().await;
+            return;
+        }
+
+        info!("Stream started, sending Play command");
+
+        // Send Play command to start audio
+        self.audio_output
+            .send_command(crate::playback::cpal_output::AudioCommand::Play);
+
+        self.stream = Some(stream);
+        self.current_track = Some(track.clone());
+
+        // Update state
+        let _ = self.progress_tx.send(PlaybackProgress::StateChanged {
+            state: PlaybackState::Playing {
+                track: track.clone(),
+                position: std::time::Duration::ZERO,
+                duration: track_duration,
+            },
+        });
+
+        // Spawn task to handle position updates and completion
+        let progress_tx = self.progress_tx.clone();
+        let track_id = track_id.to_string();
+        tokio::spawn(async move {
+            // Use std::sync::Mutex for blocking recv
+            let position_rx = Arc::new(std::sync::Mutex::new(position_rx));
+            let completion_rx = Arc::new(std::sync::Mutex::new(completion_rx));
+
+            loop {
+                tokio::select! {
+                    result = tokio::task::spawn_blocking({
+                        let rx = position_rx.clone();
+                        move || rx.lock().unwrap().recv()
+                    }) => {
+                        match result {
+                            Ok(Ok(position)) => {
+                                let _ = progress_tx.send(PlaybackProgress::PositionUpdate {
+                                    position,
+                                    track_id: track_id.clone(),
+                                });
+                            }
+                            Ok(Err(_)) | Err(_) => break,
+                        }
+                    }
+                    result = tokio::task::spawn_blocking({
+                        let rx = completion_rx.clone();
+                        move || rx.lock().unwrap().recv()
+                    }) => {
+                        match result {
+                            Ok(Ok(())) => {
+                                let _ = progress_tx.send(PlaybackProgress::TrackCompleted {
+                                    track_id: track_id.clone(),
+                                });
+                                break;
+                            }
+                            Ok(Err(_)) | Err(_) => break,
+                        }
+                    }
+                }
+            }
+        });
+
+        // Preload next track for gapless playback
+        if let Some(next_track_id) = self.queue.front().cloned() {
+            self.preload_next_track(&next_track_id).await;
+        }
     }
 
-    fn stop(&mut self) {
-        if let Some(sink) = self.sink.take() {
-            sink.stop();
+    async fn preload_next_track(&mut self, track_id: &str) {
+        // Reassemble track chunks
+        let audio_data = match super::reassembly::reassemble_track(
+            track_id,
+            &self.library_manager,
+            &self.cloud_storage,
+            &self.cache,
+            &self.encryption_service,
+            self.chunk_size_bytes,
+        )
+        .await
+        {
+            Ok(data) => data,
+            Err(e) => {
+                error!("Failed to preload track {}: {}", track_id, e);
+                return;
+            }
+        };
+
+        // Create decoder
+        if let Ok(decoder) = TrackDecoder::new(audio_data) {
+            self.next_decoder = Some(decoder);
+            info!("Preloaded next track: {}", track_id);
+        }
+    }
+
+    async fn pause(&mut self) {
+        self.audio_output
+            .send_command(crate::playback::cpal_output::AudioCommand::Pause);
+
+        // State will be updated via PositionUpdate, so we don't need to send StateChanged here
+        // The position updates will preserve the duration
+    }
+
+    async fn resume(&mut self) {
+        self.audio_output
+            .send_command(crate::playback::cpal_output::AudioCommand::Resume);
+
+        // State will be updated via PositionUpdate, so we don't need to send StateChanged here
+        // The position updates will preserve the duration
+    }
+
+    async fn stop(&mut self) {
+        if let Some(stream) = self.stream.take() {
+            drop(stream);
         }
         self.current_track = None;
-        self.is_playing.store(false, Ordering::SeqCst);
-        let state = self.state.clone();
-        tokio::spawn(async move {
-            *state.lock().await = PlaybackState::Stopped;
+        self.current_audio_data = None;
+        self.next_decoder = None;
+        self.audio_output
+            .send_command(crate::playback::cpal_output::AudioCommand::Stop);
+
+        let _ = self.progress_tx.send(PlaybackProgress::StateChanged {
+            state: PlaybackState::Stopped,
         });
     }
 
-    fn get_current_position(&self) -> std::time::Duration {
-        // Rodio doesn't provide easy position tracking, so we'll return zero for now
-        // This can be improved with manual position tracking
-        std::time::Duration::ZERO
+    async fn seek(&mut self, position: std::time::Duration) {
+        // Can only seek if we have a current track and cached audio data
+        let (track_id, audio_data) = match (&self.current_track, &self.current_audio_data) {
+            (Some(track), Some(audio_data)) => (track.id.clone(), audio_data.clone()),
+            _ => {
+                error!("Cannot seek: no track playing or audio data not cached");
+                return;
+            }
+        };
+
+        info!("Seeking to position: {:?}", position);
+
+        // Stop current stream
+        if let Some(stream) = self.stream.take() {
+            drop(stream);
+        }
+
+        // Create new decoder with seeked position
+        let decoder = match TrackDecoder::new(audio_data.clone()) {
+            Ok(decoder) => decoder,
+            Err(e) => {
+                error!("Failed to create decoder for seek: {:?}", e);
+                self.stop().await;
+                return;
+            }
+        };
+
+        let decoder_duration = decoder.duration();
+
+        // Seek decoder to desired position
+        let mut decoder = decoder;
+        if let Err(e) = decoder.seek(position) {
+            error!("Failed to seek decoder: {:?}", e);
+            self.stop().await;
+            return;
+        }
+
+        // Create channels for position updates and completion
+        let (position_tx, position_rx) = mpsc::channel();
+        let (completion_tx, completion_rx) = mpsc::channel();
+
+        // Create new audio stream with seeked decoder
+        let mut audio_output_clone = match AudioOutput::new() {
+            Ok(output) => output,
+            Err(e) => {
+                error!("Failed to create audio output for seek: {:?}", e);
+                self.stop().await;
+                return;
+            }
+        };
+
+        let stream = match audio_output_clone.create_stream(decoder, position_tx, completion_tx) {
+            Ok(stream) => stream,
+            Err(e) => {
+                error!("Failed to create audio stream for seek: {:?}", e);
+                self.stop().await;
+                return;
+            }
+        };
+
+        // Start playback from seeked position
+        if let Err(e) = stream.play() {
+            error!("Failed to start stream after seek: {:?}", e);
+            self.stop().await;
+            return;
+        }
+
+        self.stream = Some(stream);
+        self.audio_output = audio_output_clone;
+
+        // Update state with new position
+        if let Some(track) = &self.current_track {
+            // Get duration from decoder if available
+            let _ = self.progress_tx.send(PlaybackProgress::StateChanged {
+                state: PlaybackState::Playing {
+                    track: track.clone(),
+                    position,
+                    duration: decoder_duration,
+                },
+            });
+        }
+
+        // Spawn task to handle position updates and completion (same as play_track)
+        let progress_tx = self.progress_tx.clone();
+        let track_id_clone = track_id.clone();
+        tokio::spawn(async move {
+            let position_rx = Arc::new(std::sync::Mutex::new(position_rx));
+            let completion_rx = Arc::new(std::sync::Mutex::new(completion_rx));
+
+            loop {
+                tokio::select! {
+                    result = tokio::task::spawn_blocking({
+                        let rx = position_rx.clone();
+                        move || rx.lock().unwrap().recv()
+                    }) => {
+                        match result {
+                            Ok(Ok(pos)) => {
+                                let _ = progress_tx.send(PlaybackProgress::PositionUpdate {
+                                    position: pos,
+                                    track_id: track_id_clone.clone(),
+                                });
+                            }
+                            Ok(Err(_)) | Err(_) => break,
+                        }
+                    }
+                    result = tokio::task::spawn_blocking({
+                        let rx = completion_rx.clone();
+                        move || rx.lock().unwrap().recv()
+                    }) => {
+                        match result {
+                            Ok(Ok(())) => {
+                                let _ = progress_tx.send(PlaybackProgress::TrackCompleted {
+                                    track_id: track_id_clone.clone(),
+                                });
+                                break;
+                            }
+                            Ok(Err(_)) | Err(_) => break,
+                        }
+                    }
+                }
+            }
+        });
     }
 }
