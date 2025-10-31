@@ -11,6 +11,7 @@ pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandle
     let client = album_import_ctx.client();
 
     let sort_order = use_signal(|| SortOrder::Ascending);
+    let is_loading = use_signal(|| false);
 
     let versions_resource = {
         let master_id = master_id.clone();
@@ -20,9 +21,10 @@ pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandle
             let master_id = master_id.clone();
             let client = client.clone();
             let sort_order_val = *sort_order.read();
+            let mut is_loading = is_loading;
 
             async move {
-                client
+                let result = client
                     .get_master_releases(&master_id, Some(sort_order_val))
                     .await
                     .map_err(|e| match e {
@@ -31,7 +33,10 @@ pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandle
                         DiscogsError::NotFound => "Master not found".to_string(),
                         DiscogsError::Request(e) => format!("Request failed: {}", e),
                         DiscogsError::Serialization(e) => format!("Parsing error: {}", e),
-                    })
+                    });
+
+                is_loading.set(false);
+                result
             }
         })
     };
@@ -58,24 +63,26 @@ pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandle
                     }
                     h1 { class: "text-3xl font-bold", "Releases for: {master_title}" }
                     div { class: "ml-auto flex items-center gap-2",
-                        label { class: "text-sm font-medium text-gray-700", "Sort by Date:" }
+                        label { class: "text-sm font-medium text-gray-400", "Sort:" }
                         select {
-                            class: "px-3 py-2 border border-gray-300 rounded-lg bg-white text-sm",
+                            class: "px-3 py-2 border border-gray-300 rounded-lg bg-white text-gray-900 text-sm",
                             value: match *sort_order.read() {
                                 SortOrder::Ascending => "asc",
                                 SortOrder::Descending => "desc",
                             },
                             onchange: move |e: FormEvent| {
                                 let mut sort_order = sort_order;
+                                let mut is_loading = is_loading;
 
                                 sort_order.set(if e.value() == "asc" {
                                     SortOrder::Ascending
                                 } else {
                                     SortOrder::Descending
                                 });
+                                is_loading.set(true);
                             },
-                            option { value: "asc", "Ascending" }
-                            option { value: "desc", "Descending" }
+                            option { value: "asc", "Oldest" }
+                            option { value: "desc", "Newest" }
                         }
                     }
                 }
@@ -87,13 +94,14 @@ pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandle
                         "{error}"
                     }
                 } else if let Ok(versions) = result {
-                    if versions.is_empty() {
-                        div { class: "text-center py-8",
-                            p { class: "text-gray-600", "No releases found for this master." }
-                        }
-                    } else {
-                        div { class: "overflow-x-auto",
-                            table { class: "w-full border-collapse bg-white rounded-lg shadow-lg",
+                    div { class: "relative",
+                        if versions.is_empty() {
+                            div { class: "text-center py-8",
+                                p { class: "text-gray-600", "No releases found for this master." }
+                            }
+                        } else {
+                            div { class: "overflow-x-auto",
+                                table { class: "w-full border-collapse bg-white rounded-lg shadow-lg",
                                 thead {
                                     tr { class: "bg-gray-50",
                                         th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
@@ -132,6 +140,10 @@ pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandle
                                     }
                                 }
                             }
+                            }
+                        }
+                        if is_loading() {
+                            div { class: "absolute inset-0 bg-white/50" }
                         }
                     }
                 }
