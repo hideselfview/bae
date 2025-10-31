@@ -1,6 +1,7 @@
 use crate::playback::symphonia_decoder::{DecoderError, TrackDecoder};
 use cpal::traits::{DeviceTrait, HostTrait};
 use cpal::{Device, Stream, StreamConfig};
+use std::fmt::{Display, Formatter, Result as FmtResult};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -29,6 +30,19 @@ impl From<DecoderError> for AudioError {
         AudioError::DecoderError(e)
     }
 }
+
+impl Display for AudioError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        match self {
+            AudioError::DeviceNotFound => write!(f, "Audio device not found"),
+            AudioError::StreamConfigError(msg) => write!(f, "Stream config error: {}", msg),
+            AudioError::StreamBuildError(msg) => write!(f, "Stream build error: {}", msg),
+            AudioError::DecoderError(e) => write!(f, "Decoder error: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for AudioError {}
 
 /// Audio output manager using CPAL
 pub struct AudioOutput {

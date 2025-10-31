@@ -80,22 +80,49 @@ fn PositionZone(
     duration: ReadOnlySignal<Option<std::time::Duration>>,
     is_paused: ReadOnlySignal<bool>,
     on_seek: EventHandler<std::time::Duration>,
+    is_seeking: Signal<bool>,
 ) -> Element {
+    let mut local_position = use_signal(|| position().clone());
+    let mut last_synced_position = use_signal(|| position().clone());
+
+    // Sync local_position with position when not seeking
+    // Only sync when position actually changes, not when is_seeking becomes false
+    // This prevents jumping back to old position when seek completes
+    use_effect(move || {
+        let current_pos = position();
+        let last_pos = last_synced_position.read().clone();
+
+        // Only sync if position changed and we're not seeking
+        if !is_seeking() && current_pos != last_pos {
+            local_position.set(current_pos.clone());
+            last_synced_position.set(current_pos.clone());
+        }
+    });
+
     rsx! {
-        if let Some(position) = position() {
+        if let Some(pos) = local_position() {
             div { class: "flex items-center gap-2 text-sm text-gray-400",
-                span { class: "w-12 text-right", "{format_duration(position)}" }
+                span { class: "w-12 text-right", "{format_duration(pos)}" }
                 if let Some(duration) = duration() {
                     input {
                         r#type: "range",
                         class: "w-64 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer",
-                        style: "background: linear-gradient(to right, #3b82f6 0%, #3b82f6 {(position.as_secs_f64() / duration.as_secs_f64().max(1.0) * 100.0)}%, #374151 {(position.as_secs_f64() / duration.as_secs_f64().max(1.0) * 100.0)}%, #374151 100%);",
+                        style: "background: linear-gradient(to right, #3b82f6 0%, #3b82f6 {(pos.as_secs_f64() / duration.as_secs_f64().max(1.0) * 100.0)}%, #374151 {(pos.as_secs_f64() / duration.as_secs_f64().max(1.0) * 100.0)}%, #374151 100%);",
                         min: "0",
                         max: "{duration.as_secs()}",
-                        value: "{position.as_secs()}",
+                        value: "{pos.as_secs()}",
+                        onmousedown: move |_| {
+                            is_seeking.set(true);
+                        },
+                        oninput: move |evt| {
+                            if let Ok(secs) = evt.value().parse::<u64>() {
+                                local_position.set(Some(std::time::Duration::from_secs(secs)));
+                            }
+                        },
                         onchange: move |evt| {
                             if let Ok(secs) = evt.value().parse::<u64>() {
                                 on_seek.call(std::time::Duration::from_secs(secs));
+                                // is_seeking will be cleared when StateChanged event arrives
                             }
                         },
                     }
@@ -122,20 +149,30 @@ pub fn NowPlayingBar() -> Element {
     let library_manager = use_library_manager();
     let mut state = use_signal(|| PlaybackState::Stopped);
     let mut current_artist = use_signal(|| "Unknown Artist".to_string());
+    let is_seeking = use_signal(|| false);
 
     // Subscribe to playback progress updates
     use_effect({
         let playback = playback.clone();
         let library_manager = library_manager.clone();
+        let is_seeking = is_seeking.clone();
         move || {
             let playback = playback.clone();
             let library_manager = library_manager.clone();
+            let mut is_seeking = is_seeking.clone();
             spawn(async move {
                 let mut progress_rx = playback.subscribe_progress();
                 while let Some(progress) = progress_rx.recv().await {
                     match progress {
                         PlaybackProgress::StateChanged { state: new_state } => {
+                            // Update state first
                             state.set(new_state.clone());
+
+                            // If we were seeking, clear it now that state changed
+                            // The position in new_state should match where we seeked to
+                            if is_seeking() {
+                                is_seeking.set(false);
+                            }
 
                             // Fetch artist for current track
                             if let PlaybackState::Playing { ref track, .. }
@@ -155,6 +192,11 @@ pub fn NowPlayingBar() -> Element {
                             }
                         }
                         PlaybackProgress::PositionUpdate { position, .. } => {
+                            // Ignore position updates while user is seeking
+                            if is_seeking() {
+                                continue;
+                            }
+
                             // Update position in state, preserving duration
                             if let PlaybackState::Playing {
                                 ref track,
@@ -179,6 +221,9 @@ pub fn NowPlayingBar() -> Element {
                                     duration: duration.clone(),
                                 });
                             }
+
+                            // After a seek completes, the first PositionUpdate will sync local_position
+                            // via the use_effect that watches position()
                         }
                         PlaybackProgress::TrackCompleted { .. } => {
                             // Track finished - could auto-advance here if needed
@@ -244,6 +289,7 @@ pub fn NowPlayingBar() -> Element {
                     duration,
                     is_paused,
                     on_seek: move |duration| playback_seek.seek(duration),
+                    is_seeking,
                 }
             }
         }
