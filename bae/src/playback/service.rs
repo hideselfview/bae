@@ -721,9 +721,24 @@ impl PlaybackService {
 
         let decoder_duration = decoder.duration();
 
-        // Seek decoder to desired position
+        // Clamp seek position to track duration (don't seek past the end)
+        let clamped_position = if let Some(duration) = decoder_duration {
+            position.min(duration)
+        } else {
+            position
+        };
+
+        if clamped_position != position {
+            info!(
+                "Seek position {} clamped to track duration {}",
+                position.as_secs_f64(),
+                clamped_position.as_secs_f64()
+            );
+        }
+
+        // Seek decoder to desired position (clamped if needed)
         let mut decoder = decoder;
-        if let Err(e) = decoder.seek(position) {
+        if let Err(e) = decoder.seek(clamped_position) {
             error!("Failed to seek decoder: {:?}", e);
             self.stop().await;
             return;
@@ -841,8 +856,8 @@ impl PlaybackService {
 
         self.stream = Some(stream);
 
-        // Update shared position
-        *self.current_position_shared.lock().unwrap() = Some(position);
+        // Update shared position (use clamped position)
+        *self.current_position_shared.lock().unwrap() = Some(clamped_position);
         self.current_duration = decoder_duration;
 
         // If we were paused, keep it paused; otherwise play
@@ -860,13 +875,13 @@ impl PlaybackService {
             let state = if was_paused {
                 PlaybackState::Paused {
                     track: track.clone(),
-                    position,
+                    position: clamped_position,
                     duration: decoder_duration,
                 }
             } else {
                 PlaybackState::Playing {
                     track: track.clone(),
-                    position,
+                    position: clamped_position,
                     duration: decoder_duration,
                 }
             };

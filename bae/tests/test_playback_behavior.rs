@@ -110,6 +110,9 @@ impl PlaybackTestFixture {
         let track_ids: Vec<String> = tracks.iter().map(|t| t.id.clone()).collect();
         assert!(!track_ids.is_empty(), "Should have imported tracks");
 
+        // Set env var to mute audio during tests
+        std::env::set_var("MUTE_TEST_AUDIO", "1");
+
         let playback_handle = bae::playback::PlaybackService::start(
             library_manager_arc.as_ref().clone(),
             cloud_storage,
@@ -118,6 +121,9 @@ impl PlaybackTestFixture {
             chunk_size_bytes,
             runtime_handle,
         );
+
+        // Also set volume to 0.0 as backup (commands are processed asynchronously)
+        playback_handle.set_volume(0.0);
 
         let progress_rx = playback_handle.subscribe_progress();
 
@@ -203,30 +209,34 @@ fn create_test_album() -> DiscogsAlbum {
     })
 }
 
-/// Generate minimal valid FLAC files for testing
-/// Note: These are placeholder files - in a real implementation you'd use a FLAC encoder
-/// For now, we'll create files that the import system can process
+/// Copy pre-generated FLAC fixtures to test directory
+/// Fixtures should be generated using scripts/generate_test_flac.sh
 fn generate_test_flac_files(dir: &std::path::Path) -> Vec<Vec<u8>> {
     use std::fs;
 
-    // Create small test files (similar to test_roundtrip_simple.rs pattern)
-    // These won't be valid FLAC files, but they'll be processed by the import system
-    // Actual playback will require valid FLAC files - for now these tests will be skipped
-    // if audio device is not available
+    // Path to fixture directory (relative to crate root)
+    let fixture_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("flac");
 
-    let pattern: Vec<u8> = (0..=255).collect();
-    let size = 100 * 1024; // 100KB - small enough for fast tests
-
-    let files = vec![
-        ("01 Test Track 1.flac", &pattern),
-        ("02 Test Track 2.flac", &pattern),
-    ];
+    let fixture_files = vec!["01 Test Track 1.flac", "02 Test Track 2.flac"];
 
     let mut file_data = Vec::new();
-    for (name, pattern) in files {
-        let path = dir.join(name);
-        let data: Vec<u8> = pattern.iter().cycle().take(size).cloned().collect();
-        fs::write(&path, &data).expect("Failed to write test file");
+    for fixture_name in fixture_files {
+        let fixture_path = fixture_dir.join(fixture_name);
+        let test_path = dir.join(fixture_name);
+
+        // Read fixture and copy to test directory
+        let data = fs::read(&fixture_path).unwrap_or_else(|_| {
+            panic!(
+                "FLAC fixture not found: {}\n\
+                     Run: ./scripts/generate_test_flac.sh",
+                fixture_path.display()
+            );
+        });
+
+        fs::write(&test_path, &data).expect("Failed to copy FLAC fixture");
         file_data.push(data);
     }
 
@@ -406,9 +416,12 @@ async fn test_auto_advance_to_next_track() {
         )
         .await;
 
-    // Seek near the end and wait for completion
-    // Note: This assumes the track is longer than 8 seconds
-    fixture.playback_handle.seek(Duration::from_secs(8));
+    // Seek near the end (to 4.5 seconds, since track is 5 seconds)
+    // This will be clamped if we go past, but we stay within bounds
+    // and wait for completion to trigger auto-advance
+    fixture
+        .playback_handle
+        .seek(Duration::from_secs(4) + Duration::from_millis(500));
 
     // Wait for track completion and auto-advance
     let next_track_state = fixture

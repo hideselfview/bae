@@ -76,13 +76,22 @@ impl AudioOutput {
 
         let (command_tx, _command_rx) = mpsc::channel();
 
+        // Check if running in test mode (mute audio)
+        let initial_volume = if std::env::var("SKIP_AUDIO_TESTS").is_ok()
+            || std::env::var("MUTE_TEST_AUDIO").is_ok()
+        {
+            0u32 // Muted
+        } else {
+            10000u32 // 1.0
+        };
+
         Ok(Self {
             device,
             stream_config,
             command_tx,
             is_playing: Arc::new(AtomicBool::new(false)),
             is_paused: Arc::new(AtomicBool::new(false)),
-            volume: Arc::new(AtomicU32::new(10000)), // 1.0
+            volume: Arc::new(AtomicU32::new(initial_volume)),
         })
     }
 
