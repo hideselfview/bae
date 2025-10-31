@@ -252,10 +252,7 @@ fn should_skip_audio_tests() -> bool {
     // Try to get default output device - if it fails, skip tests
     // Use the trait method from cpal::traits::HostTrait
     use cpal::traits::HostTrait;
-    match cpal::default_host().default_output_device() {
-        Some(_) => false,
-        None => true,
-    }
+    cpal::default_host().default_output_device().is_none()
 }
 
 #[tokio::test]
@@ -417,8 +414,7 @@ async fn test_auto_advance_to_next_track() {
         .await;
 
     // Seek near the end (to 4.5 seconds, since track is 5 seconds)
-    // This will be clamped if we go past, but we stay within bounds
-    // and wait for completion to trigger auto-advance
+    // Stay within bounds to wait for completion and trigger auto-advance
     fixture
         .playback_handle
         .seek(Duration::from_secs(4) + Duration::from_millis(500));
@@ -500,11 +496,7 @@ async fn test_position_maintained_across_pause_resume() {
 
     if let Some(PlaybackState::Paused { position, .. }) = paused_state {
         // Position should be close to seek position (within 1 second)
-        let diff = if position > seek_position {
-            position - seek_position
-        } else {
-            seek_position - position
-        };
+        let diff = position.abs_diff(seek_position);
         assert!(
             diff < Duration::from_secs(1),
             "Position should be maintained when paused"
@@ -524,11 +516,7 @@ async fn test_position_maintained_across_pause_resume() {
 
     if let Some(PlaybackState::Playing { position, .. }) = resumed_state {
         // Position should still be close to seek position
-        let diff = if position > seek_position {
-            position - seek_position
-        } else {
-            seek_position - position
-        };
+        let diff = position.abs_diff(seek_position);
         assert!(
             diff < Duration::from_secs(1),
             "Position should be maintained when resumed"

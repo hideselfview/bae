@@ -226,6 +226,7 @@ impl CloudStorageManager {
 
     /// Create a cloud storage manager from any CloudStorage implementation (for testing)
     #[cfg(feature = "test-utils")]
+    #[allow(unused)] // Used in tests
     pub fn from_storage(storage: std::sync::Arc<dyn CloudStorage>) -> Self {
         CloudStorageManager { storage }
     }

@@ -82,13 +82,13 @@ fn PositionZone(
     on_seek: EventHandler<std::time::Duration>,
     is_seeking: Signal<bool>,
 ) -> Element {
-    let mut local_position = use_signal(|| position().clone());
+    let mut local_position = use_signal(|| *position.read());
 
     // Sync local_position with position when not seeking
     // Don't read local_position in the effect to avoid reactive loop
     use_effect(move || {
         if !is_seeking() {
-            local_position.set(position().clone());
+            local_position.set(*position.read());
         }
     });
 
@@ -142,21 +142,26 @@ pub fn NowPlayingBar() -> Element {
     let library_manager = use_library_manager();
     let mut state = use_signal(|| PlaybackState::Stopped);
     let mut current_artist = use_signal(|| "Unknown Artist".to_string());
-    let is_seeking = use_signal(|| false);
+    let mut is_seeking = use_signal(|| false);
 
     // Subscribe to playback progress updates
     use_effect({
         let playback = playback.clone();
         let library_manager = library_manager.clone();
-        let is_seeking = is_seeking.clone();
         move || {
             let playback = playback.clone();
             let library_manager = library_manager.clone();
-            let mut is_seeking = is_seeking.clone();
             spawn(async move {
                 let mut progress_rx = playback.subscribe_progress();
                 while let Some(progress) = progress_rx.recv().await {
                     match progress {
+                        PlaybackProgress::SeekError {
+                            requested_position: _,
+                            track_duration: _,
+                        } => {
+                            // Seek error - could show user notification, but for now just ignore
+                            tracing::warn!("Seek failed: requested position past track end");
+                        }
                         PlaybackProgress::StateChanged { state: new_state } => {
                             // Update state first
                             state.set(new_state.clone());
@@ -200,7 +205,7 @@ pub fn NowPlayingBar() -> Element {
                                 state.set(PlaybackState::Playing {
                                     track: track.clone(),
                                     position,
-                                    duration: duration.clone(),
+                                    duration,
                                 });
                             } else if let PlaybackState::Paused {
                                 ref track,
@@ -211,7 +216,7 @@ pub fn NowPlayingBar() -> Element {
                                 state.set(PlaybackState::Paused {
                                     track: track.clone(),
                                     position,
-                                    duration: duration.clone(),
+                                    duration,
                                 });
                             }
 
@@ -242,7 +247,7 @@ pub fn NowPlayingBar() -> Element {
     });
     let duration = use_memo(move || match state() {
         PlaybackState::Playing { duration, .. } | PlaybackState::Paused { duration, .. } => {
-            duration.clone()
+            duration
         }
         _ => None,
     });

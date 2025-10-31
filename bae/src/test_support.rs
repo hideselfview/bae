@@ -22,6 +22,7 @@ impl Default for MockCloudStorage {
 
 impl MockCloudStorage {
     /// Create a new mock cloud storage instance
+    #[allow(unused)] // Used in tests
     pub fn new() -> Self {
         Self::default()
     }

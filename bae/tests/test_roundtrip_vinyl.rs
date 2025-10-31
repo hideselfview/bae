@@ -4,7 +4,7 @@ mod support;
 use std::fs;
 
 use bae::discogs::DiscogsAlbum;
-use support::{do_roundtrip, tracing_init};
+use support::{do_roundtrip::do_roundtrip, tracing_init};
 use tracing::{error, info};
 
 #[tokio::test]

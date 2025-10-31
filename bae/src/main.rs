@@ -14,6 +14,7 @@ mod import;
 mod library;
 mod playback;
 mod subsonic;
+mod test_support;
 mod ui;
 
 use library::SharedLibraryManager;

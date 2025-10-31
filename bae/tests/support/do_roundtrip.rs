@@ -18,6 +18,7 @@ use bae::test_support::MockCloudStorage;
 ///
 /// This function handles the complete import+reassembly flow and can be customized
 /// with closures for verification at each stage.
+#[allow(dead_code)]
 pub async fn do_roundtrip<F, G>(
     test_name: &str,
     discogs_album: DiscogsAlbum,

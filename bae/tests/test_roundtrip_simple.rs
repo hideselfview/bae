@@ -3,10 +3,10 @@
 mod support;
 use std::{fs, path::PathBuf};
 
-use bae::models::{DiscogsAlbum, DiscogsTrack};
+use bae::discogs::models::{DiscogsAlbum, DiscogsTrack};
 use tracing::info;
 
-use crate::support::{do_roundtrip, tracing_init};
+use crate::support::{do_roundtrip::do_roundtrip, tracing_init};
 
 #[tokio::test]
 async fn test_roundtrip_simple() {
@@ -30,7 +30,7 @@ async fn test_roundtrip_simple() {
 
 /// Create mock Discogs metadata for testing
 fn create_test_discogs_album() -> DiscogsAlbum {
-    use bae::models::DiscogsMaster;
+    use bae::discogs::models::DiscogsMaster;
 
     DiscogsAlbum::Master(DiscogsMaster {
         id: "test-master-123".to_string(),
@@ -39,6 +39,7 @@ fn create_test_discogs_album() -> DiscogsAlbum {
         thumb: None,
         label: vec!["Test Label".to_string()],
         country: Some("US".to_string()),
+        artists: vec![],
         tracklist: vec![
             DiscogsTrack {
                 position: "1".to_string(),

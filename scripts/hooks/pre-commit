@@ -23,6 +23,26 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-echo "✅ Code formatting check passed"
+echo "Running cargo clippy on library..."
+cargo clippy --lib -- -D warnings
+
+if [ $? -ne 0 ]; then
+    echo ""
+    echo "❌ Commit rejected: Clippy found warnings in library code"
+    echo "Fix the warnings above and try again"
+    exit 1
+fi
+
+echo "Running cargo clippy on tests..."
+cargo clippy --tests --features test-utils -- -D warnings
+
+if [ $? -ne 0 ]; then
+    echo ""
+    echo "❌ Commit rejected: Clippy found warnings in test code"
+    echo "Fix the warnings above and try again"
+    exit 1
+fi
+
+echo "✅ Code formatting and clippy checks passed"
 exit 0
 
