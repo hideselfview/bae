@@ -1,0 +1,4 @@
+---
+alwaysApply: true
+---
+Do not use git add -A. Add files individually or in some more targeted way.
