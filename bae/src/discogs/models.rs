@@ -1,5 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+/// Sort order for release date
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SortOrder {
+    Ascending,
+    Descending,
+}
+
 /// Artist credit from Discogs
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DiscogsArtist {

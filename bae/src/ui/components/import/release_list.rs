@@ -1,6 +1,6 @@
 use super::release_item::ReleaseItem;
 use crate::discogs::client::DiscogsError;
-use crate::discogs::DiscogsMasterReleaseVersion;
+use crate::discogs::{DiscogsMasterReleaseVersion, SortOrder};
 use crate::ui::import_context::ImportContext;
 use dioxus::prelude::*;
 use std::rc::Rc;
@@ -10,6 +10,8 @@ pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandle
     let album_import_ctx = use_context::<Rc<ImportContext>>();
     let client = album_import_ctx.client();
 
+    let sort_order = use_signal(|| SortOrder::Ascending);
+
     let versions_resource = {
         let master_id = master_id.clone();
         let client = client.clone();
@@ -17,10 +19,11 @@ pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandle
         use_resource(move || {
             let master_id = master_id.clone();
             let client = client.clone();
+            let sort_order_val = *sort_order.read();
 
             async move {
                 client
-                    .get_master_releases(&master_id)
+                    .get_master_releases(&master_id, Some(sort_order_val))
                     .await
                     .map_err(|e| match e {
                         DiscogsError::RateLimit => "Rate limit exceeded".to_string(),
@@ -54,6 +57,27 @@ pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandle
                         "← Back to Search"
                     }
                     h1 { class: "text-3xl font-bold", "Releases for: {master_title}" }
+                    div { class: "ml-auto flex items-center gap-2",
+                        label { class: "text-sm font-medium text-gray-700", "Sort by Date:" }
+                        select {
+                            class: "px-3 py-2 border border-gray-300 rounded-lg bg-white text-sm",
+                            value: match *sort_order.read() {
+                                SortOrder::Ascending => "asc",
+                                SortOrder::Descending => "desc",
+                            },
+                            onchange: move |e: FormEvent| {
+                                let mut sort_order = sort_order;
+
+                                sort_order.set(if e.value() == "asc" {
+                                    SortOrder::Ascending
+                                } else {
+                                    SortOrder::Descending
+                                });
+                            },
+                            option { value: "asc", "Ascending" }
+                            option { value: "desc", "Descending" }
+                        }
+                    }
                 }
             }
 

@@ -1,5 +1,6 @@
 use crate::discogs::models::{
     DiscogsArtist, DiscogsMaster, DiscogsMasterReleaseVersion, DiscogsRelease, DiscogsTrack,
+    SortOrder,
 };
 use reqwest::{Client, Error as ReqwestError};
 use serde::Deserialize;
@@ -251,13 +252,21 @@ impl DiscogsClient {
     pub async fn get_master_releases(
         &self,
         master_id: &str,
+        sort_order: Option<SortOrder>,
     ) -> Result<Vec<DiscogsMasterReleaseVersion>, DiscogsError> {
         let url = format!("{}/masters/{}/versions", self.base_url, master_id);
 
-        let per_page = "100".to_string();
-        let mut params = HashMap::new();
-        params.insert("token", &self.api_key);
-        params.insert("per_page", &per_page); // Get more results per page
+        let sort_order = match sort_order.unwrap_or(SortOrder::Ascending) {
+            SortOrder::Ascending => String::from("asc"),
+            SortOrder::Descending => String::from("desc"),
+        };
+
+        let mut params = HashMap::<&str, String>::new();
+
+        params.insert("token", self.api_key.clone());
+        params.insert("per_page", String::from("100"));
+        params.insert("sort", String::from("released"));
+        params.insert("sort_order", sort_order);
 
         let response = self
             .client
