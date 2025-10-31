@@ -18,8 +18,6 @@ pub enum DecoderError {
     Symphonia(#[from] symphonia::core::errors::Error),
     #[error("No audio tracks found")]
     NoAudioTracks,
-    #[error("Unsupported format")]
-    UnsupportedFormat,
 }
 
 /// Wrapper around symphonia decoder that tracks decoded samples for position calculation
@@ -81,7 +79,7 @@ impl TrackDecoder {
 
     /// Decode the next packet and return audio buffer
     /// Returns None when end of stream is reached
-    pub fn decode_next(&mut self) -> Result<Option<AudioBufferRef>, DecoderError> {
+    pub fn decode_next(&mut self) -> Result<Option<AudioBufferRef<'_>>, DecoderError> {
         loop {
             let packet = match self.format_reader.next_packet() {
                 Ok(packet) => packet,
@@ -128,66 +126,67 @@ impl TrackDecoder {
         let position_seconds = position.as_secs_f64();
         let sample_number = (position_seconds * self.sample_rate as f64) as u64;
 
-        // For FLAC, timebase is typically (1, sample_rate), so timestamp = sample_number
-        // Calculate timestamp: time = timestamp * numer / denom
-        // For our case: seconds = timestamp * numer / denom
-        // So: timestamp = seconds * denom / numer = sample_number * denom / (sample_rate * numer)
-        // But since timebase is usually (1, sample_rate), timestamp = sample_number
-
-        // Try to construct Time - for FLAC with timebase (1, sample_rate), we can use timestamp directly
-        // Calculate the timestamp value
-        let seconds = sample_number as f64 / self.sample_rate as f64;
-
-        // Use Time::from_ss for durations <= 255 seconds (its limit)
-        // For longer durations, we'll need to seek in chunks or use a different approach
-        // Since most tracks are shorter than 255 seconds, this should work for most cases
-        // For longer tracks, we could seek to 0 and decode forward, but that's inefficient
-        let seek_time = if seconds <= 255.0 {
-            let secs = seconds as u8;
-            let nanos = ((seconds.fract() * 1_000_000_000.0) as u32).min(999_999_999);
-            Time::from_ss(secs, nanos).ok_or(DecoderError::UnsupportedFormat)?
-        } else {
-            // For tracks longer than 255 seconds, seek to maximum possible (255 seconds) and decode forward
-            // This is not ideal but will work
-            let seek_to_secs = 255u8;
-            let seek_nanos = 999_999_999u32;
-            Time::from_ss(seek_to_secs, seek_nanos).ok_or(DecoderError::UnsupportedFormat)?
-        };
-
-        self.format_reader.seek(
+        // Create Time object: seconds (u64) + fractional part (f64)
+        let secs = position_seconds.floor() as u64;
+        let frac = position_seconds.fract();
+        let seek_time = Time::new(secs, frac);
+        
+        match self.format_reader.seek(
             SeekMode::Accurate,
             SeekTo::Time {
                 time: seek_time,
                 track_id: Some(self.track_id),
             },
-        )?;
-
-        // If we couldn't seek to the exact position (due to 255s limit),
-        // decode forward to the actual position
-        let seeked_seconds = if seconds <= 255.0 {
-            seconds
-        } else {
-            // We seeked to 255 seconds, now decode forward
-            let current_position = 255.0;
-            let samples_to_decode = ((seconds - current_position) * self.sample_rate as f64) as u64;
-
-            // Decode samples until we reach the desired position
-            let mut decoded = 0u64;
-            while decoded < samples_to_decode {
-                match self.decode_next()? {
-                    Some(audio_buf) => {
-                        decoded += audio_buf.frames() as u64;
-                    }
-                    None => break, // End of stream
-                }
+        ) {
+            Ok(_) => {
+                // Success - update decoded_samples
+                self.decoded_samples.store(sample_number, Ordering::Relaxed);
+                return Ok(());
             }
-            seconds
-        };
+            Err(e) => {
+                tracing::warn!(
+                    "Seek by Time failed for {}.{}s: {:?}, falling back to decode",
+                    secs,
+                    frac,
+                    e
+                );
+                // Fall through to decode from start
+            }
+        }
+
+        // Fallback: seek to beginning and decode forward to desired position
+        // This is inefficient but will work
+        tracing::info!(
+            "Seeking by decoding from start to {}s (sample {})",
+            position_seconds,
+            sample_number
+        );
+        
+        // Reset to beginning
+        let zero_time = Time::new(0, 0.0);
+        self.format_reader.seek(
+            SeekMode::Accurate,
+            SeekTo::Time {
+                time: zero_time,
+                track_id: Some(self.track_id),
+            },
+        )?;
+        
+        self.decoded_samples.store(0, Ordering::Relaxed);
+
+        // Decode forward to the desired position
+        let mut decoded = 0u64;
+        while decoded < sample_number {
+            match self.decode_next()? {
+                Some(audio_buf) => {
+                    decoded += audio_buf.frames() as u64;
+                }
+                None => break, // End of stream
+            }
+        }
 
         // Update decoded_samples to match the seek position
-        let final_sample_number = (seeked_seconds * self.sample_rate as f64) as u64;
-        self.decoded_samples
-            .store(final_sample_number, Ordering::Relaxed);
+        self.decoded_samples.store(decoded.min(sample_number), Ordering::Relaxed);
 
         Ok(())
     }

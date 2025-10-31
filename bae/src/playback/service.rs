@@ -114,6 +114,9 @@ pub struct PlaybackService {
     audio_output: AudioOutput,
     stream: Option<cpal::Stream>,
     next_decoder: Option<TrackDecoder>, // Preloaded for gapless playback
+    next_audio_data: Option<Vec<u8>>,   // Preloaded audio data for gapless playback
+    next_track_id: Option<String>,      // Track ID of preloaded track
+    next_duration: Option<std::time::Duration>, // Duration of preloaded track
 }
 
 impl PlaybackService {
@@ -176,6 +179,9 @@ impl PlaybackService {
                     audio_output,
                     stream: None,
                     next_decoder: None,
+                    next_audio_data: None,
+                    next_track_id: None,
+                    next_duration: None,
                 };
 
                 service.run().await;
@@ -213,7 +219,44 @@ impl PlaybackService {
                     self.stop().await;
                 }
                 PlaybackCommand::Next => {
-                    if let Some(next_track) = self.queue.pop_front() {
+                    // Check if we have a preloaded track ready for gapless playback
+                    if let Some((preloaded_decoder, preloaded_audio_data, preloaded_track_id)) =
+                        self.next_decoder
+                            .take()
+                            .zip(self.next_audio_data.take())
+                            .zip(self.next_track_id.take())
+                            .map(|((decoder, audio_data), track_id)| {
+                                (decoder, audio_data, track_id)
+                            })
+                    {
+                        let preloaded_duration = self.next_duration.take();
+
+                        // Use preloaded decoder for gapless playback
+                        let track = match self.library_manager.get_track(&preloaded_track_id).await
+                        {
+                            Ok(Some(track)) => track,
+                            Ok(None) => {
+                                error!("Preloaded track not found: {}", preloaded_track_id);
+                                self.stop().await;
+                                continue;
+                            }
+                            Err(e) => {
+                                error!("Failed to get preloaded track metadata: {}", e);
+                                self.stop().await;
+                                continue;
+                            }
+                        };
+
+                        self.play_track_with_decoder(
+                            &preloaded_track_id,
+                            track,
+                            preloaded_decoder,
+                            preloaded_audio_data,
+                            preloaded_duration,
+                        )
+                        .await;
+                    } else if let Some(next_track) = self.queue.pop_front() {
+                        // No preloaded track, reassemble from scratch
                         self.play_track(&next_track).await;
                     } else {
                         self.stop().await;
@@ -319,6 +362,23 @@ impl PlaybackService {
         } else {
             info!("Track duration not available");
         }
+
+        // Cache audio data for seeking
+        self.current_audio_data = Some(audio_data.clone());
+
+        self.play_track_with_decoder(track_id, track, decoder, audio_data, track_duration)
+            .await;
+    }
+
+    async fn play_track_with_decoder(
+        &mut self,
+        track_id: &str,
+        track: DbTrack,
+        decoder: TrackDecoder,
+        audio_data: Vec<u8>,
+        track_duration: Option<std::time::Duration>,
+    ) {
+        info!("Starting playback with decoder for track: {}", track_id);
 
         // Cache audio data for seeking
         self.current_audio_data = Some(audio_data);
@@ -441,8 +501,12 @@ impl PlaybackService {
         };
 
         // Create decoder
-        if let Ok(decoder) = TrackDecoder::new(audio_data) {
+        if let Ok(decoder) = TrackDecoder::new(audio_data.clone()) {
+            let duration = decoder.duration();
             self.next_decoder = Some(decoder);
+            self.next_audio_data = Some(audio_data);
+            self.next_track_id = Some(track_id.to_string());
+            self.next_duration = duration;
             info!("Preloaded next track: {}", track_id);
         }
     }
@@ -470,6 +534,9 @@ impl PlaybackService {
         self.current_track = None;
         self.current_audio_data = None;
         self.next_decoder = None;
+        self.next_audio_data = None;
+        self.next_track_id = None;
+        self.next_duration = None;
         self.audio_output
             .send_command(crate::playback::cpal_output::AudioCommand::Stop);
 
@@ -547,6 +614,10 @@ impl PlaybackService {
 
         self.stream = Some(stream);
         self.audio_output = audio_output_clone;
+
+        // Send Play command to start audio
+        self.audio_output
+            .send_command(crate::playback::cpal_output::AudioCommand::Play);
 
         // Update state with new position
         if let Some(track) = &self.current_track {
