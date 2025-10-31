@@ -1,6 +1,6 @@
 use crate::db::DbTrack;
 use crate::library::use_library_manager;
-use crate::playback::PlaybackState;
+use crate::playback::{PlaybackProgress, PlaybackState};
 use dioxus::prelude::*;
 
 use super::use_playback_service;
@@ -94,7 +94,7 @@ pub fn NowPlayingBar() -> Element {
     let mut state = use_signal(|| PlaybackState::Stopped);
     let mut current_artist = use_signal(|| "Unknown Artist".to_string());
 
-    // Poll playback state periodically and fetch artist
+    // Subscribe to playback progress updates
     use_effect({
         let playback = playback.clone();
         let library_manager = library_manager.clone();
@@ -102,28 +102,47 @@ pub fn NowPlayingBar() -> Element {
             let playback = playback.clone();
             let library_manager = library_manager.clone();
             spawn(async move {
-                loop {
-                    let current_state = playback.get_state().await;
+                let mut progress_rx = playback.subscribe_progress();
+                while let Some(progress) = progress_rx.recv().await {
+                    match progress {
+                        PlaybackProgress::StateChanged { state: new_state } => {
+                            state.set(new_state.clone());
 
-                    // Fetch artist for current track
-                    if let PlaybackState::Playing { ref track, .. }
-                    | PlaybackState::Paused { ref track, .. } = current_state
-                    {
-                        if let Ok(artists) =
-                            library_manager.get().get_artists_for_track(&track.id).await
-                        {
-                            if !artists.is_empty() {
-                                let artist_names: Vec<_> =
-                                    artists.iter().map(|a| a.name.as_str()).collect();
-                                current_artist.set(artist_names.join(", "));
-                            } else {
-                                current_artist.set("Unknown Artist".to_string());
+                            // Fetch artist for current track
+                            if let PlaybackState::Playing { ref track, .. }
+                            | PlaybackState::Paused { ref track, .. } = new_state
+                            {
+                                if let Ok(artists) =
+                                    library_manager.get().get_artists_for_track(&track.id).await
+                                {
+                                    if !artists.is_empty() {
+                                        let artist_names: Vec<_> =
+                                            artists.iter().map(|a| a.name.as_str()).collect();
+                                        current_artist.set(artist_names.join(", "));
+                                    } else {
+                                        current_artist.set("Unknown Artist".to_string());
+                                    }
+                                }
                             }
                         }
+                        PlaybackProgress::PositionUpdate { position, .. } => {
+                            // Update position in state
+                            if let PlaybackState::Playing { ref track, .. } = state() {
+                                state.set(PlaybackState::Playing {
+                                    track: track.clone(),
+                                    position,
+                                });
+                            } else if let PlaybackState::Paused { ref track, .. } = state() {
+                                state.set(PlaybackState::Paused {
+                                    track: track.clone(),
+                                    position,
+                                });
+                            }
+                        }
+                        PlaybackProgress::TrackCompleted { .. } => {
+                            // Track finished - could auto-advance here if needed
+                        }
                     }
-
-                    state.set(current_state);
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 }
             });
         }
