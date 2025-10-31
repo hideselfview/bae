@@ -144,7 +144,11 @@ impl PlaybackService {
         runtime_handle.spawn(async move {
             let mut progress_rx = progress_handle_for_completion.subscribe_all();
             while let Some(progress) = progress_rx.recv().await {
-                if let PlaybackProgress::TrackCompleted { .. } = progress {
+                if let PlaybackProgress::TrackCompleted { track_id } = progress {
+                    info!(
+                        "Auto-advance: Track completed, sending Next command: {}",
+                        track_id
+                    );
                     // Auto-advance to next track
                     let _ = command_tx_for_completion.send(PlaybackCommand::Next);
                 }
@@ -197,7 +201,48 @@ impl PlaybackService {
         while let Some(command) = self.command_rx.recv().await {
             match command {
                 PlaybackCommand::Play(track_id) => {
+                    // Stop current playback before switching tracks (without state change)
+                    if let Some(stream) = self.stream.take() {
+                        drop(stream);
+                    }
+                    self.audio_output
+                        .send_command(crate::playback::cpal_output::AudioCommand::Stop);
+                    // Clear preloaded data
+                    self.next_decoder = None;
+                    self.next_audio_data = None;
+                    self.next_track_id = None;
+                    self.next_duration = None;
+
+                    // Clear queue
                     self.queue.clear();
+
+                    // Fetch track to get release_id
+                    if let Ok(Some(track)) = self.library_manager.get_track(&track_id).await {
+                        // Get all tracks for this release
+                        if let Ok(mut release_tracks) =
+                            self.library_manager.get_tracks(&track.release_id).await
+                        {
+                            // Sort tracks by track_number for proper ordering
+                            release_tracks.sort_by(|a, b| match (a.track_number, b.track_number) {
+                                (Some(a_num), Some(b_num)) => a_num.cmp(&b_num),
+                                (Some(_), None) => std::cmp::Ordering::Less,
+                                (None, Some(_)) => std::cmp::Ordering::Greater,
+                                (None, None) => std::cmp::Ordering::Equal,
+                            });
+
+                            // Add remaining tracks to queue (tracks after the current one)
+                            let mut found_current = false;
+                            for release_track in release_tracks {
+                                if found_current {
+                                    self.queue.push_back(release_track.id);
+                                } else if release_track.id == track_id {
+                                    found_current = true;
+                                }
+                            }
+                        }
+                    }
+
+                    // Play the selected track
                     self.play_track(&track_id).await;
                 }
                 PlaybackCommand::PlayAlbum(track_ids) => {
@@ -219,6 +264,7 @@ impl PlaybackService {
                     self.stop().await;
                 }
                 PlaybackCommand::Next => {
+                    info!("Next command received, queue length: {}", self.queue.len());
                     // Check if we have a preloaded track ready for gapless playback
                     if let Some((preloaded_decoder, preloaded_audio_data, preloaded_track_id)) =
                         self.next_decoder
@@ -230,6 +276,18 @@ impl PlaybackService {
                             })
                     {
                         let preloaded_duration = self.next_duration.take();
+                        info!("Using preloaded track: {}", preloaded_track_id);
+
+                        // Remove the preloaded track from the queue if it's at the front
+                        // This ensures play_track_with_decoder preloads the NEXT track
+                        if self
+                            .queue
+                            .front()
+                            .map(|id| id == &preloaded_track_id)
+                            .unwrap_or(false)
+                        {
+                            self.queue.pop_front();
+                        }
 
                         // Use preloaded decoder for gapless playback
                         let track = match self.library_manager.get_track(&preloaded_track_id).await
@@ -256,9 +314,11 @@ impl PlaybackService {
                         )
                         .await;
                     } else if let Some(next_track) = self.queue.pop_front() {
+                        info!("No preloaded track, playing from queue: {}", next_track);
                         // No preloaded track, reassemble from scratch
                         self.play_track(&next_track).await;
                     } else {
+                        info!("No next track available, stopping");
                         self.stop().await;
                     }
                 }
@@ -392,6 +452,40 @@ impl PlaybackService {
         let (position_tx, position_rx) = mpsc::channel();
         let (completion_tx, completion_rx) = mpsc::channel();
 
+        // Bridge blocking channels to async channels
+        let (position_tx_async, mut position_rx_async) = tokio_mpsc::unbounded_channel();
+        let (completion_tx_async, mut completion_rx_async) = tokio_mpsc::unbounded_channel();
+
+        // Bridge position updates
+        let position_rx_clone = position_rx;
+        tokio::spawn(async move {
+            let position_rx = Arc::new(std::sync::Mutex::new(position_rx_clone));
+            loop {
+                let rx = position_rx.clone();
+                match tokio::task::spawn_blocking(move || rx.lock().unwrap().recv()).await {
+                    Ok(Ok(pos)) => {
+                        let _ = position_tx_async.send(pos);
+                    }
+                    Ok(Err(_)) | Err(_) => break,
+                }
+            }
+        });
+
+        // Bridge completion signals
+        let completion_rx_clone = completion_rx;
+        tokio::spawn(async move {
+            let completion_rx = Arc::new(std::sync::Mutex::new(completion_rx_clone));
+            loop {
+                let rx = completion_rx.clone();
+                match tokio::task::spawn_blocking(move || rx.lock().unwrap().recv()).await {
+                    Ok(Ok(())) => {
+                        let _ = completion_tx_async.send(());
+                    }
+                    Ok(Err(_)) | Err(_) => break,
+                }
+            }
+        });
+
         // Create audio stream
         let stream = match self
             .audio_output
@@ -436,43 +530,47 @@ impl PlaybackService {
         // Spawn task to handle position updates and completion
         let progress_tx = self.progress_tx.clone();
         let track_id = track_id.to_string();
+        let track_duration_for_completion = track_duration.clone();
         tokio::spawn(async move {
-            // Use std::sync::Mutex for blocking recv
-            let position_rx = Arc::new(std::sync::Mutex::new(position_rx));
-            let completion_rx = Arc::new(std::sync::Mutex::new(completion_rx));
+            info!(
+                "Play: Spawning completion listener task for track: {}",
+                track_id
+            );
+
+            info!("Play: Task started, waiting for position updates and completion");
 
             loop {
                 tokio::select! {
-                    result = tokio::task::spawn_blocking({
-                        let rx = position_rx.clone();
-                        move || rx.lock().unwrap().recv()
-                    }) => {
-                        match result {
-                            Ok(Ok(position)) => {
-                                let _ = progress_tx.send(PlaybackProgress::PositionUpdate {
-                                    position,
-                                    track_id: track_id.clone(),
-                                });
-                            }
-                            Ok(Err(_)) | Err(_) => break,
-                        }
+                    Some(position) = position_rx_async.recv() => {
+                        let _ = progress_tx.send(PlaybackProgress::PositionUpdate {
+                            position,
+                            track_id: track_id.clone(),
+                        });
                     }
-                    result = tokio::task::spawn_blocking({
-                        let rx = completion_rx.clone();
-                        move || rx.lock().unwrap().recv()
-                    }) => {
-                        match result {
-                            Ok(Ok(())) => {
-                                let _ = progress_tx.send(PlaybackProgress::TrackCompleted {
-                                    track_id: track_id.clone(),
-                                });
-                                break;
-                            }
-                            Ok(Err(_)) | Err(_) => break,
+                    Some(()) = completion_rx_async.recv() => {
+                        info!("Track completed: {}", track_id);
+                        // Send final position update matching duration to ensure progress bar reaches 100%
+                        if let Some(duration) = track_duration_for_completion {
+                            let _ = progress_tx.send(PlaybackProgress::PositionUpdate {
+                                position: duration,
+                                track_id: track_id.clone(),
+                            });
                         }
+                        let _ = progress_tx.send(PlaybackProgress::TrackCompleted {
+                            track_id: track_id.clone(),
+                        });
+                        break;
+                    }
+                    else => {
+                        info!("Play: Channels closed, exiting");
+                        break;
                     }
                 }
             }
+            info!(
+                "Play: Completion listener task exiting for track: {}",
+                track_id
+            );
         });
 
         // Preload next track for gapless playback
@@ -586,17 +684,92 @@ impl PlaybackService {
         let (position_tx, position_rx) = mpsc::channel();
         let (completion_tx, completion_rx) = mpsc::channel();
 
-        // Create new audio stream with seeked decoder
-        let mut audio_output_clone = match AudioOutput::new() {
-            Ok(output) => output,
-            Err(e) => {
-                error!("Failed to create audio output for seek: {:?}", e);
-                self.stop().await;
-                return;
-            }
-        };
+        // Bridge blocking channels to async channels
+        let (position_tx_async, mut position_rx_async) = tokio_mpsc::unbounded_channel();
+        let (completion_tx_async, mut completion_rx_async) = tokio_mpsc::unbounded_channel();
 
-        let stream = match audio_output_clone.create_stream(decoder, position_tx, completion_tx) {
+        // Bridge position updates
+        let position_rx_clone = position_rx;
+        tokio::spawn(async move {
+            let position_rx = Arc::new(std::sync::Mutex::new(position_rx_clone));
+            loop {
+                let rx = position_rx.clone();
+                match tokio::task::spawn_blocking(move || rx.lock().unwrap().recv()).await {
+                    Ok(Ok(pos)) => {
+                        let _ = position_tx_async.send(pos);
+                    }
+                    Ok(Err(_)) | Err(_) => break,
+                }
+            }
+        });
+
+        // Bridge completion signals
+        let completion_rx_clone = completion_rx;
+        tokio::spawn(async move {
+            let completion_rx = Arc::new(std::sync::Mutex::new(completion_rx_clone));
+            loop {
+                let rx = completion_rx.clone();
+                match tokio::task::spawn_blocking(move || rx.lock().unwrap().recv()).await {
+                    Ok(Ok(())) => {
+                        let _ = completion_tx_async.send(());
+                    }
+                    Ok(Err(_)) | Err(_) => break,
+                }
+            }
+        });
+
+        // Spawn task to handle position updates and completion BEFORE creating stream
+        // This ensures the receiver is ready when completion signals arrive
+        let progress_tx_for_task = self.progress_tx.clone();
+        let track_id_for_task = track_id.clone();
+        let decoder_duration_for_completion = decoder_duration.clone();
+        tokio::spawn(async move {
+            info!(
+                "Seek: Spawning completion listener task for track: {}",
+                track_id_for_task
+            );
+
+            info!("Seek: Task started, waiting for position updates and completion");
+
+            loop {
+                tokio::select! {
+                    Some(pos) = position_rx_async.recv() => {
+                        let _ = progress_tx_for_task.send(PlaybackProgress::PositionUpdate {
+                            position: pos,
+                            track_id: track_id_for_task.clone(),
+                        });
+                    }
+                    Some(()) = completion_rx_async.recv() => {
+                        info!("Seek: Track completed: {}", track_id_for_task);
+                        // Send final position update matching duration to ensure progress bar reaches 100%
+                        if let Some(duration) = decoder_duration_for_completion {
+                            let _ = progress_tx_for_task.send(PlaybackProgress::PositionUpdate {
+                                position: duration,
+                                track_id: track_id_for_task.clone(),
+                            });
+                        }
+                        let _ = progress_tx_for_task.send(PlaybackProgress::TrackCompleted {
+                            track_id: track_id_for_task.clone(),
+                        });
+                        break;
+                    }
+                    else => {
+                        info!("Seek: Channels closed, exiting");
+                        break;
+                    }
+                }
+            }
+            info!(
+                "Seek: Completion listener task exiting for track: {}",
+                track_id_for_task
+            );
+        });
+
+        // Reuse existing audio output (don't create a new one)
+        let stream = match self
+            .audio_output
+            .create_stream(decoder, position_tx, completion_tx)
+        {
             Ok(stream) => stream,
             Err(e) => {
                 error!("Failed to create audio stream for seek: {:?}", e);
@@ -613,7 +786,6 @@ impl PlaybackService {
         }
 
         self.stream = Some(stream);
-        self.audio_output = audio_output_clone;
 
         // Send Play command to start audio
         self.audio_output
@@ -630,46 +802,5 @@ impl PlaybackService {
                 },
             });
         }
-
-        // Spawn task to handle position updates and completion (same as play_track)
-        let progress_tx = self.progress_tx.clone();
-        let track_id_clone = track_id.clone();
-        tokio::spawn(async move {
-            let position_rx = Arc::new(std::sync::Mutex::new(position_rx));
-            let completion_rx = Arc::new(std::sync::Mutex::new(completion_rx));
-
-            loop {
-                tokio::select! {
-                    result = tokio::task::spawn_blocking({
-                        let rx = position_rx.clone();
-                        move || rx.lock().unwrap().recv()
-                    }) => {
-                        match result {
-                            Ok(Ok(pos)) => {
-                                let _ = progress_tx.send(PlaybackProgress::PositionUpdate {
-                                    position: pos,
-                                    track_id: track_id_clone.clone(),
-                                });
-                            }
-                            Ok(Err(_)) | Err(_) => break,
-                        }
-                    }
-                    result = tokio::task::spawn_blocking({
-                        let rx = completion_rx.clone();
-                        move || rx.lock().unwrap().recv()
-                    }) => {
-                        match result {
-                            Ok(Ok(())) => {
-                                let _ = progress_tx.send(PlaybackProgress::TrackCompleted {
-                                    track_id: track_id_clone.clone(),
-                                });
-                                break;
-                            }
-                            Ok(Err(_)) | Err(_) => break,
-                        }
-                    }
-                }
-            }
-        });
     }
 }

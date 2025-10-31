@@ -267,8 +267,11 @@ impl AudioOutput {
                                 }
                                 Ok(None) => {
                                     // End of stream
+                                    info!("Audio callback: End of stream detected");
                                     is_playing.store(false, Ordering::Relaxed);
-                                    let _ = completion_tx.send(());
+                                    if completion_tx.send(()).is_err() {
+                                        warn!("Failed to send completion signal - receiver may be dropped");
+                                    }
                                     data.fill(0.0);
                                     return;
                                 }

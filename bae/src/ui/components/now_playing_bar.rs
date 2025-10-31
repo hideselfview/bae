@@ -83,19 +83,12 @@ fn PositionZone(
     is_seeking: Signal<bool>,
 ) -> Element {
     let mut local_position = use_signal(|| position().clone());
-    let mut last_synced_position = use_signal(|| position().clone());
 
     // Sync local_position with position when not seeking
-    // Only sync when position actually changes, not when is_seeking becomes false
-    // This prevents jumping back to old position when seek completes
+    // Don't read local_position in the effect to avoid reactive loop
     use_effect(move || {
-        let current_pos = position();
-        let last_pos = last_synced_position.read().clone();
-
-        // Only sync if position changed and we're not seeking
-        if !is_seeking() && current_pos != last_pos {
-            local_position.set(current_pos.clone());
-            last_synced_position.set(current_pos.clone());
+        if !is_seeking() {
+            local_position.set(position().clone());
         }
     });
 

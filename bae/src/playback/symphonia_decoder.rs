@@ -130,7 +130,7 @@ impl TrackDecoder {
         let secs = position_seconds.floor() as u64;
         let frac = position_seconds.fract();
         let seek_time = Time::new(secs, frac);
-        
+
         match self.format_reader.seek(
             SeekMode::Accurate,
             SeekTo::Time {
@@ -161,7 +161,7 @@ impl TrackDecoder {
             position_seconds,
             sample_number
         );
-        
+
         // Reset to beginning
         let zero_time = Time::new(0, 0.0);
         self.format_reader.seek(
@@ -171,7 +171,7 @@ impl TrackDecoder {
                 track_id: Some(self.track_id),
             },
         )?;
-        
+
         self.decoded_samples.store(0, Ordering::Relaxed);
 
         // Decode forward to the desired position
@@ -186,7 +186,8 @@ impl TrackDecoder {
         }
 
         // Update decoded_samples to match the seek position
-        self.decoded_samples.store(decoded.min(sample_number), Ordering::Relaxed);
+        self.decoded_samples
+            .store(decoded.min(sample_number), Ordering::Relaxed);
 
         Ok(())
     }
