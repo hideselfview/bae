@@ -146,7 +146,7 @@ impl AudioOutput {
                                     (vol.clamp(0.0, 1.0) * 10000.0) as u32,
                                     Ordering::Relaxed,
                                 );
-                            }
+                        }
                         }
                     }
 
@@ -256,7 +256,7 @@ impl AudioOutput {
                                                 // Stereo: take first two channels
                                                 converted.push(sample_buffer[base_idx]);
                                                 converted.push(sample_buffer[base_idx + 1]);
-                                            } else {
+                                } else {
                                                 // Fallback: fill with zeros
                                                 converted
                                                     .extend(std::iter::repeat_n(0.0, channels));
@@ -274,7 +274,7 @@ impl AudioOutput {
                                     }
                                     data.fill(0.0);
                                     return;
-                                }
+                        }
                                 Err(e) => {
                                     error!("Decoder error: {:?}", e);
                                     is_playing.store(false, Ordering::Relaxed);

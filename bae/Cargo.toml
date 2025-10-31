@@ -57,6 +57,11 @@ name = "test_roundtrip_vinyl"
 path = "tests/test_roundtrip_vinyl.rs"
 required-features = ["test-utils"]
 
+[[test]]
+name = "test_playback_behavior"
+path = "tests/test_playback_behavior.rs"
+required-features = ["test-utils"]
+
 [features]
 default = ["desktop"]
 desktop = ["dioxus/desktop"]

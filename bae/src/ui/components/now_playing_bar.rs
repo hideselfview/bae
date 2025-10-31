@@ -262,8 +262,8 @@ pub fn NowPlayingBar() -> Element {
     let playback_seek = playback.clone();
 
     rsx! {
-        div { class: "fixed bottom-0 left-0 right-0 bg-gray-800 text-white p-4 border-t border-gray-700",
-            div { class: "flex items-center gap-4",
+                div { class: "fixed bottom-0 left-0 right-0 bg-gray-800 text-white p-4 border-t border-gray-700",
+                    div { class: "flex items-center gap-4",
                 PlaybackControlsZone {
                     on_previous: move |_| playback_prev.previous(),
                     on_pause: move |_| playback_pause.pause(),

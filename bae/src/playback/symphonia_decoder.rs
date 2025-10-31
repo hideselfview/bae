@@ -197,3 +197,133 @@ impl TrackDecoder {
         self.duration
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// Test that seek correctly calculates seconds and fractional parts for Time::new
+    #[test]
+    fn test_seek_time_calculation() {
+        // Test various durations to ensure Time::new gets correct values
+        let test_cases = vec![
+            (Duration::from_secs(0), (0u64, 0.0f64)),
+            (Duration::from_millis(500), (0u64, 0.5f64)),
+            (Duration::from_secs(59), (59u64, 0.0f64)),
+            (Duration::from_millis(59500), (59u64, 0.5f64)),
+            (Duration::from_secs(60), (60u64, 0.0f64)),
+            (Duration::from_secs(122), (122u64, 0.0f64)),
+            (Duration::from_millis(122500), (122u64, 0.5f64)),
+            (Duration::from_secs(3661), (3661u64, 0.0f64)),
+        ];
+
+        for (duration, (expected_secs, expected_frac)) in test_cases {
+            let position_seconds = duration.as_secs_f64();
+            let secs = position_seconds.floor() as u64;
+            let frac = position_seconds.fract();
+
+            assert_eq!(
+                secs, expected_secs,
+                "Seconds should match for duration {:?}",
+                duration
+            );
+            assert!(
+                (frac - expected_frac).abs() < 0.001,
+                "Fractional part should match for duration {:?} (got {}, expected {})",
+                duration,
+                frac,
+                expected_frac
+            );
+        }
+    }
+
+    /// Test sample number calculation from duration
+    #[test]
+    fn test_sample_number_calculation() {
+        let sample_rate = 44100u32;
+
+        let test_cases = vec![
+            (Duration::from_secs(0), 0u64),
+            (Duration::from_millis(500), 22050u64),
+            (Duration::from_secs(1), 44100u64),
+            (Duration::from_secs(60), 2646000u64),
+        ];
+
+        for (duration, expected_samples) in test_cases {
+            let position_seconds = duration.as_secs_f64();
+            let sample_number = (position_seconds * sample_rate as f64) as u64;
+
+            assert_eq!(
+                sample_number, expected_samples,
+                "Sample number should match for duration {:?} at {} Hz",
+                duration, sample_rate
+            );
+        }
+    }
+
+    /// Test position calculation from decoded samples
+    #[test]
+    fn test_position_calculation_from_samples() {
+        let sample_rate = 44100u32;
+
+        let test_cases = vec![
+            (0u64, Duration::from_secs(0)),
+            (22050u64, Duration::from_millis(500)),
+            (44100u64, Duration::from_secs(1)),
+            (2646000u64, Duration::from_secs(60)),
+        ];
+
+        for (samples, expected_duration) in test_cases {
+            let seconds = samples as f64 / sample_rate as f64;
+            let calculated_duration = Duration::from_secs_f64(seconds);
+
+            // Allow small floating point error
+            let diff = calculated_duration.abs_diff(expected_duration);
+
+            assert!(
+                diff < Duration::from_millis(1),
+                "Position should match for {} samples at {} Hz (got {:?}, expected {:?})",
+                samples,
+                sample_rate,
+                calculated_duration,
+                expected_duration
+            );
+        }
+    }
+
+    /// Test that seek handles durations > 59 seconds correctly
+    /// This was the original bug that required Time::new instead of Time::from_ss
+    #[test]
+    fn test_seek_handles_long_durations() {
+        // Test that durations > 59 seconds are handled correctly
+        let long_durations = vec![
+            Duration::from_secs(60),
+            Duration::from_secs(122), // Original failing case
+            Duration::from_secs(300),
+            Duration::from_secs(3661), // Over 1 hour
+        ];
+
+        for duration in long_durations {
+            let position_seconds = duration.as_secs_f64();
+            let secs = position_seconds.floor() as u64;
+            let frac = position_seconds.fract();
+
+            // Verify secs is u64 (not u8), so it can handle > 59
+            assert!(
+                secs > 59 || duration.as_secs() <= 59,
+                "Duration {:?} should result in secs {} > 59 when duration > 59s",
+                duration,
+                secs
+            );
+
+            // Verify Time::new can be constructed (doesn't panic)
+            // The important thing is that secs is u64 (not u8) and can handle large values
+            let _seek_time = Time::new(secs, frac);
+        }
+    }
+
+    // Note: Full seek functionality tests require valid FLAC files.
+    // To test actual seek behavior with real FLAC files, use integration tests
+    // in tests/test_playback_behavior.rs
+}

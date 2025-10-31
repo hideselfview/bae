@@ -543,7 +543,7 @@ impl PlaybackService {
         // Spawn task to handle position updates and completion
         let progress_tx = self.progress_tx.clone();
         let track_id = track_id.to_string();
-        let track_duration_for_completion = track_duration.clone();
+        let track_duration_for_completion = track_duration;
         let current_position_for_listener = self.current_position_shared.clone();
         tokio::spawn(async move {
             info!(
@@ -771,7 +771,7 @@ impl PlaybackService {
         // This ensures the receiver is ready when completion signals arrive
         let progress_tx_for_task = self.progress_tx.clone();
         let track_id_for_task = track_id.clone();
-        let decoder_duration_for_completion = decoder_duration.clone();
+        let decoder_duration_for_completion = decoder_duration;
         let current_position_for_seek_listener = self.current_position_shared.clone();
         let was_paused = self.is_paused;
         tokio::spawn(async move {
