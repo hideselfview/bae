@@ -18,8 +18,8 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
     // let track_progress = use_signal(|| TrackImportState::Importing { percent: 12 });
 
     // Track playback state for this track
-    let mut is_currently_playing = use_signal(|| false);
-    let mut is_currently_paused = use_signal(|| false);
+    let is_currently_playing = use_signal(|| false);
+    let is_currently_paused = use_signal(|| false);
 
     // Subscribe to playback progress to track if this track is playing
     use_effect({
@@ -32,8 +32,8 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
             let mut is_currently_paused = is_currently_paused;
             spawn(async move {
                 while let Some(progress) = progress_rx.recv().await {
-                    match progress {
-                        PlaybackProgress::StateChanged { state } => match state {
+                    if let PlaybackProgress::StateChanged { state } = progress {
+                        match state {
                             PlaybackState::Playing {
                                 track: playing_track,
                                 ..
@@ -52,8 +52,7 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
                                 is_currently_playing.set(false);
                                 is_currently_paused.set(false);
                             }
-                        },
-                        _ => {}
+                        }
                     }
                 }
             });

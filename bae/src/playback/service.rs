@@ -111,6 +111,10 @@ pub struct PlaybackService {
     queue: VecDeque<String>, // track IDs
     current_track: Option<DbTrack>,
     current_audio_data: Option<Vec<u8>>, // Cached audio data for seeking
+    current_position: Option<std::time::Duration>, // Current playback position
+    current_duration: Option<std::time::Duration>, // Current track duration
+    is_paused: bool,                     // Whether playback is currently paused
+    current_position_shared: Arc<std::sync::Mutex<Option<std::time::Duration>>>, // Shared position for bridge tasks
     audio_output: AudioOutput,
     stream: Option<cpal::Stream>,
     next_decoder: Option<TrackDecoder>, // Preloaded for gapless playback
@@ -180,6 +184,10 @@ impl PlaybackService {
                     queue: VecDeque::new(),
                     current_track: None,
                     current_audio_data: None,
+                    current_position: None,
+                    current_duration: None,
+                    is_paused: false,
+                    current_position_shared: Arc::new(std::sync::Mutex::new(None)),
                     audio_output,
                     stream: None,
                     next_decoder: None,
@@ -517,6 +525,11 @@ impl PlaybackService {
 
         self.stream = Some(stream);
         self.current_track = Some(track.clone());
+        self.current_position = Some(std::time::Duration::ZERO);
+        self.current_duration = track_duration;
+        self.is_paused = false;
+        // Initialize shared position
+        *self.current_position_shared.lock().unwrap() = Some(std::time::Duration::ZERO);
 
         // Update state
         let _ = self.progress_tx.send(PlaybackProgress::StateChanged {
@@ -531,6 +544,7 @@ impl PlaybackService {
         let progress_tx = self.progress_tx.clone();
         let track_id = track_id.to_string();
         let track_duration_for_completion = track_duration.clone();
+        let current_position_for_listener = self.current_position_shared.clone();
         tokio::spawn(async move {
             info!(
                 "Play: Spawning completion listener task for track: {}",
@@ -542,6 +556,9 @@ impl PlaybackService {
             loop {
                 tokio::select! {
                     Some(position) = position_rx_async.recv() => {
+                        // Update shared position
+                        *current_position_for_listener.lock().unwrap() = Some(position);
+                        // Send PositionUpdate event
                         let _ = progress_tx.send(PlaybackProgress::PositionUpdate {
                             position,
                             track_id: track_id.clone(),
@@ -613,16 +630,46 @@ impl PlaybackService {
         self.audio_output
             .send_command(crate::playback::cpal_output::AudioCommand::Pause);
 
-        // State will be updated via PositionUpdate, so we don't need to send StateChanged here
-        // The position updates will preserve the duration
+        // Send StateChanged event so UI can update button state
+        if let Some(track) = &self.current_track {
+            let position = self
+                .current_position_shared
+                .lock()
+                .unwrap()
+                .unwrap_or(std::time::Duration::ZERO);
+            let duration = self.current_duration;
+            self.is_paused = true;
+            let _ = self.progress_tx.send(PlaybackProgress::StateChanged {
+                state: PlaybackState::Paused {
+                    track: track.clone(),
+                    position,
+                    duration,
+                },
+            });
+        }
     }
 
     async fn resume(&mut self) {
         self.audio_output
             .send_command(crate::playback::cpal_output::AudioCommand::Resume);
 
-        // State will be updated via PositionUpdate, so we don't need to send StateChanged here
-        // The position updates will preserve the duration
+        // Send StateChanged event so UI can update button state
+        if let Some(track) = &self.current_track {
+            let position = self
+                .current_position_shared
+                .lock()
+                .unwrap()
+                .unwrap_or(std::time::Duration::ZERO);
+            let duration = self.current_duration;
+            self.is_paused = false;
+            let _ = self.progress_tx.send(PlaybackProgress::StateChanged {
+                state: PlaybackState::Playing {
+                    track: track.clone(),
+                    position,
+                    duration,
+                },
+            });
+        }
     }
 
     async fn stop(&mut self) {
@@ -631,6 +678,8 @@ impl PlaybackService {
         }
         self.current_track = None;
         self.current_audio_data = None;
+        self.current_position = None;
+        self.current_duration = None;
         self.next_decoder = None;
         self.next_audio_data = None;
         self.next_track_id = None;
@@ -723,6 +772,8 @@ impl PlaybackService {
         let progress_tx_for_task = self.progress_tx.clone();
         let track_id_for_task = track_id.clone();
         let decoder_duration_for_completion = decoder_duration.clone();
+        let current_position_for_seek_listener = self.current_position_shared.clone();
+        let was_paused = self.is_paused;
         tokio::spawn(async move {
             info!(
                 "Seek: Spawning completion listener task for track: {}",
@@ -734,6 +785,9 @@ impl PlaybackService {
             loop {
                 tokio::select! {
                     Some(pos) = position_rx_async.recv() => {
+                        // Update shared position
+                        *current_position_for_seek_listener.lock().unwrap() = Some(pos);
+                        // Send PositionUpdate event
                         let _ = progress_tx_for_task.send(PlaybackProgress::PositionUpdate {
                             position: pos,
                             track_id: track_id_for_task.clone(),
@@ -787,20 +841,38 @@ impl PlaybackService {
 
         self.stream = Some(stream);
 
-        // Send Play command to start audio
-        self.audio_output
-            .send_command(crate::playback::cpal_output::AudioCommand::Play);
+        // Update shared position
+        *self.current_position_shared.lock().unwrap() = Some(position);
+        self.current_duration = decoder_duration;
+
+        // If we were paused, keep it paused; otherwise play
+        if was_paused {
+            self.audio_output
+                .send_command(crate::playback::cpal_output::AudioCommand::Pause);
+        } else {
+            // Send Play command to start audio
+            self.audio_output
+                .send_command(crate::playback::cpal_output::AudioCommand::Play);
+        }
 
         // Update state with new position
         if let Some(track) = &self.current_track {
-            // Get duration from decoder if available
-            let _ = self.progress_tx.send(PlaybackProgress::StateChanged {
-                state: PlaybackState::Playing {
+            let state = if was_paused {
+                PlaybackState::Paused {
                     track: track.clone(),
                     position,
                     duration: decoder_duration,
-                },
-            });
+                }
+            } else {
+                PlaybackState::Playing {
+                    track: track.clone(),
+                    position,
+                    duration: decoder_duration,
+                }
+            };
+            let _ = self
+                .progress_tx
+                .send(PlaybackProgress::StateChanged { state });
         }
     }
 }
