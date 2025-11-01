@@ -742,6 +742,8 @@ impl PlaybackService {
             .send_command(crate::playback::cpal_output::AudioCommand::Pause);
 
         // Send StateChanged event so UI can update button state
+        // Position/duration are maintained via PositionUpdate events, but we include
+        // current position here for cases where PositionUpdate hasn't arrived yet
         if let Some(track) = &self.current_track {
             let position = self
                 .current_position_shared
@@ -765,6 +767,8 @@ impl PlaybackService {
             .send_command(crate::playback::cpal_output::AudioCommand::Resume);
 
         // Send StateChanged event so UI can update button state
+        // Position/duration are maintained via PositionUpdate events, but we include
+        // current position here for cases where PositionUpdate hasn't arrived yet
         if let Some(track) = &self.current_track {
             let position = self
                 .current_position_shared
