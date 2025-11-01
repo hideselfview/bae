@@ -108,7 +108,8 @@ pub struct PlaybackService {
     chunk_size_bytes: usize,
     command_rx: tokio_mpsc::UnboundedReceiver<PlaybackCommand>,
     progress_tx: tokio_mpsc::UnboundedSender<PlaybackProgress>,
-    queue: VecDeque<String>, // track IDs
+    queue: VecDeque<String>,           // track IDs
+    previous_track_id: Option<String>, // Track ID of the previous track
     current_track: Option<DbTrack>,
     current_audio_data: Option<Vec<u8>>, // Cached audio data for seeking
     current_position: Option<std::time::Duration>, // Current playback position
@@ -182,6 +183,7 @@ impl PlaybackService {
                     command_rx,
                     progress_tx,
                     queue: VecDeque::new(),
+                    previous_track_id: None,
                     current_track: None,
                     current_audio_data: None,
                     current_position: None,
@@ -221,6 +223,11 @@ impl PlaybackService {
                     self.next_track_id = None;
                     self.next_duration = None;
 
+                    // Save current track as previous before switching
+                    if let Some(current_track) = &self.current_track {
+                        self.previous_track_id = Some(current_track.id.clone());
+                    }
+
                     // Clear queue
                     self.queue.clear();
 
@@ -254,6 +261,11 @@ impl PlaybackService {
                     self.play_track(&track_id).await;
                 }
                 PlaybackCommand::PlayAlbum(track_ids) => {
+                    // Save current track as previous before switching
+                    if let Some(current_track) = &self.current_track {
+                        self.previous_track_id = Some(current_track.id.clone());
+                    }
+
                     self.queue.clear();
                     for track_id in track_ids {
                         self.queue.push_back(track_id);
@@ -285,6 +297,11 @@ impl PlaybackService {
                     {
                         let preloaded_duration = self.next_duration.take();
                         info!("Using preloaded track: {}", preloaded_track_id);
+
+                        // Save current track as previous before switching
+                        if let Some(current_track) = &self.current_track {
+                            self.previous_track_id = Some(current_track.id.clone());
+                        }
 
                         // Remove the preloaded track from the queue if it's at the front
                         // This ensures play_track_with_decoder preloads the NEXT track
@@ -323,6 +340,10 @@ impl PlaybackService {
                         .await;
                     } else if let Some(next_track) = self.queue.pop_front() {
                         info!("No preloaded track, playing from queue: {}", next_track);
+                        // Save current track as previous before switching
+                        if let Some(current_track) = &self.current_track {
+                            self.previous_track_id = Some(current_track.id.clone());
+                        }
                         // No preloaded track, reassemble from scratch
                         self.play_track(&next_track).await;
                     } else {
@@ -331,10 +352,39 @@ impl PlaybackService {
                     }
                 }
                 PlaybackCommand::Previous => {
-                    // For now, just restart the current track
                     if let Some(track) = &self.current_track {
-                        let track_id = track.id.clone();
-                        self.play_track(&track_id).await;
+                        let current_position = self
+                            .current_position_shared
+                            .lock()
+                            .unwrap()
+                            .unwrap_or(std::time::Duration::ZERO);
+
+                        // If we're less than 3 seconds into the track, go to previous track
+                        // Otherwise restart the current track
+                        if current_position < std::time::Duration::from_secs(3) {
+                            if let Some(previous_track_id) = self.previous_track_id.clone() {
+                                info!("Going to previous track: {}", previous_track_id);
+                                // play_track will update previous_track_id with current track
+                                self.play_track(&previous_track_id).await;
+                            } else {
+                                // No previous track, restart current track
+                                info!("No previous track, restarting current track");
+                                let track_id = track.id.clone();
+                                self.play_track(&track_id).await;
+                            }
+                        } else {
+                            // More than 3 seconds in, restart current track
+                            // Preserve previous_track_id so we can still go back after restarting
+                            info!("Restarting current track from beginning");
+                            let track_id = track.id.clone();
+                            let saved_previous = self.previous_track_id.clone();
+                            self.play_track(&track_id).await;
+                            // Restore previous_track_id after play_track updates it
+                            // This allows going back to the original previous track after restart
+                            if saved_previous.is_some() {
+                                self.previous_track_id = saved_previous;
+                            }
+                        }
                     }
                 }
                 PlaybackCommand::Seek(position) => {
