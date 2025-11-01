@@ -13,20 +13,47 @@ fn PlaybackControlsZone(
     on_next: EventHandler<()>,
     is_playing: ReadOnlySignal<bool>,
     is_paused: ReadOnlySignal<bool>,
+    is_loading: ReadOnlySignal<bool>,
+    is_stopped: ReadOnlySignal<bool>,
 ) -> Element {
     rsx! {
         div { class: "flex items-center gap-2",
-            if is_playing() || is_paused() {
-                button {
-                    class: "px-3 py-2 bg-gray-700 rounded hover:bg-gray-600",
-                    onclick: move |_| on_previous.call(()),
-                    "⏮"
-                }
-                if is_playing() {
+            button {
+                class: if is_loading() {
+                    "px-3 py-2 bg-gray-700 rounded opacity-50"
+                } else {
+                    "px-3 py-2 bg-gray-700 rounded hover:bg-gray-600"
+                },
+                disabled: is_loading(),
+                onclick: move |_| on_previous.call(()),
+                "⏮"
+            }
+            if is_playing() {
+                if is_loading() {
+                    button {
+                        class: "px-4 py-2 bg-blue-600 rounded opacity-50 flex items-center justify-center",
+                        disabled: true,
+                        div { class: "animate-spin rounded-full h-4 w-4 border-b-2 border-white" }
+                    }
+                } else {
                     button {
                         class: "px-4 py-2 bg-blue-600 rounded hover:bg-blue-500",
                         onclick: move |_| on_pause.call(()),
                         "⏸"
+                    }
+                }
+            } else {
+                if is_stopped() {
+                    button {
+                        class: "px-4 py-2 bg-gray-700 rounded opacity-50",
+                        disabled: true,
+                        "▶"
+                    }
+                } else if is_loading() {
+                    button {
+                        class: "px-4 py-2 bg-green-600 rounded opacity-50 flex items-center justify-center",
+                        disabled: true,
+                        div { class: "animate-spin rounded-full h-4 w-4 border-b-2 border-white" }
                     }
                 } else {
                     button {
@@ -35,13 +62,16 @@ fn PlaybackControlsZone(
                         "▶"
                     }
                 }
-                button {
-                    class: "px-3 py-2 bg-gray-700 rounded hover:bg-gray-600",
-                    onclick: move |_| on_next.call(()),
-                    "⏭"
-                }
-            } else {
-                div { class: "w-24" }
+            }
+            button {
+                class: if is_loading() {
+                    "px-3 py-2 bg-gray-700 rounded opacity-50"
+                } else {
+                    "px-3 py-2 bg-gray-700 rounded hover:bg-gray-600"
+                },
+                disabled: is_loading(),
+                onclick: move |_| on_next.call(()),
+                "⏭"
             }
         }
     }
@@ -51,17 +81,19 @@ fn PlaybackControlsZone(
 fn TrackInfoZone(
     track: ReadOnlySignal<Option<DbTrack>>,
     artist_name: ReadOnlySignal<String>,
-    loading_track_id: ReadOnlySignal<Option<String>>,
+    is_loading: ReadOnlySignal<bool>,
 ) -> Element {
     rsx! {
         div { class: "flex-1",
             if let Some(track) = track() {
                 div { class: "font-semibold", "{track.title}" }
                 div { class: "text-sm text-gray-400", "{artist_name()}" }
-            } else if let Some(track_id) = loading_track_id() {
-                div { class: "text-gray-400", "Loading {track_id}..." }
+            } else if is_loading() {
+                div { class: "font-semibold text-gray-400", "Loading..." }
+                div { class: "text-sm text-gray-500", "Loading" }
             } else {
-                div { class: "text-gray-400", "No track playing" }
+                div { class: "font-semibold text-gray-400", "No track playing" }
+                div { class: "text-sm text-gray-500", "" }
             }
         }
     }
@@ -316,10 +348,8 @@ pub fn NowPlayingBar() -> Element {
     });
     let is_playing = use_memo(move || matches!(state(), PlaybackState::Playing { .. }));
     let is_paused = use_memo(move || matches!(state(), PlaybackState::Paused { .. }));
-    let loading_track_id = use_memo(move || match state() {
-        PlaybackState::Loading { track_id } => Some(track_id.clone()),
-        _ => None,
-    });
+    let is_loading = use_memo(move || matches!(state(), PlaybackState::Loading { .. }));
+    let is_stopped = use_memo(move || matches!(state(), PlaybackState::Stopped));
 
     let artist_name = use_memo(move || current_artist.read().clone());
 
@@ -330,7 +360,7 @@ pub fn NowPlayingBar() -> Element {
     let playback_seek = playback.clone();
 
     rsx! {
-                div { class: "fixed bottom-0 left-0 right-0 bg-gray-800 text-white p-4 border-t border-gray-700",
+            div { class: "fixed bottom-0 left-0 right-0 bg-gray-800 text-white p-4 border-t border-gray-700",
                     div { class: "flex items-center gap-4",
                 PlaybackControlsZone {
                     on_previous: move |_| playback_prev.previous(),
@@ -339,11 +369,13 @@ pub fn NowPlayingBar() -> Element {
                     on_next: move |_| playback_next.next(),
                     is_playing,
                     is_paused,
+                    is_loading,
+                    is_stopped,
                 }
                 TrackInfoZone {
                     track,
                     artist_name,
-                    loading_track_id,
+                    is_loading,
                 }
                 PositionZone {
                     position,
