@@ -10,7 +10,7 @@ use cpal::traits::StreamTrait;
 use std::collections::VecDeque;
 use std::sync::{mpsc, Arc};
 use tokio::sync::mpsc as tokio_mpsc;
-use tracing::{error, info};
+use tracing::{error, info, trace};
 
 /// Playback commands sent to the service
 #[derive(Debug, Clone)]
@@ -448,6 +448,7 @@ impl PlaybackService {
                     }
                 }
                 PlaybackCommand::Seek(position) => {
+                    info!("Seek command received: {:?}", position);
                     self.seek(position).await;
                 }
                 PlaybackCommand::SetVolume(volume) => {
@@ -812,11 +813,41 @@ impl PlaybackService {
             }
         };
 
-        info!("Seeking to position: {:?}", position);
+        let current_position = self
+            .current_position_shared
+            .lock()
+            .unwrap()
+            .unwrap_or(std::time::Duration::ZERO);
+
+        let position_diff = position.abs_diff(current_position);
+
+        info!(
+            "Seeking to position: {:?}, current position: {:?}, difference: {:?}",
+            position, current_position, position_diff
+        );
+
+        // If seeking to roughly the same position (within 100ms), skip to avoid disrupting playback
+        if position_diff < std::time::Duration::from_millis(100) {
+            trace!(
+                "Seek: Skipping seek to same position (difference: {:?} < 100ms)",
+                position_diff
+            );
+            // Send SeekSkipped event to clear is_seeking flag in UI
+            trace!("Seek: Sending SeekSkipped event to clear is_seeking flag");
+            let _ = self.progress_tx.send(PlaybackProgress::SeekSkipped {
+                requested_position: position,
+                current_position,
+            });
+            return;
+        }
 
         // Stop current stream
         if let Some(stream) = self.stream.take() {
+            trace!("Seek: Dropping old stream");
             drop(stream);
+            trace!("Seek: Old stream dropped");
+        } else {
+            trace!("Seek: No stream to drop");
         }
 
         // Create new decoder with seeked position
@@ -856,6 +887,8 @@ impl PlaybackService {
             return;
         }
 
+        trace!("Seek: Decoder seeked successfully, creating new channels");
+
         // Create channels for position updates and completion
         let (position_tx, position_rx) = mpsc::channel();
         let (completion_tx, completion_rx) = mpsc::channel();
@@ -864,19 +897,31 @@ impl PlaybackService {
         let (position_tx_async, mut position_rx_async) = tokio_mpsc::unbounded_channel();
         let (completion_tx_async, mut completion_rx_async) = tokio_mpsc::unbounded_channel();
 
+        trace!("Seek: Created new channels for position updates");
+
         // Bridge position updates
         let position_rx_clone = position_rx;
         tokio::spawn(async move {
             let position_rx = Arc::new(std::sync::Mutex::new(position_rx_clone));
+            trace!("Seek: Bridge position task started");
             loop {
                 let rx = position_rx.clone();
                 match tokio::task::spawn_blocking(move || rx.lock().unwrap().recv()).await {
                     Ok(Ok(pos)) => {
-                        let _ = position_tx_async.send(pos);
+                        trace!("Seek: Bridge received position update: {:?}", pos);
+                        let send_result = position_tx_async.send(pos);
+                        if let Err(e) = send_result {
+                            error!("Seek: Bridge failed to forward position update: {:?}", e);
+                            break;
+                        }
                     }
-                    Ok(Err(_)) | Err(_) => break,
+                    Ok(Err(_)) | Err(_) => {
+                        trace!("Seek: Bridge position channel closed");
+                        break;
+                    }
                 }
             }
+            trace!("Seek: Bridge position task exiting");
         });
 
         // Bridge completion signals
@@ -887,9 +932,13 @@ impl PlaybackService {
                 let rx = completion_rx.clone();
                 match tokio::task::spawn_blocking(move || rx.lock().unwrap().recv()).await {
                     Ok(Ok(())) => {
+                        trace!("Seek: Bridge received completion signal");
                         let _ = completion_tx_async.send(());
                     }
-                    Ok(Err(_)) | Err(_) => break,
+                    Ok(Err(_)) | Err(_) => {
+                        trace!("Seek: Bridge completion channel closed");
+                        break;
+                    }
                 }
             }
         });
@@ -902,23 +951,27 @@ impl PlaybackService {
         let current_position_for_seek_listener = self.current_position_shared.clone();
         let was_paused = self.is_paused;
         tokio::spawn(async move {
-            info!(
+            trace!(
                 "Seek: Spawning completion listener task for track: {}",
                 track_id_for_task
             );
 
-            info!("Seek: Task started, waiting for position updates and completion");
+            trace!("Seek: Task started, waiting for position updates and completion");
 
             loop {
                 tokio::select! {
                     Some(pos) = position_rx_async.recv() => {
+                        trace!("Seek: Listener received position update: {:?}", pos);
                         // Update shared position
                         *current_position_for_seek_listener.lock().unwrap() = Some(pos);
                         // Send PositionUpdate event
-                        let _ = progress_tx_for_task.send(PlaybackProgress::PositionUpdate {
+                        let send_result = progress_tx_for_task.send(PlaybackProgress::PositionUpdate {
                             position: pos,
                             track_id: track_id_for_task.clone(),
                         });
+                        if let Err(e) = send_result {
+                            error!("Seek: Listener failed to send position update: {:?}", e);
+                        }
                     }
                     Some(()) = completion_rx_async.recv() => {
                         info!("Seek: Track completed: {}", track_id_for_task);
@@ -935,23 +988,28 @@ impl PlaybackService {
                         break;
                     }
                     else => {
-                        info!("Seek: Channels closed, exiting");
+                        trace!("Seek: Channels closed, exiting listener task");
                         break;
                     }
                 }
             }
-            info!(
+            trace!(
                 "Seek: Completion listener task exiting for track: {}",
                 track_id_for_task
             );
         });
+
+        trace!("Seek: Creating new audio stream");
 
         // Reuse existing audio output (don't create a new one)
         let stream = match self
             .audio_output
             .create_stream(decoder, position_tx, completion_tx)
         {
-            Ok(stream) => stream,
+            Ok(stream) => {
+                trace!("Seek: Audio stream created successfully");
+                stream
+            }
             Err(e) => {
                 error!("Failed to create audio stream for seek: {:?}", e);
                 self.stop().await;
@@ -966,40 +1024,35 @@ impl PlaybackService {
             return;
         }
 
+        trace!("Seek: Stream started successfully");
+
         self.stream = Some(stream);
 
         // Update shared position
         *self.current_position_shared.lock().unwrap() = Some(position);
         self.current_duration = decoder_duration;
+        trace!("Seek: Updated shared position to: {:?}", position);
 
         // If we were paused, keep it paused; otherwise play
         if was_paused {
+            trace!("Seek: Was paused, keeping paused");
             self.audio_output
                 .send_command(crate::playback::cpal_output::AudioCommand::Pause);
         } else {
+            trace!("Seek: Was playing, sending Play command");
             // Send Play command to start audio
             self.audio_output
                 .send_command(crate::playback::cpal_output::AudioCommand::Play);
         }
 
-        // Update state with new position
+        // Send Seeked event with new position
         if let Some(track) = &self.current_track {
-            let state = if was_paused {
-                PlaybackState::Paused {
-                    track: track.clone(),
-                    position,
-                    duration: decoder_duration,
-                }
-            } else {
-                PlaybackState::Playing {
-                    track: track.clone(),
-                    position,
-                    duration: decoder_duration,
-                }
-            };
-            let _ = self
-                .progress_tx
-                .send(PlaybackProgress::StateChanged { state });
+            trace!("Seek: Sending Seeked event with position: {:?}", position);
+            let _ = self.progress_tx.send(PlaybackProgress::Seeked {
+                position,
+                track_id: track.id.clone(),
+                was_paused,
+            });
         }
     }
 }

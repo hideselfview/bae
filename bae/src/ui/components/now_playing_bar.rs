@@ -107,6 +107,19 @@ fn PositionZone(
                         onmousedown: move |_| {
                             is_seeking.set(true);
                         },
+                        onmouseup: move |_| {
+                            // If user releases without moving, clear is_seeking
+                            // This prevents position updates from being blocked forever
+                            if is_seeking() {
+                                // Small delay to let onchange fire first if it will
+                                spawn(async move {
+                                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                                    if is_seeking() {
+                                        is_seeking.set(false);
+                                    }
+                                });
+                            }
+                        },
                         oninput: move |evt| {
                             if let Ok(secs) = evt.value().parse::<u64>() {
                                 local_position.set(Some(std::time::Duration::from_secs(secs)));
@@ -161,6 +174,56 @@ pub fn NowPlayingBar() -> Element {
                         } => {
                             // Seek error - could show user notification, but for now just ignore
                             tracing::warn!("Seek failed: requested position past track end");
+                        }
+                        PlaybackProgress::Seeked {
+                            position,
+                            track_id: _,
+                            was_paused,
+                        } => {
+                            // Seek completed - update position in current state
+                            if is_seeking() {
+                                is_seeking.set(false);
+                            }
+
+                            // Update position in state, preserving track and duration
+                            match state() {
+                                PlaybackState::Playing {
+                                    ref track,
+                                    duration,
+                                    ..
+                                }
+                                | PlaybackState::Paused {
+                                    ref track,
+                                    duration,
+                                    ..
+                                } => {
+                                    let new_state = if was_paused {
+                                        PlaybackState::Paused {
+                                            track: track.clone(),
+                                            position,
+                                            duration,
+                                        }
+                                    } else {
+                                        PlaybackState::Playing {
+                                            track: track.clone(),
+                                            position,
+                                            duration,
+                                        }
+                                    };
+                                    state.set(new_state);
+                                }
+                                _ => {}
+                            }
+                        }
+                        PlaybackProgress::SeekSkipped {
+                            requested_position: _,
+                            current_position: _,
+                        } => {
+                            // Seek was skipped (position difference < 100ms)
+                            // Clear is_seeking flag so position updates resume
+                            if is_seeking() {
+                                is_seeking.set(false);
+                            }
                         }
                         PlaybackProgress::StateChanged { state: new_state } => {
                             // Update state first
