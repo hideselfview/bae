@@ -1,6 +1,8 @@
 use crate::ui::Route;
 use dioxus::prelude::*;
 
+use super::NowPlayingBar;
+
 /// Shared navbar component.
 #[component]
 pub fn Navbar() -> Element {
@@ -24,5 +26,6 @@ pub fn Navbar() -> Element {
         }
 
         Outlet::<Route> {}
+        NowPlayingBar {}
     }
 }

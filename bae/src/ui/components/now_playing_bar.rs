@@ -1,6 +1,7 @@
 use crate::db::DbTrack;
 use crate::library::use_library_manager;
 use crate::playback::{PlaybackProgress, PlaybackState};
+use crate::ui::Route;
 use dioxus::prelude::*;
 
 use super::use_playback_service;
@@ -83,10 +84,33 @@ fn TrackInfoZone(
     artist_name: ReadOnlySignal<String>,
     is_loading: ReadOnlySignal<bool>,
 ) -> Element {
+    let library_manager = use_library_manager();
+    // let navigator = navigator();
+
     rsx! {
         div { class: "flex-1",
             if let Some(track) = track() {
-                div { class: "font-semibold", "{track.title}" }
+                div {
+                    class: "font-semibold cursor-pointer hover:text-blue-300 transition-colors",
+                    onclick: {
+                        let track = track.clone();
+                        let library_manager = library_manager.clone();
+                        let navigator = navigator();
+                        move |_| {
+                            let track = track.clone();
+                            let library_manager = library_manager.clone();
+                            spawn(async move {
+                                if let Ok(album_id) = library_manager.get().get_album_id_for_release(&track.release_id).await {
+                                    navigator.push(Route::AlbumDetail {
+                                        album_id,
+                                        release_id: track.release_id.clone(),
+                                    });
+                                }
+                            });
+                        }
+                    },
+                    "{track.title}"
+                }
                 div { class: "text-sm text-gray-400", "{artist_name()}" }
             } else if is_loading() {
                 div { class: "font-semibold text-gray-400", "Loading..." }

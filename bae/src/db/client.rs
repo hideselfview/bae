@@ -761,6 +761,19 @@ impl Database {
         }
     }
 
+    /// Get album_id for a release
+    pub async fn get_album_id_for_release(
+        &self,
+        release_id: &str,
+    ) -> Result<Option<String>, sqlx::Error> {
+        let row = sqlx::query("SELECT album_id FROM releases WHERE id = ?")
+            .bind(release_id)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.map(|r| r.get("album_id")))
+    }
+
     /// Get tracks for a release
     pub async fn get_tracks_for_release(
         &self,

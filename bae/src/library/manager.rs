@@ -234,6 +234,31 @@ impl LibraryManager {
         Ok(track.release_id)
     }
 
+    /// Get album ID for a track
+    pub async fn get_album_id_for_track(&self, track_id: &str) -> Result<String, LibraryError> {
+        let track = self
+            .database
+            .get_track_by_id(track_id)
+            .await?
+            .ok_or_else(|| LibraryError::TrackMapping("Track not found".to_string()))?;
+        let album_id = self
+            .database
+            .get_album_id_for_release(&track.release_id)
+            .await?
+            .ok_or_else(|| LibraryError::TrackMapping("Release not found".to_string()))?;
+        Ok(album_id)
+    }
+
+    /// Get album ID for a release
+    pub async fn get_album_id_for_release(&self, release_id: &str) -> Result<String, LibraryError> {
+        let album_id = self
+            .database
+            .get_album_id_for_release(release_id)
+            .await?
+            .ok_or_else(|| LibraryError::TrackMapping("Release not found".to_string()))?;
+        Ok(album_id)
+    }
+
     /// Insert an artist
     pub async fn insert_artist(&self, artist: &DbArtist) -> Result<(), LibraryError> {
         self.database.insert_artist(artist).await?;

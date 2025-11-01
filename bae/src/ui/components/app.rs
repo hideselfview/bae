@@ -3,7 +3,7 @@ use crate::ui::{Route, FAVICON, MAIN_CSS, TAILWIND_CSS};
 use dioxus::prelude::*;
 use tracing::debug;
 
-use super::{NowPlayingBar, PlaybackStateProvider};
+use super::PlaybackStateProvider;
 
 #[component]
 pub fn App() -> Element {
@@ -16,7 +16,6 @@ pub fn App() -> Element {
         PlaybackStateProvider {
             AlbumImportContextProvider {
                 div { class: "pb-24", Router::<Route> {} }
-                NowPlayingBar {}
             }
         }
     }
