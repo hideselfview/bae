@@ -12,6 +12,7 @@ mod discogs;
 mod encryption;
 mod import;
 mod library;
+mod media_controls;
 mod playback;
 mod subsonic;
 mod test_support;
@@ -134,6 +135,27 @@ fn main() {
         config.chunk_size_bytes,
         runtime_handle.clone(),
     );
+
+    // Initialize media controls for macOS (play/pause FN key support)
+    let media_controls = match media_controls::setup_media_controls(
+        playback_handle.clone(),
+        library_manager.clone(),
+        runtime_handle.clone(),
+    ) {
+        Ok(controls) => {
+            info!("Media controls setup successful");
+            Some(controls)
+        }
+        Err(e) => {
+            error!("Failed to setup media controls: {:?}", e);
+            error!("Media key support will not be available");
+            None
+        }
+    };
+
+    // Keep media controls alive for the app lifetime
+    // The Arc will keep it alive, but we need to ensure it's not dropped
+    let _keep_alive = media_controls;
 
     // Create UI context
     let ui_context = AppContext {

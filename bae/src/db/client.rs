@@ -706,6 +706,30 @@ impl Database {
         Ok(albums)
     }
 
+    /// Get album by ID
+    pub async fn get_album_by_id(&self, album_id: &str) -> Result<Option<DbAlbum>, sqlx::Error> {
+        let row = sqlx::query("SELECT * FROM albums WHERE id = ?")
+            .bind(album_id)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.map(|row| DbAlbum {
+            id: row.get("id"),
+            title: row.get("title"),
+            year: row.get("year"),
+            discogs_master_id: row.get("discogs_master_id"),
+            bandcamp_album_id: row.get("bandcamp_album_id"),
+            cover_art_url: row.get("cover_art_url"),
+            is_compilation: row.get("is_compilation"),
+            created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
+                .unwrap()
+                .with_timezone(&Utc),
+            updated_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("updated_at"))
+                .unwrap()
+                .with_timezone(&Utc),
+        }))
+    }
+
     /// Get all releases for an album
     pub async fn get_releases_for_album(
         &self,

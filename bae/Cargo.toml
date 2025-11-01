@@ -42,6 +42,7 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }  # Logging configuration
 futures = "0.3.31"
 tokio-stream = "0.1.17"
+souvlaki = "0.8"
 
 [dev-dependencies]
 tempfile = "3.8"

@@ -142,6 +142,11 @@ impl LibraryManager {
         Ok(self.database.get_albums().await?)
     }
 
+    /// Get album by ID
+    pub async fn get_album_by_id(&self, album_id: &str) -> Result<Option<DbAlbum>, LibraryError> {
+        Ok(self.database.get_album_by_id(album_id).await?)
+    }
+
     /// Get all releases for a specific album
     pub async fn get_releases_for_album(
         &self,
