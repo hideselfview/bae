@@ -3,14 +3,17 @@
 // Handle for sending import requests and subscribing to progress updates.
 // Provides the public API for interacting with the import service.
 
+use crate::cue_flac::CueFlacProcessor;
 use crate::db::{DbAlbum, DbRelease};
 use crate::import::discogs_parser::parse_discogs_album;
 use crate::import::progress::ImportProgressHandle;
 use crate::import::track_to_file_mapper::map_tracks_to_files;
 use crate::import::types::{DiscoveredFile, ImportProgress, ImportRequestParams, TrackFile};
 use crate::library::SharedLibraryManager;
+use crate::playback::symphonia_decoder::TrackDecoder;
 use std::path::Path;
 use tokio::sync::mpsc;
+use tracing::{debug, warn};
 
 /// Handle for sending import requests and subscribing to progress updates
 #[derive(Clone)]
@@ -121,7 +124,10 @@ impl ImportHandle {
                     .await
                     .map_err(|e| format!("Database error: {}", e))?;
 
-                // 6. Insert album-artist relationships
+                // 6. Extract and store durations early (before pipeline starts)
+                extract_and_store_durations(&library_manager, &tracks_to_files).await?;
+
+                // 7. Insert album-artist relationships
                 for album_artist in &album_artists {
                     library_manager
                         .insert_album_artist(album_artist)
@@ -173,6 +179,108 @@ impl ImportHandle {
         track_id: String,
     ) -> tokio::sync::mpsc::UnboundedReceiver<ImportProgress> {
         self.progress_handle.subscribe_track(track_id)
+    }
+}
+
+/// Extract durations from audio files and update database immediately
+async fn extract_and_store_durations(
+    library_manager: &crate::library::LibraryManager,
+    tracks_to_files: &[TrackFile],
+) -> Result<(), String> {
+    use std::collections::HashMap;
+    use std::path::Path;
+
+    // Group tracks by file path for CUE/FLAC handling
+    let mut file_groups: HashMap<&Path, Vec<&TrackFile>> = HashMap::new();
+    for mapping in tracks_to_files {
+        file_groups
+            .entry(mapping.file_path.as_path())
+            .or_default()
+            .push(mapping);
+    }
+
+    for (file_path, mappings) in file_groups {
+        let is_cue_flac = mappings.len() > 1
+            && file_path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|s| s.to_lowercase())
+                == Some("flac".to_string());
+
+        if is_cue_flac {
+            // CUE/FLAC: extract durations from CUE sheet
+            let cue_path = file_path.with_extension("cue");
+            if cue_path.exists() {
+                match CueFlacProcessor::parse_cue_sheet(&cue_path) {
+                    Ok(cue_sheet) => {
+                        for (mapping, cue_track) in mappings.iter().zip(cue_sheet.tracks.iter()) {
+                            let duration_ms = if let Some(end_time) = cue_track.end_time_ms {
+                                Some((end_time - cue_track.start_time_ms) as i64)
+                            } else {
+                                // Last track - extract from file
+                                extract_duration_from_file(file_path).map(|file_duration_ms| {
+                                    file_duration_ms - cue_track.start_time_ms as i64
+                                })
+                            };
+
+                            library_manager
+                                .update_track_duration(&mapping.db_track_id, duration_ms)
+                                .await
+                                .map_err(|e| format!("Failed to update track duration: {}", e))?;
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to parse CUE sheet for duration extraction: {:?}", e);
+                    }
+                }
+            }
+        } else {
+            // Individual files: extract duration from each file
+            for mapping in mappings {
+                let duration_ms = extract_duration_from_file(&mapping.file_path);
+                library_manager
+                    .update_track_duration(&mapping.db_track_id, duration_ms)
+                    .await
+                    .map_err(|e| format!("Failed to update track duration: {}", e))?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Extract duration from an audio file
+fn extract_duration_from_file(file_path: &Path) -> Option<i64> {
+    debug!("Extracting duration from file: {}", file_path.display());
+    let file_data = match std::fs::read(file_path) {
+        Ok(data) => {
+            debug!("Read {} bytes from file", data.len());
+            data
+        }
+        Err(e) => {
+            warn!("Failed to read file for duration extraction: {}", e);
+            return None;
+        }
+    };
+
+    match TrackDecoder::new(file_data) {
+        Ok(decoder) => {
+            let duration = decoder.duration().map(|d| d.as_millis() as i64);
+            if let Some(dur_ms) = duration {
+                debug!(
+                    "Extracted duration: {} ms from {}",
+                    dur_ms,
+                    file_path.display()
+                );
+            } else {
+                warn!("Duration not available for file: {}", file_path.display());
+            }
+            duration
+        }
+        Err(e) => {
+            warn!("Failed to decode file for duration extraction: {:?}", e);
+            None
+        }
     }
 }
 

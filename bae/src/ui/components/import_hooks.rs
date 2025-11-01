@@ -2,7 +2,7 @@ use crate::db::ImportStatus;
 use crate::import::ImportProgress;
 use crate::library::use_import_service;
 use dioxus::prelude::*;
-use tracing::info;
+use tracing::trace;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TrackImportState {
@@ -38,37 +38,38 @@ pub fn use_track_progress(
             spawn(async move {
                 let mut progress_rx = import_service.subscribe_track(track_id.clone());
 
-                info!("Track progress subscription started for track {}", track_id);
+                trace!("Track progress subscription started for track {}", track_id);
 
                 while let Some(progress_event) = progress_rx.recv().await {
-                    info!(
+                    trace!(
                         "Track {} received progress event: {:?}",
-                        track_id, progress_event
+                        track_id,
+                        progress_event
                     );
 
                     match progress_event {
                         ImportProgress::Started { .. } => {
-                            info!("Track {} started importing", track_id);
+                            trace!("Track {} started importing", track_id);
                             state.set(TrackImportState::Importing { percent: 0 });
                         }
                         ImportProgress::Progress { percent, .. } => {
-                            info!("Track {} progress: {}%", track_id, percent);
+                            trace!("Track {} progress: {}%", track_id, percent);
                             state.set(TrackImportState::Importing { percent });
                         }
                         ImportProgress::Complete { .. } => {
-                            info!("Track {} complete", track_id);
+                            trace!("Track {} complete", track_id);
                             state.set(TrackImportState::Complete);
                             break;
                         }
                         ImportProgress::Failed { .. } => {
-                            info!("Track {} failed", track_id);
+                            trace!("Track {} failed", track_id);
                             state.set(TrackImportState::Failed);
                             break;
                         }
                     }
                 }
 
-                info!("Track progress subscription ended for track {}", track_id);
+                trace!("Track progress subscription ended for track {}", track_id);
             });
         }
     });

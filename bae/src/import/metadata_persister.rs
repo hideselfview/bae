@@ -3,9 +3,10 @@ use crate::db::{DbCueSheet, DbFile, DbFileChunk, DbTrackPosition};
 use crate::import::types::FileToChunks;
 use crate::import::types::TrackFile;
 use crate::library::LibraryManager;
+use crate::playback::symphonia_decoder::TrackDecoder;
 use std::collections::HashMap;
 use std::path::Path;
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// Service responsible for persisting file metadata to the database.
 ///
@@ -27,6 +28,41 @@ impl<'a> MetadataPersister<'a> {
     /// Create a new metadata persister
     pub fn new(library: &'a LibraryManager) -> Self {
         Self { library }
+    }
+
+    /// Extract duration from an audio file
+    fn extract_duration_from_file(file_path: &Path) -> Option<i64> {
+        debug!("Extracting duration from file: {}", file_path.display());
+        let file_data = match std::fs::read(file_path) {
+            Ok(data) => {
+                debug!("Read {} bytes from file", data.len());
+                data
+            }
+            Err(e) => {
+                warn!("Failed to read file for duration extraction: {}", e);
+                return None;
+            }
+        };
+
+        match TrackDecoder::new(file_data) {
+            Ok(decoder) => {
+                let duration = decoder.duration().map(|d| d.as_millis() as i64);
+                if let Some(dur_ms) = duration {
+                    debug!(
+                        "Extracted duration: {} ms from {}",
+                        dur_ms,
+                        file_path.display()
+                    );
+                } else {
+                    warn!("Duration not available for file: {}", file_path.display());
+                }
+                duration
+            }
+            Err(e) => {
+                warn!("Failed to decode file for duration extraction: {:?}", e);
+                None
+            }
+        }
     }
 
     /// Persist all release metadata to database.
@@ -215,6 +251,28 @@ impl<'a> MetadataPersister<'a> {
                     .add_track_position(&track_position)
                     .await
                     .map_err(|e| format!("Failed to insert track position: {}", e))?;
+
+                // Calculate and store duration from CUE sheet times
+                let duration_ms = if let Some(end_time) = cue_track.end_time_ms {
+                    Some((end_time - cue_track.start_time_ms) as i64)
+                } else {
+                    // Last track - calculate from file duration
+                    let file_duration = Self::extract_duration_from_file(source_path);
+                    if let Some(file_duration_ms) = file_duration {
+                        Some(file_duration_ms - cue_track.start_time_ms as i64)
+                    } else {
+                        None
+                    }
+                };
+
+                debug!(
+                    "Updating CUE track {} duration to {:?} ms",
+                    mapping.db_track_id, duration_ms
+                );
+                self.library
+                    .update_track_duration(&mapping.db_track_id, duration_ms)
+                    .await
+                    .map_err(|e| format!("Failed to update track duration: {}", e))?;
             }
         }
 
@@ -275,6 +333,17 @@ impl<'a> MetadataPersister<'a> {
             .add_track_position(&track_position)
             .await
             .map_err(|e| format!("Failed to insert track position: {}", e))?;
+
+        // Extract and store duration from audio file
+        let duration_ms = Self::extract_duration_from_file(&mapping.file_path);
+        debug!(
+            "Updating track {} duration to {:?} ms",
+            mapping.db_track_id, duration_ms
+        );
+        self.library
+            .update_track_duration(&mapping.db_track_id, duration_ms)
+            .await
+            .map_err(|e| format!("Failed to update track duration: {}", e))?;
 
         Ok(())
     }

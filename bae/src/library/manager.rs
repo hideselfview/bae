@@ -73,6 +73,18 @@ impl LibraryManager {
         Ok(())
     }
 
+    /// Update track duration
+    pub async fn update_track_duration(
+        &self,
+        track_id: &str,
+        duration_ms: Option<i64>,
+    ) -> Result<(), LibraryError> {
+        self.database
+            .update_track_duration(track_id, duration_ms)
+            .await?;
+        Ok(())
+    }
+
     /// Mark release as complete after successful import
     pub async fn mark_release_complete(&self, release_id: &str) -> Result<(), LibraryError> {
         self.database

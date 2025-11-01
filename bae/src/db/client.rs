@@ -649,6 +649,20 @@ impl Database {
         Ok(())
     }
 
+    /// Update track duration
+    pub async fn update_track_duration(
+        &self,
+        track_id: &str,
+        duration_ms: Option<i64>,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE tracks SET duration_ms = ? WHERE id = ?")
+            .bind(duration_ms)
+            .bind(track_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     /// Update release import status
     pub async fn update_release_status(
         &self,
