@@ -125,10 +125,21 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
         0
     };
 
+    let is_active = is_currently_playing() || is_currently_paused();
+
+    let row_class = if is_complete {
+        if is_active {
+            "relative flex items-center py-3 px-4 rounded-lg group overflow-hidden bg-blue-500/10 hover:bg-blue-500/15 transition-colors"
+        } else {
+            "relative flex items-center py-3 px-4 rounded-lg group overflow-hidden hover:bg-gray-700 transition-colors"
+        }
+    } else {
+        "relative flex items-center py-3 px-4 rounded-lg group overflow-hidden"
+    };
+
     rsx! {
         div {
-            class: "relative flex items-center py-3 px-4 rounded-lg group overflow-hidden",
-            class: if is_complete { "hover:bg-gray-700 transition-colors" } else { "" },
+            class: "{row_class}",
 
             // Progress bar background (only when importing/queued)
             if is_importing {
@@ -157,7 +168,7 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
                         }
                     } else if is_currently_playing() {
                         button {
-                            class: "w-6 text-blue-400 hover:text-blue-300",
+                            class: "w-6 h-6 rounded-full border border-blue-400 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-blue-400 hover:text-blue-300 hover:bg-blue-400/10",
                             onclick: move |_| {
                                 playback.pause();
                             },
@@ -165,19 +176,19 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
                         }
                     } else if is_currently_paused() {
                         button {
-                            class: "w-6 text-blue-400 hover:text-blue-300",
+                            class: "w-6 h-6 rounded-full border border-blue-400 flex items-center justify-center text-blue-400 hover:text-blue-300 hover:bg-blue-400/10 transition-colors",
                             onclick: move |_| {
                                 playback.resume();
                             },
-                            "▶"
+                            span { style: "margin-left: 2px; margin-top: 1px; font-size: 0.65rem;", "▶" }
                         }
                     } else {
                         button {
-                            class: "w-6 opacity-0 group-hover:opacity-100 transition-opacity text-blue-400 hover:text-blue-300",
+                            class: "w-6 h-6 rounded-full border border-blue-400 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-blue-400 hover:text-blue-300 hover:bg-blue-400/10",
                             onclick: move |_| {
                                 playback.play(track.id.clone());
                             },
-                            "▶"
+                            span { style: "margin-left: 2px; margin-top: 1px; font-size: 0.65rem;", "▶" }
                         }
                     }
                 } else {
@@ -209,6 +220,8 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
                             "text-red-300"
                         } else if is_importing {
                             "text-gray-500"
+                        } else if is_active {
+                            "text-blue-300"
                         } else {
                             "text-white group-hover:text-blue-300"
                         },
