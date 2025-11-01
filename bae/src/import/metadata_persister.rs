@@ -258,11 +258,8 @@ impl<'a> MetadataPersister<'a> {
                 } else {
                     // Last track - calculate from file duration
                     let file_duration = Self::extract_duration_from_file(source_path);
-                    if let Some(file_duration_ms) = file_duration {
-                        Some(file_duration_ms - cue_track.start_time_ms as i64)
-                    } else {
-                        None
-                    }
+                    file_duration
+                        .map(|file_duration_ms| file_duration_ms - cue_track.start_time_ms as i64)
                 };
 
                 debug!(

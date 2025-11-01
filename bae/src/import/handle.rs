@@ -125,7 +125,7 @@ impl ImportHandle {
                     .map_err(|e| format!("Database error: {}", e))?;
 
                 // 6. Extract and store durations early (before pipeline starts)
-                extract_and_store_durations(&library_manager, &tracks_to_files).await?;
+                extract_and_store_durations(library_manager, &tracks_to_files).await?;
 
                 // 7. Insert album-artist relationships
                 for album_artist in &album_artists {
