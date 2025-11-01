@@ -15,5 +15,5 @@ pub use import_hooks::use_track_progress;
 pub use library::Library;
 pub use navbar::Navbar;
 pub use now_playing_bar::NowPlayingBar;
-pub use playback_hooks::use_playback_service;
+pub use playback_hooks::{use_playback_service, use_playback_state, PlaybackStateProvider};
 pub use settings::Settings;

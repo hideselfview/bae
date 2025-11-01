@@ -4,8 +4,8 @@ use crate::playback::{PlaybackProgress, PlaybackState};
 use dioxus::prelude::*;
 
 use super::super::import_hooks::TrackImportState;
-use super::super::use_playback_service;
 use super::super::use_track_progress;
+use super::super::{use_playback_service, use_playback_state};
 use super::utils::format_duration;
 
 /// Individual track row component
@@ -13,13 +13,42 @@ use super::utils::format_duration;
 pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
     let library_manager = use_library_manager();
     let playback = use_playback_service();
+    let playback_state = use_playback_state();
     let mut track_artists = use_signal(Vec::<DbArtist>::new);
     let track_progress = use_track_progress(track.id.clone(), track.import_status);
     // let track_progress = use_signal(|| TrackImportState::Importing { percent: 12 });
 
     // Track playback state for this track
-    let is_currently_playing = use_signal(|| false);
-    let is_currently_paused = use_signal(|| false);
+    // Initialize synchronously from shared playback state
+    let track_id = track.id.clone();
+    let is_currently_playing = use_signal(move || {
+        matches!(
+            playback_state(),
+            PlaybackState::Playing {
+                track: ref playing_track,
+                ..
+            } if playing_track.id == track_id
+        )
+    });
+    let track_id = track.id.clone();
+    let is_currently_paused = use_signal(move || {
+        matches!(
+            playback_state(),
+            PlaybackState::Paused {
+                track: ref paused_track,
+                ..
+            } if paused_track.id == track_id
+        )
+    });
+    let track_id = track.id.clone();
+    let is_loading = use_signal(move || {
+        matches!(
+            playback_state(),
+            PlaybackState::Loading {
+                track_id: ref loading_track_id,
+            } if loading_track_id == &track_id
+        )
+    });
 
     // Subscribe to playback progress to track if this track is playing
     use_effect({
@@ -30,16 +59,23 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
             let track_id = track_id.clone();
             let mut is_currently_playing = is_currently_playing;
             let mut is_currently_paused = is_currently_paused;
+            let mut is_loading = is_loading;
             spawn(async move {
                 while let Some(progress) = progress_rx.recv().await {
                     if let PlaybackProgress::StateChanged { state } = progress {
                         match state {
+                            PlaybackState::Loading {
+                                track_id: loading_track_id,
+                            } => {
+                                is_loading.set(loading_track_id == track_id);
+                            }
                             PlaybackState::Playing {
                                 track: playing_track,
                                 ..
                             } => {
                                 is_currently_playing.set(playing_track.id == track_id);
                                 is_currently_paused.set(false);
+                                is_loading.set(false);
                             }
                             PlaybackState::Paused {
                                 track: paused_track,
@@ -47,10 +83,12 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
                             } => {
                                 is_currently_playing.set(false);
                                 is_currently_paused.set(paused_track.id == track_id);
+                                is_loading.set(false);
                             }
                             _ => {
                                 is_currently_playing.set(false);
                                 is_currently_paused.set(false);
+                                is_loading.set(false);
                             }
                         }
                     }
@@ -112,7 +150,12 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
 
                 // Play/Pause button (only show when complete)
                 if is_complete {
-                    if is_currently_playing() {
+                    if is_loading() {
+                        div {
+                            class: "w-6 flex items-center justify-center",
+                            div { class: "animate-spin rounded-full h-4 w-4 border-b-2 border-blue-400" }
+                        }
+                    } else if is_currently_playing() {
                         button {
                             class: "w-6 text-blue-400 hover:text-blue-300",
                             onclick: move |_| {
