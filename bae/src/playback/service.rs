@@ -245,6 +245,18 @@ impl PlaybackService {
                                 (None, None) => std::cmp::Ordering::Equal,
                             });
 
+                            // If we don't have a previous track (starting fresh), set it based on album order
+                            if self.previous_track_id.is_none() {
+                                let mut previous_track_id = None;
+                                for release_track in &release_tracks {
+                                    if release_track.id == track_id {
+                                        break;
+                                    }
+                                    previous_track_id = Some(release_track.id.clone());
+                                }
+                                self.previous_track_id = previous_track_id;
+                            }
+
                             // Add remaining tracks to queue (tracks after the current one)
                             let mut found_current = false;
                             for release_track in release_tracks {
@@ -364,7 +376,55 @@ impl PlaybackService {
                         if current_position < std::time::Duration::from_secs(3) {
                             if let Some(previous_track_id) = self.previous_track_id.clone() {
                                 info!("Going to previous track: {}", previous_track_id);
-                                // play_track will update previous_track_id with current track
+
+                                // Update previous_track_id for the track we're navigating to
+                                // based on album order, similar to Play command
+                                if let Ok(Some(previous_track)) =
+                                    self.library_manager.get_track(&previous_track_id).await
+                                {
+                                    if let Ok(mut release_tracks) = self
+                                        .library_manager
+                                        .get_tracks(&previous_track.release_id)
+                                        .await
+                                    {
+                                        release_tracks.sort_by(|a, b| {
+                                            match (a.track_number, b.track_number) {
+                                                (Some(a_num), Some(b_num)) => a_num.cmp(&b_num),
+                                                (Some(_), None) => std::cmp::Ordering::Less,
+                                                (None, Some(_)) => std::cmp::Ordering::Greater,
+                                                (None, None) => std::cmp::Ordering::Equal,
+                                            }
+                                        });
+
+                                        // Find the previous track for the track we're navigating to
+                                        let mut new_previous_track_id = None;
+                                        for release_track in &release_tracks {
+                                            if release_track.id == previous_track_id {
+                                                break;
+                                            }
+                                            new_previous_track_id = Some(release_track.id.clone());
+                                        }
+                                        self.previous_track_id = new_previous_track_id;
+
+                                        // Rebuild queue for the track we're navigating to
+                                        self.queue.clear();
+                                        let mut found_current = false;
+                                        for release_track in release_tracks {
+                                            if found_current {
+                                                self.queue.push_back(release_track.id);
+                                            } else if release_track.id == previous_track_id {
+                                                found_current = true;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Clear preloaded data before switching tracks
+                                self.next_decoder = None;
+                                self.next_audio_data = None;
+                                self.next_track_id = None;
+                                self.next_duration = None;
+
                                 self.play_track(&previous_track_id).await;
                             } else {
                                 // No previous track, restart current track

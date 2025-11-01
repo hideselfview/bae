@@ -642,3 +642,295 @@ async fn test_previous_track_navigation() {
         "Should restart current track when Previous is called late in track"
     );
 }
+
+#[tokio::test]
+async fn test_previous_track_when_starting_on_second_track() {
+    if should_skip_audio_tests() {
+        eprintln!("Skipping audio test - no audio device available");
+        return;
+    }
+
+    let mut fixture = match PlaybackTestFixture::new().await {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Failed to set up test fixture: {}", e);
+            return;
+        }
+    };
+
+    if fixture.track_ids.len() < 2 {
+        eprintln!("Need at least 2 tracks for previous track test");
+        return;
+    }
+
+    let first_track_id = fixture.track_ids[0].clone();
+    let second_track_id = fixture.track_ids[1].clone();
+
+    // Start playback directly on the second track (not the first)
+    fixture.playback_handle.play(second_track_id.clone());
+
+    // Wait for playing state
+    let second_track_state = fixture
+        .wait_for_state(
+            |s| {
+                if let PlaybackState::Playing { track, .. } = s {
+                    track.id == second_track_id
+                } else {
+                    false
+                }
+            },
+            Duration::from_secs(5),
+        )
+        .await;
+
+    assert!(
+        second_track_state.is_some(),
+        "Should be playing second track after play command"
+    );
+
+    // Seek to early position (< 3 seconds)
+    fixture.playback_handle.seek(Duration::from_secs(1));
+    let _position = fixture
+        .wait_for_position_update(Duration::from_secs(2))
+        .await;
+
+    // Call Previous - should go to first track (we're < 3 seconds in)
+    fixture.playback_handle.previous();
+
+    let previous_track_state = fixture
+        .wait_for_state(
+            |s| {
+                if let PlaybackState::Playing { track, .. } = s {
+                    track.id == first_track_id
+                } else {
+                    false
+                }
+            },
+            Duration::from_secs(5),
+        )
+        .await;
+
+    assert!(
+        previous_track_state.is_some(),
+        "Should go to previous track when Previous is called after starting on second track"
+    );
+}
+
+#[tokio::test]
+async fn test_previous_track_multiple_navigation() {
+    if should_skip_audio_tests() {
+        eprintln!("Skipping audio test - no audio device available");
+        return;
+    }
+
+    let mut fixture = match PlaybackTestFixture::new().await {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Failed to set up test fixture: {}", e);
+            return;
+        }
+    };
+
+    // Need at least 3 tracks for this test, but we only have 2
+    // So we'll test with 2 tracks: start on track 2, go back to track 1
+    if fixture.track_ids.len() < 2 {
+        eprintln!("Need at least 2 tracks for previous track test");
+        return;
+    }
+
+    let first_track_id = fixture.track_ids[0].clone();
+    let second_track_id = fixture.track_ids[1].clone();
+
+    // Start playback directly on the second track
+    fixture.playback_handle.play(second_track_id.clone());
+
+    // Wait for playing state
+    let _second_track_state = fixture
+        .wait_for_state(
+            |s| {
+                if let PlaybackState::Playing { track, .. } = s {
+                    track.id == second_track_id
+                } else {
+                    false
+                }
+            },
+            Duration::from_secs(5),
+        )
+        .await;
+
+    // Seek to early position
+    fixture.playback_handle.seek(Duration::from_secs(1));
+    let _position = fixture
+        .wait_for_position_update(Duration::from_secs(2))
+        .await;
+
+    // Call Previous - should go to first track
+    fixture.playback_handle.previous();
+
+    let first_nav_state = fixture
+        .wait_for_state(
+            |s| {
+                if let PlaybackState::Playing { track, .. } = s {
+                    track.id == first_track_id
+                } else {
+                    false
+                }
+            },
+            Duration::from_secs(5),
+        )
+        .await;
+
+    assert!(
+        first_nav_state.is_some(),
+        "Should go to first track when Previous is called from second track"
+    );
+
+    // Seek to early position again
+    fixture.playback_handle.seek(Duration::from_secs(1));
+    let _position = fixture
+        .wait_for_position_update(Duration::from_secs(2))
+        .await;
+
+    // Call Previous again - should restart first track (no previous track)
+    fixture.playback_handle.previous();
+
+    let restart_state = fixture
+        .wait_for_state(
+            |s| {
+                if let PlaybackState::Playing {
+                    track, position, ..
+                } = s
+                {
+                    track.id == first_track_id && *position < Duration::from_secs(1)
+                } else {
+                    false
+                }
+            },
+            Duration::from_secs(5),
+        )
+        .await;
+
+    assert!(
+        restart_state.is_some(),
+        "Should restart first track when Previous is called and there's no previous track"
+    );
+}
+
+#[tokio::test]
+async fn test_queue_maintained_after_previous_navigation() {
+    if should_skip_audio_tests() {
+        eprintln!("Skipping audio test - no audio device available");
+        return;
+    }
+
+    let mut fixture = match PlaybackTestFixture::new().await {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Failed to set up test fixture: {}", e);
+            return;
+        }
+    };
+
+    if fixture.track_ids.len() < 2 {
+        eprintln!("Need at least 2 tracks for queue navigation test");
+        return;
+    }
+
+    let first_track_id = fixture.track_ids[0].clone();
+    let second_track_id = fixture.track_ids[1].clone();
+    // Note: We only have 2 tracks in test fixtures, so we'll test the scenario with 2 tracks
+    // The bug would manifest as: track 1 -> next -> track 2 -> previous -> track 1 -> next -> should be track 2, not track 3
+
+    // Start playback on first track
+    fixture.playback_handle.play(first_track_id.clone());
+
+    // Wait for playing state
+    let _first_track_state = fixture
+        .wait_for_state(
+            |s| {
+                if let PlaybackState::Playing { track, .. } = s {
+                    track.id == first_track_id
+                } else {
+                    false
+                }
+            },
+            Duration::from_secs(5),
+        )
+        .await;
+
+    // Press Next to go to track 2
+    fixture.playback_handle.next();
+
+    let second_track_state = fixture
+        .wait_for_state(
+            |s| {
+                if let PlaybackState::Playing { track, .. } = s {
+                    track.id == second_track_id
+                } else {
+                    false
+                }
+            },
+            Duration::from_secs(5),
+        )
+        .await;
+
+    assert!(
+        second_track_state.is_some(),
+        "Should be playing second track after Next command"
+    );
+
+    // Seek to early position
+    fixture.playback_handle.seek(Duration::from_secs(1));
+    let _position = fixture
+        .wait_for_position_update(Duration::from_secs(2))
+        .await;
+
+    // Press Previous to go back to track 1
+    fixture.playback_handle.previous();
+
+    let back_to_first_state = fixture
+        .wait_for_state(
+            |s| {
+                if let PlaybackState::Playing { track, .. } = s {
+                    track.id == first_track_id
+                } else {
+                    false
+                }
+            },
+            Duration::from_secs(5),
+        )
+        .await;
+
+    assert!(
+        back_to_first_state.is_some(),
+        "Should go back to first track when Previous is called from second track"
+    );
+
+    // Seek to early position again
+    fixture.playback_handle.seek(Duration::from_secs(1));
+    let _position = fixture
+        .wait_for_position_update(Duration::from_secs(2))
+        .await;
+
+    // Press Next again - should go to track 2 (not track 3 if it existed)
+    // The bug: after going back, the queue should still have track 2, not be empty
+    fixture.playback_handle.next();
+
+    let should_be_second_state = fixture
+        .wait_for_state(
+            |s| {
+                if let PlaybackState::Playing { track, .. } = s {
+                    track.id == second_track_id
+                } else {
+                    false
+                }
+            },
+            Duration::from_secs(5),
+        )
+        .await;
+
+    assert!(
+        should_be_second_state.is_some(),
+        "Should go to track 2 when Next is called after navigating back to track 1"
+    );
+}
