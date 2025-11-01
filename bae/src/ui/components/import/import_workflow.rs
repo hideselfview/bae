@@ -277,9 +277,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                                                         "{master.id}"
                                                     }
                                                 }
-                                                div {
-                                                    "Release: None"
-                                                }
+                                                div { "Release: None" }
                                             }
                                         }
                                         crate::discogs::DiscogsAlbum::Release(release) => {

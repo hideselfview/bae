@@ -138,8 +138,7 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
     };
 
     rsx! {
-        div {
-            class: "{row_class}",
+        div { class: "{row_class}",
 
             // Progress bar background (only when importing/queued)
             if is_importing {
@@ -151,9 +150,7 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
 
             // Failed state background
             if is_failed {
-                div {
-                    class: "absolute inset-0 bg-red-500 opacity-10",
-                }
+                div { class: "absolute inset-0 bg-red-500 opacity-10" }
             }
 
             // Content (with relative positioning to stay above progress bar)
@@ -162,8 +159,7 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
                 // Play/Pause button (only show when complete)
                 if is_complete {
                     if is_loading() {
-                        div {
-                            class: "w-6 flex items-center justify-center",
+                        div { class: "w-6 flex items-center justify-center",
                             div { class: "animate-spin rounded-full h-4 w-4 border-b-2 border-blue-400" }
                         }
                     } else if is_currently_playing() {
@@ -180,7 +176,9 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
                             onclick: move |_| {
                                 playback.resume();
                             },
-                            span { style: "margin-left: 2px; margin-top: 1px; font-size: 0.65rem;", "▶" }
+                            span { style: "margin-left: 2px; margin-top: 1px; font-size: 0.65rem;",
+                                "▶"
+                            }
                         }
                     } else {
                         button {
@@ -188,7 +186,9 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
                             onclick: move |_| {
                                 playback.play(track.id.clone());
                             },
-                            span { style: "margin-left: 2px; margin-top: 1px; font-size: 0.65rem;", "▶" }
+                            span { style: "margin-left: 2px; margin-top: 1px; font-size: 0.65rem;",
+                                "▶"
+                            }
                         }
                     }
                 } else {
@@ -198,13 +198,7 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
                 // Track number
                 div {
                     class: "w-12 text-right text-sm font-mono",
-                    class: if is_failed {
-                        "text-red-400"
-                    } else if is_importing {
-                        "text-gray-600"
-                    } else {
-                        "text-gray-400"
-                    },
+                    class: if is_failed { "text-red-400" } else if is_importing { "text-gray-600" } else { "text-gray-400" },
                     if let Some(track_num) = track.track_number {
                         "{track_num}."
                     } else {
@@ -216,27 +210,13 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
                 div { class: "flex-1 ml-4",
                     h3 {
                         class: "font-medium transition-colors",
-                        class: if is_failed {
-                            "text-red-300"
-                        } else if is_importing {
-                            "text-gray-500"
-                        } else if is_active {
-                            "text-blue-300"
-                        } else {
-                            "text-white group-hover:text-blue-300"
-                        },
+                        class: if is_failed { "text-red-300" } else if is_importing { "text-gray-500" } else if is_active { "text-blue-300" } else { "text-white group-hover:text-blue-300" },
                         "{track.title}"
                     }
                     if !track_artists().is_empty() {
                         p {
                             class: "text-sm",
-                            class: if is_failed {
-                                "text-red-400"
-                            } else if is_importing {
-                                "text-gray-600"
-                            } else {
-                                "text-gray-400"
-                            },
+                            class: if is_failed { "text-red-400" } else if is_importing { "text-gray-600" } else { "text-gray-400" },
                             {
                                 let artists = track_artists();
                                 if artists.len() == 1 {
@@ -252,13 +232,7 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
                 // Duration (if available)
                 div {
                     class: "text-sm font-mono",
-                    class: if is_failed {
-                        "text-red-400"
-                    } else if is_importing {
-                        "text-gray-600"
-                    } else {
-                        "text-gray-400"
-                    },
+                    class: if is_failed { "text-red-400" } else if is_importing { "text-gray-600" } else { "text-gray-400" },
                     if let Some(duration_ms) = track.duration_ms {
                         {format_duration(duration_ms)}
                     } else {

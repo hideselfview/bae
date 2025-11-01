@@ -37,10 +37,7 @@ pub fn SearchMastersList() -> Element {
                 }
                 tbody { class: "divide-y divide-gray-200",
                     for result in album_import_ctx.search_results.read().iter() {
-                        SearchMastersItem {
-                            key: "{result.id}",
-                            result: result.clone(),
-                        }
+                        SearchMastersItem { key: "{result.id}", result: result.clone() }
                     }
                 }
             }

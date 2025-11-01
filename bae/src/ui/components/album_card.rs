@@ -62,8 +62,7 @@ pub fn AlbumCard(album: DbAlbum, artists: Vec<DbArtist>) -> Element {
                 }
 
                 // Hover overlay with play button
-                div {
-                    class: "absolute inset-0 bg-black/50 flex items-center justify-center rounded-lg opacity-0 group-hover:opacity-100 transition-opacity",
+                div { class: "absolute inset-0 bg-black/50 flex items-center justify-center rounded-lg opacity-0 group-hover:opacity-100 transition-opacity",
                     button {
                         class: "w-16 h-16 bg-transparent hover:bg-white/10 rounded-full flex items-center justify-center text-white text-2xl shadow-lg",
                         disabled: is_loading(),
@@ -83,20 +82,17 @@ pub fn AlbumCard(album: DbAlbum, artists: Vec<DbArtist>) -> Element {
                                         if !track_ids.is_empty() {
                                             let first_track_id = track_ids[0].clone();
                                             playback.play_album(track_ids);
-
-                                            // Subscribe to playback progress to clear loading when playback starts
                                             let mut progress_rx = playback.subscribe_progress();
                                             while let Some(progress) = progress_rx.recv().await {
                                                 if let PlaybackProgress::StateChanged { state } = progress {
                                                     match state {
                                                         PlaybackState::Loading { track_id: loading_track_id } => {
-                                                            // First track started loading - keep spinner visible
                                                             if loading_track_id == first_track_id {
                                                                 continue;
                                                             }
                                                         }
-                                                        PlaybackState::Playing { .. } | PlaybackState::Paused { .. } => {
-                                                            // Playback started - clear loading
+                                                        PlaybackState::Playing { .. }
+                                                        | PlaybackState::Paused { .. } => {
                                                             is_loading.set(false);
                                                             break;
                                                         }

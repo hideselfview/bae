@@ -314,7 +314,6 @@ async fn update_media_metadata(
         album: album_str,
         cover_url: cover_str,
         duration,
-        ..Default::default()
     };
 
     let mut controls = controls.lock().unwrap();

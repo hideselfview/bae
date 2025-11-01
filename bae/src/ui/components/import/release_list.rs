@@ -73,12 +73,14 @@ pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandle
                             onchange: move |e: FormEvent| {
                                 let mut sort_order = sort_order;
                                 let mut is_loading = is_loading;
-
-                                sort_order.set(if e.value() == "asc" {
-                                    SortOrder::Ascending
-                                } else {
-                                    SortOrder::Descending
-                                });
+                                sort_order
+                                    .set(
+                                        if e.value() == "asc" {
+                                            SortOrder::Ascending
+                                        } else {
+                                            SortOrder::Descending
+                                        },
+                                    );
                                 is_loading.set(true);
                             },
                             option { value: "asc", "Oldest" }
@@ -102,41 +104,41 @@ pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandle
                         } else {
                             div { class: "overflow-x-auto",
                                 table { class: "w-full border-collapse bg-white rounded-lg shadow-lg",
-                                thead {
-                                    tr { class: "bg-gray-50",
-                                        th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
-                                            "Cover"
+                                    thead {
+                                        tr { class: "bg-gray-50",
+                                            th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
+                                                "Cover"
+                                            }
+                                            th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
+                                                "Label"
+                                            }
+                                            th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
+                                                "Catalog #"
+                                            }
+                                            th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
+                                                "Country"
+                                            }
+                                            th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
+                                                "Format"
+                                            }
+                                            th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
+                                                "Released"
+                                            }
+                                            th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
+                                                "Actions"
+                                            }
                                         }
-                                        th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
-                                            "Label"
-                                        }
-                                        th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
-                                            "Catalog #"
-                                        }
-                                        th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
-                                            "Country"
-                                        }
-                                        th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
-                                            "Format"
-                                        }
-                                        th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
-                                            "Released"
-                                        }
-                                        th { class: "px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider",
-                                            "Actions"
+                                    }
+                                    tbody { class: "divide-y divide-gray-200",
+                                        for result in versions.iter() {
+                                            ReleaseItem {
+                                                key: "{result.id}",
+                                                result: result.clone(),
+                                                on_import: on_import_release.clone(),
+                                            }
                                         }
                                     }
                                 }
-                                tbody { class: "divide-y divide-gray-200",
-                                    for result in versions.iter() {
-                                        ReleaseItem {
-                                            key: "{result.id}",
-                                            result: result.clone(),
-                                            on_import: on_import_release.clone(),
-                                        }
-                                    }
-                                }
-                            }
                             }
                         }
                         if is_loading() {

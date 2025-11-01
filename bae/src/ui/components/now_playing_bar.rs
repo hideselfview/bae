@@ -20,11 +20,7 @@ fn PlaybackControlsZone(
     rsx! {
         div { class: "flex items-center gap-2",
             button {
-                class: if is_loading() {
-                    "px-3 py-2 bg-gray-700 rounded opacity-50"
-                } else {
-                    "px-3 py-2 bg-gray-700 rounded hover:bg-gray-600"
-                },
+                class: if is_loading() { "px-3 py-2 bg-gray-700 rounded opacity-50" } else { "px-3 py-2 bg-gray-700 rounded hover:bg-gray-600" },
                 disabled: is_loading(),
                 onclick: move |_| on_previous.call(()),
                 "⏮"
@@ -65,11 +61,7 @@ fn PlaybackControlsZone(
                 }
             }
             button {
-                class: if is_loading() {
-                    "px-3 py-2 bg-gray-700 rounded opacity-50"
-                } else {
-                    "px-3 py-2 bg-gray-700 rounded hover:bg-gray-600"
-                },
+                class: if is_loading() { "px-3 py-2 bg-gray-700 rounded opacity-50" } else { "px-3 py-2 bg-gray-700 rounded hover:bg-gray-600" },
                 disabled: is_loading(),
                 onclick: move |_| on_next.call(()),
                 "⏭"
@@ -100,11 +92,16 @@ fn TrackInfoZone(
                             let track = track.clone();
                             let library_manager = library_manager.clone();
                             spawn(async move {
-                                if let Ok(album_id) = library_manager.get().get_album_id_for_release(&track.release_id).await {
-                                    navigator.push(Route::AlbumDetail {
-                                        album_id,
-                                        release_id: track.release_id.clone(),
-                                    });
+                                if let Ok(album_id) = library_manager
+                                    .get()
+                                    .get_album_id_for_release(&track.release_id)
+                                    .await
+                                {
+                                    navigator
+                                        .push(Route::AlbumDetail {
+                                            album_id,
+                                            release_id: track.release_id.clone(),
+                                        });
                                 }
                             });
                         }
@@ -164,10 +161,7 @@ fn PositionZone(
                             is_seeking.set(true);
                         },
                         onmouseup: move |_| {
-                            // If user releases without moving, clear is_seeking
-                            // This prevents position updates from being blocked forever
                             if is_seeking() {
-                                // Small delay to let onchange fire first if it will
                                 spawn(async move {
                                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                                     if is_seeking() {
@@ -184,7 +178,6 @@ fn PositionZone(
                         onchange: move |evt| {
                             if let Ok(secs) = evt.value().parse::<u64>() {
                                 on_seek.call(std::time::Duration::from_secs(secs));
-                                // is_seeking will be cleared when StateChanged event arrives
                             }
                         },
                     }
@@ -295,17 +288,53 @@ pub fn NowPlayingBar() -> Element {
                             if let PlaybackState::Playing { ref track, .. }
                             | PlaybackState::Paused { ref track, .. } = new_state
                             {
-                                if let Ok(artists) =
-                                    library_manager.get().get_artists_for_track(&track.id).await
-                                {
-                                    if !artists.is_empty() {
-                                        let artist_names: Vec<_> =
-                                            artists.iter().map(|a| a.name.as_str()).collect();
-                                        current_artist.set(artist_names.join(", "));
-                                    } else {
-                                        current_artist.set("Unknown Artist".to_string());
+                                let release_id = track.release_id.clone();
+                                let library_manager_for_artist = library_manager.clone();
+                                spawn(async move {
+                                    match library_manager_for_artist
+                                        .get()
+                                        .get_album_id_for_release(&release_id)
+                                        .await
+                                    {
+                                        Ok(album_id) => {
+                                            match library_manager_for_artist
+                                                .get()
+                                                .get_artists_for_album(&album_id)
+                                                .await
+                                            {
+                                                Ok(artists) => {
+                                                    if !artists.is_empty() {
+                                                        let artist_names: Vec<_> = artists
+                                                            .iter()
+                                                            .map(|a| a.name.as_str())
+                                                            .collect();
+                                                        current_artist.set(artist_names.join(", "));
+                                                    } else {
+                                                        current_artist
+                                                            .set("Unknown Artist".to_string());
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    tracing::error!(
+                                                        "Failed to fetch album artists for album {}: {}",
+                                                        album_id,
+                                                        e
+                                                    );
+                                                    current_artist
+                                                        .set("Unknown Artist".to_string());
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                "No album found for release {}: {}",
+                                                release_id,
+                                                e
+                                            );
+                                            current_artist.set("Unknown Artist".to_string());
+                                        }
                                     }
-                                }
+                                });
                             }
                         }
                         PlaybackProgress::PositionUpdate { position, .. } => {
@@ -375,6 +404,53 @@ pub fn NowPlayingBar() -> Element {
     let is_loading = use_memo(move || matches!(state(), PlaybackState::Loading { .. }));
     let is_stopped = use_memo(move || matches!(state(), PlaybackState::Stopped));
 
+    // Fetch artist whenever track changes
+    use_effect({
+        let library_manager = library_manager.clone();
+        move || {
+            let library_manager = library_manager.clone();
+            let track_val = track();
+            if let Some(track) = track_val {
+                let release_id = track.release_id.clone();
+                spawn(async move {
+                    match library_manager
+                        .get()
+                        .get_album_id_for_release(&release_id)
+                        .await
+                    {
+                        Ok(album_id) => {
+                            match library_manager.get().get_artists_for_album(&album_id).await {
+                                Ok(artists) => {
+                                    if !artists.is_empty() {
+                                        let artist_names: Vec<_> =
+                                            artists.iter().map(|a| a.name.as_str()).collect();
+                                        current_artist.set(artist_names.join(", "));
+                                    } else {
+                                        current_artist.set("Unknown Artist".to_string());
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::error!(
+                                        "Failed to fetch album artists for album {}: {}",
+                                        album_id,
+                                        e
+                                    );
+                                    current_artist.set("Unknown Artist".to_string());
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("No album found for release {}: {}", release_id, e);
+                            current_artist.set("Unknown Artist".to_string());
+                        }
+                    }
+                });
+            } else {
+                current_artist.set("Unknown Artist".to_string());
+            }
+        }
+    });
+
     let artist_name = use_memo(move || current_artist.read().clone());
 
     let playback_prev = playback.clone();
@@ -384,8 +460,8 @@ pub fn NowPlayingBar() -> Element {
     let playback_seek = playback.clone();
 
     rsx! {
-            div { class: "fixed bottom-0 left-0 right-0 bg-gray-800 text-white p-4 border-t border-gray-700",
-                    div { class: "flex items-center gap-4",
+        div { class: "fixed bottom-0 left-0 right-0 bg-gray-800 text-white p-4 border-t border-gray-700",
+            div { class: "flex items-center gap-4",
                 PlaybackControlsZone {
                     on_previous: move |_| playback_prev.previous(),
                     on_pause: move |_| playback_pause.pause(),
@@ -396,11 +472,7 @@ pub fn NowPlayingBar() -> Element {
                     is_loading,
                     is_stopped,
                 }
-                TrackInfoZone {
-                    track,
-                    artist_name,
-                    is_loading,
-                }
+                TrackInfoZone { track, artist_name, is_loading }
                 PositionZone {
                     position,
                     duration,
