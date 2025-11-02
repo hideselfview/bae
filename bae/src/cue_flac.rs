@@ -274,8 +274,13 @@ impl CueFlacProcessor {
             },
         ))(input)?;
 
-        // Skip FILE line if present
-        let (input, _) = many0(alt((line_ending, space1, Self::parse_file_line)))(input)?;
+        // Skip FILE line and any comments before it
+        let (input, _) = many0(alt((
+            line_ending,
+            space1,
+            Self::parse_file_line,
+            Self::parse_comment_line,
+        )))(input)?;
 
         let (input, tracks) = Self::parse_tracks(input)?;
 
@@ -311,6 +316,19 @@ impl CueFlacProcessor {
         let (input, _) = tag("FILE")(input)?;
         let (input, _) = take_until("\n")(input)?;
         let (input, _) = line_ending(input)?;
+        Ok((input, ""))
+    }
+
+    /// Parse and skip an INDEX 00 line (pre-gap marker)
+    /// These are optional and appear before INDEX 01 to indicate pre-gap silence
+    fn parse_index_00_line(input: &str) -> IResult<&str, &str> {
+        let (input, _) = many0(alt((line_ending, space1, Self::parse_comment_line)))(input)?;
+        let (input, _) = tag("INDEX")(input)?;
+        let (input, _) = space1(input)?;
+        let (input, _) = tag("00")(input)?;
+        let (input, _) = space1(input)?;
+        let (input, _) = Self::parse_time(input)?; // Skip the time value
+        let (input, _) = opt(line_ending)(input)?;
         Ok((input, ""))
     }
 
@@ -362,8 +380,13 @@ impl CueFlacProcessor {
             terminated(Self::parse_quoted_string, opt(line_ending)),
         ))(input)?;
 
+        // Skip any optional INDEX 00 entries (pre-gap markers) before INDEX 01
+        let (input, _) = many0(Self::parse_index_00_line)(input)?;
+
+        // Skip any whitespace or comments before INDEX 01
+        let (input, _) = many0(alt((line_ending, space1, Self::parse_comment_line)))(input)?;
+
         // Parse INDEX 01 (track start time)
-        let (input, _) = many0(space1)(input)?;
         let (input, _) = tag("INDEX")(input)?;
         let (input, _) = space1(input)?;
         let (input, _) = tag("01")(input)?;
@@ -659,5 +682,75 @@ FILE "test.flac" WAVE
         // At 0 seconds, should be at audio start
         let position = CueFlacProcessor::estimate_byte_position(0, &flac_headers, file_size);
         assert_eq!(position, 1000);
+    }
+
+    #[test]
+    fn test_parse_cue_with_index_00_minimal_repro() {
+        // Minimal reproduction case: Track with INDEX 00 before INDEX 01
+        let cue_content = r#"PERFORMER "Test Artist"
+TITLE "Test Album"
+FILE "test.flac" WAVE
+  TRACK 01 AUDIO
+    TITLE "Track 1"
+    INDEX 01 00:00:00
+  TRACK 02 AUDIO
+    TITLE "Track 2"
+    INDEX 00 03:00:00
+    INDEX 01 03:01:00
+"#;
+
+        let result = CueFlacProcessor::parse_cue_content(cue_content);
+        assert!(result.is_ok());
+
+        let (_, cue_sheet) = result.unwrap();
+        assert_eq!(cue_sheet.tracks.len(), 2, "Should parse 2 tracks");
+    }
+
+    #[test]
+    fn test_parse_cue_with_rem_between_title_and_file() {
+        // Test case with REM between TITLE and FILE (common CUE format)
+        let cue_content = r#"REM DATE 1970
+REM DISCID A1B2C3D4
+REM COMMENT "ExactAudioCopy v1.3"
+PERFORMER "Test Artist"
+TITLE "Test Album"
+REM COMPOSER ""
+FILE "Test Artist - Test Album.flac" WAVE
+  TRACK 01 AUDIO
+    TITLE "Track 1"
+    PERFORMER "Test Artist"
+    REM COMPOSER ""
+    INDEX 01 00:00:00
+  TRACK 02 AUDIO
+    TITLE "Track 2"
+    PERFORMER "Test Artist"
+    REM COMPOSER ""
+    INDEX 01 06:17:53
+  TRACK 03 AUDIO
+    TITLE "Track 3 With Multiple Sections"
+    PERFORMER "Test Artist"
+    REM COMPOSER ""
+    INDEX 00 10:39:50
+    INDEX 01 10:41:28
+"#;
+
+        let result = CueFlacProcessor::parse_cue_content(cue_content);
+        assert!(
+            result.is_ok(),
+            "Should parse CUE with REM between TITLE and FILE"
+        );
+
+        let (_, cue_sheet) = result.unwrap();
+        assert_eq!(cue_sheet.title, "Test Album");
+        assert_eq!(cue_sheet.performer, "Test Artist");
+        assert_eq!(cue_sheet.tracks.len(), 3, "Should parse 3 tracks");
+        assert_eq!(cue_sheet.tracks[0].title, "Track 1");
+        assert_eq!(cue_sheet.tracks[1].title, "Track 2");
+        assert_eq!(cue_sheet.tracks[2].title, "Track 3 With Multiple Sections");
+        assert_eq!(cue_sheet.tracks[0].start_time_ms, 0);
+        assert_eq!(
+            cue_sheet.tracks[1].start_time_ms,
+            6 * 60 * 1000 + 17 * 1000 + 53 * 1000 / 75
+        );
     }
 }

@@ -56,6 +56,13 @@ fn map_tracks_to_cue_flac(
 
         debug!("CUE sheet contains {} tracks", cue_sheet.tracks.len());
 
+        if cue_sheet.tracks.is_empty() {
+            return Err(format!(
+                "CUE sheet '{}' contains no tracks. Check CUE file format.",
+                pair.cue_path.display()
+            ));
+        }
+
         // For CUE/FLAC, all tracks map to the same FLAC file
         for (index, cue_track) in cue_sheet.tracks.iter().enumerate() {
             if let Some(db_track) = tracks.get(index) {
@@ -78,6 +85,16 @@ fn map_tracks_to_cue_flac(
     }
 
     info!("Created {} CUE/FLAC mappings", mappings.len());
+
+    // Validate that all tracks were mapped
+    if mappings.len() != tracks.len() {
+        return Err(format!(
+            "Track mapping mismatch: CUE sheet produced {} tracks but expected {} tracks from Discogs metadata",
+            mappings.len(),
+            tracks.len()
+        ));
+    }
+
     Ok(mappings)
 }
 
@@ -307,11 +324,27 @@ mod tests {
             std::fs::read_to_string(&fixture_path).expect("Failed to read vinyl_master_test.json");
         let master: crate::discogs::DiscogsMaster =
             serde_json::from_str(&json_data).expect("Failed to parse JSON");
-        let album = crate::discogs::DiscogsAlbum::Master(master);
+
+        // Convert master to release for parsing
+        let release = crate::discogs::DiscogsRelease {
+            id: master.id.clone(),
+            title: master.title.clone(),
+            year: master.year,
+            genre: Vec::new(),
+            style: Vec::new(),
+            format: Vec::new(),
+            country: None,
+            label: Vec::new(),
+            cover_image: None,
+            thumb: None,
+            artists: master.artists.clone(),
+            tracklist: master.tracklist.clone(),
+            master_id: Some(master.id),
+        };
 
         // Parse through album_track_creator to get real DbTracks with vinyl positions
         let (_, _, tracks, _, _) =
-            crate::import::discogs_parser::parse_discogs_album(&album).unwrap();
+            crate::import::discogs_parser::parse_discogs_release(&release).unwrap();
 
         // Verify tracks have vinyl positions but sequential track_numbers
         assert_eq!(tracks.len(), 2); // Fixture only has 2 tracks (A1-A2)
@@ -383,11 +416,27 @@ mod tests {
             std::fs::read_to_string(&fixture_path).expect("Failed to read vinyl_master_test.json");
         let master: crate::discogs::DiscogsMaster =
             serde_json::from_str(&json_data).expect("Failed to parse JSON");
-        let album = crate::discogs::DiscogsAlbum::Master(master);
+
+        // Convert master to release for parsing
+        let release = crate::discogs::DiscogsRelease {
+            id: master.id.clone(),
+            title: master.title.clone(),
+            year: master.year,
+            genre: Vec::new(),
+            style: Vec::new(),
+            format: Vec::new(),
+            country: None,
+            label: Vec::new(),
+            cover_image: None,
+            thumb: None,
+            artists: master.artists.clone(),
+            tracklist: master.tracklist.clone(),
+            master_id: Some(master.id),
+        };
 
         // Parse through album_track_creator to get real DbTracks with vinyl positions
         let (_, _, tracks, _, _) =
-            crate::import::discogs_parser::parse_discogs_album(&album).unwrap();
+            crate::import::discogs_parser::parse_discogs_release(&release).unwrap();
 
         assert_eq!(tracks.len(), 2); // Fixture only has 2 tracks (A1-A2)
 
