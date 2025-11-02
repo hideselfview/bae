@@ -2,7 +2,6 @@ use tracing::{error, info};
 
 use crate::db::Database;
 
-mod audio_processing;
 mod cache;
 mod cloud_storage;
 mod config;

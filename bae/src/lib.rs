@@ -18,7 +18,6 @@ pub mod import;
 pub mod library;
 
 // Optional modules
-pub mod audio_processing;
 pub mod cue_flac;
 pub mod playback;
 pub mod subsonic;

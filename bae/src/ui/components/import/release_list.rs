@@ -14,17 +14,13 @@ pub fn ReleaseList(master_id: String, master_title: String, on_back: EventHandle
     let current_page = use_signal(|| 1u32);
     let is_loading = use_signal(|| false);
     let error_message = use_signal(|| Option::<String>::None);
-    let all_versions = use_signal(|| Vec::<DiscogsMasterReleaseVersion>::new());
+    let all_versions = use_signal(Vec::<DiscogsMasterReleaseVersion>::new);
     let pagination_info = use_signal(|| Option::<PaginationInfo>::None);
 
     // Load initial page
     {
         let master_id = master_id.clone();
         let client = client.clone();
-        let is_loading = is_loading;
-        let error_message = error_message;
-        let all_versions = all_versions;
-        let pagination_info = pagination_info;
 
         use_effect(move || {
             let master_id = master_id.clone();
