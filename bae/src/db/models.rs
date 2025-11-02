@@ -349,14 +349,13 @@ impl DbAlbum {
     /// If the release has a master_id, both master_id and release_id are stored together in discogs_release.
     pub fn from_discogs_release(release: &crate::discogs::DiscogsRelease) -> Self {
         let now = Utc::now();
-        let discogs_release = if let Some(master_id) = &release.master_id {
-            Some(DiscogsMasterRelease {
+        let discogs_release = release
+            .master_id
+            .as_ref()
+            .map(|master_id| DiscogsMasterRelease {
                 master_id: master_id.clone(),
                 release_id: release.id.clone(),
-            })
-        } else {
-            None
-        };
+            });
 
         DbAlbum {
             id: Uuid::new_v4().to_string(),

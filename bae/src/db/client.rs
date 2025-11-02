@@ -530,7 +530,7 @@ impl Database {
                 ) VALUES (?, ?, ?, ?)
                 "#,
             )
-            .bind(&Uuid::new_v4().to_string())
+            .bind(Uuid::new_v4().to_string())
             .bind(&album.id)
             .bind(&discogs_release.master_id)
             .bind(&discogs_release.release_id)
@@ -629,7 +629,7 @@ impl Database {
                 ) VALUES (?, ?, ?, ?)
                 "#,
             )
-            .bind(&Uuid::new_v4().to_string())
+            .bind(Uuid::new_v4().to_string())
             .bind(&album.id)
             .bind(&discogs_release.master_id)
             .bind(&discogs_release.release_id)
