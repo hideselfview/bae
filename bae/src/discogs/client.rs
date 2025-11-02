@@ -1,6 +1,6 @@
 use crate::discogs::models::{
     DiscogsArtist, DiscogsMaster, DiscogsMasterReleaseVersion, DiscogsRelease, DiscogsTrack,
-    SortOrder,
+    MasterVersionsResult, PaginationInfo, SortOrder,
 };
 use reqwest::{Client, Error as ReqwestError};
 use serde::Deserialize;
@@ -20,6 +20,8 @@ pub enum DiscogsError {
     NotFound,
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
 }
 
 /// Discogs search response wrapper
@@ -50,6 +52,7 @@ pub struct DiscogsSearchResult {
 #[derive(Debug, Deserialize)]
 struct MasterVersionsResponse {
     versions: Vec<VersionResponse>,
+    pagination: PaginationInfo,
 }
 
 /// Individual version from master versions API
@@ -251,12 +254,19 @@ impl DiscogsClient {
         }
     }
 
-    /// Get versions of a master release
+    /// Get versions of a master release with pagination
     pub async fn get_master_releases(
         &self,
         master_id: &str,
         sort_order: Option<SortOrder>,
-    ) -> Result<Vec<DiscogsMasterReleaseVersion>, DiscogsError> {
+        page: u32,
+    ) -> Result<MasterVersionsResult, DiscogsError> {
+        if page == 0 {
+            return Err(DiscogsError::InvalidInput(
+                "Page number must be greater than 0".to_string(),
+            ));
+        }
+
         let url = format!("{}/masters/{}/versions", self.base_url, master_id);
 
         let sort_order = match sort_order.unwrap_or(SortOrder::Ascending) {
@@ -267,9 +277,10 @@ impl DiscogsClient {
         let mut params = HashMap::<&str, String>::new();
 
         params.insert("token", self.api_key.clone());
-        params.insert("per_page", String::from("100"));
+        params.insert("per_page", "100".to_string());
         params.insert("sort", String::from("released"));
         params.insert("sort_order", sort_order);
+        params.insert("page", page.to_string());
 
         let response = self
             .client
@@ -290,7 +301,7 @@ impl DiscogsClient {
                     e
                 })?;
 
-            Ok(versions_response
+            let versions = versions_response
                 .versions
                 .into_iter()
                 .map(|v| DiscogsMasterReleaseVersion {
@@ -303,7 +314,12 @@ impl DiscogsClient {
                     released: v.released,
                     thumb: v.thumb,
                 })
-                .collect())
+                .collect();
+
+            Ok(MasterVersionsResult {
+                versions,
+                pagination: versions_response.pagination,
+            })
         } else if response.status() == 429 {
             warn!("Rate limit hit for master_id {}", master_id);
             Err(DiscogsError::RateLimit)

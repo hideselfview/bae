@@ -66,3 +66,19 @@ pub struct DiscogsTrack {
     pub title: String,
     pub duration: Option<String>, // Duration as string from Discogs (e.g., "3:45")
 }
+
+/// Pagination information from Discogs API
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PaginationInfo {
+    pub page: u32,
+    pub pages: u32,
+    pub per_page: u32,
+    pub items: u32,
+}
+
+/// Result of fetching master release versions with pagination
+#[derive(Debug, Clone, PartialEq)]
+pub struct MasterVersionsResult {
+    pub versions: Vec<DiscogsMasterReleaseVersion>,
+    pub pagination: PaginationInfo,
+}
