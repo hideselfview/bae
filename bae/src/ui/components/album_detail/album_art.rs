@@ -5,7 +5,7 @@ use dioxus::prelude::*;
 pub fn AlbumArt(
     title: String,
     cover_url: Option<String>,
-    import_progress: ReadOnlySignal<Option<u8>>,
+    import_progress: ReadSignal<Option<u8>>,
 ) -> Element {
     rsx! {
         div { class: "aspect-square bg-gray-700 rounded-lg flex items-center justify-center overflow-hidden relative",

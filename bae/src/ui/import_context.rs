@@ -1,6 +1,7 @@
 use crate::config::use_config;
 use crate::discogs::client::DiscogsSearchResult;
 use crate::discogs::{DiscogsAlbum, DiscogsClient};
+use dioxus::core::Task;
 use dioxus::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;

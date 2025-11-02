@@ -14,7 +14,7 @@ pub fn AlbumDetailView(
     selected_release_id: Option<String>,
     on_release_select: EventHandler<String>,
     tracks: Vec<DbTrack>,
-    import_progress: ReadOnlySignal<Option<u8>>,
+    import_progress: ReadSignal<Option<u8>>,
 ) -> Element {
     let playback = use_playback_service();
 

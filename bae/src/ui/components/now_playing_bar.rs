@@ -12,10 +12,10 @@ fn PlaybackControlsZone(
     on_pause: EventHandler<()>,
     on_resume: EventHandler<()>,
     on_next: EventHandler<()>,
-    is_playing: ReadOnlySignal<bool>,
-    is_paused: ReadOnlySignal<bool>,
-    is_loading: ReadOnlySignal<bool>,
-    is_stopped: ReadOnlySignal<bool>,
+    is_playing: ReadSignal<bool>,
+    is_paused: ReadSignal<bool>,
+    is_loading: ReadSignal<bool>,
+    is_stopped: ReadSignal<bool>,
 ) -> Element {
     rsx! {
         div { class: "flex items-center gap-2",
@@ -72,9 +72,9 @@ fn PlaybackControlsZone(
 
 #[component]
 fn TrackInfoZone(
-    track: ReadOnlySignal<Option<DbTrack>>,
-    artist_name: ReadOnlySignal<String>,
-    is_loading: ReadOnlySignal<bool>,
+    track: ReadSignal<Option<DbTrack>>,
+    artist_name: ReadSignal<String>,
+    is_loading: ReadSignal<bool>,
 ) -> Element {
     let library_manager = use_library_manager();
     // let navigator = navigator();
@@ -129,9 +129,9 @@ fn format_duration(duration: std::time::Duration) -> String {
 
 #[component]
 fn PositionZone(
-    position: ReadOnlySignal<Option<std::time::Duration>>,
-    duration: ReadOnlySignal<Option<std::time::Duration>>,
-    is_paused: ReadOnlySignal<bool>,
+    position: ReadSignal<Option<std::time::Duration>>,
+    duration: ReadSignal<Option<std::time::Duration>>,
+    is_paused: ReadSignal<bool>,
     on_seek: EventHandler<std::time::Duration>,
     is_seeking: Signal<bool>,
 ) -> Element {

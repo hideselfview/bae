@@ -15,8 +15,8 @@ use crate::library::LibraryError;
 /// Album detail page showing album info and tracklist
 #[component]
 pub fn AlbumDetail(
-    album_id: ReadOnlySignal<String>,
-    release_id: ReadOnlySignal<String>, // May be empty string, will default to first release
+    album_id: ReadSignal<String>,
+    release_id: ReadSignal<String>, // May be empty string, will default to first release
 ) -> Element {
     let maybe_release_id = use_memo(move || maybe_not_empty(release_id()));
     let data = use_album_detail_data(album_id, maybe_release_id);
@@ -99,7 +99,7 @@ struct AlbumDetailData {
 }
 
 fn use_album_detail_data(
-    album_id: ReadOnlySignal<String>,
+    album_id: ReadSignal<String>,
     maybe_release_id_param: Memo<Option<String>>,
 ) -> AlbumDetailData {
     let library_manager = use_library_manager();
