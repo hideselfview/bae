@@ -8,7 +8,9 @@ use crate::db::{DbAlbum, DbRelease};
 use crate::import::discogs_parser::parse_discogs_release;
 use crate::import::progress::ImportProgressHandle;
 use crate::import::track_to_file_mapper::map_tracks_to_files;
-use crate::import::types::{DiscoveredFile, ImportProgress, ImportRequestParams, TrackFile};
+use crate::import::types::{
+    CueFlacMetadata, DiscoveredFile, ImportProgress, ImportRequestParams, TrackFile,
+};
 use crate::library::SharedLibraryManager;
 use crate::playback::symphonia_decoder::TrackDecoder;
 use std::path::Path;
@@ -29,6 +31,9 @@ pub struct ImportRequest {
     pub db_release: DbRelease,
     pub tracks_to_files: Vec<TrackFile>,
     pub discovered_files: Vec<DiscoveredFile>,
+    /// Pre-parsed CUE/FLAC metadata (for CUE/FLAC imports only).
+    /// Validated during track mapping, passed through to avoid re-parsing.
+    pub cue_flac_metadata: Option<std::collections::HashMap<std::path::PathBuf, CueFlacMetadata>>,
 }
 
 impl ImportHandle {
@@ -94,8 +99,10 @@ impl ImportHandle {
                 // 2. Discover files
                 let discovered_files = discover_folder_files(&folder)?;
 
-                // 3. Build track-to-file mapping
-                let tracks_to_files = map_tracks_to_files(&db_tracks, &discovered_files).await?;
+                // 3. Build track-to-file mapping (validates and parses CUE sheets if present)
+                let mapping_result = map_tracks_to_files(&db_tracks, &discovered_files).await?;
+                let tracks_to_files = mapping_result.track_files.clone();
+                let cue_flac_metadata = mapping_result.cue_flac_metadata;
 
                 // 4. Insert or lookup artists (deduplicate across imports)
                 for artist in &artists {
@@ -155,6 +162,7 @@ impl ImportHandle {
                         db_release,
                         tracks_to_files,
                         discovered_files,
+                        cue_flac_metadata,
                     })
                     .map_err(|_| "Failed to queue validated album for import".to_string())?;
 

@@ -1,18 +1,22 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
-use crate::cue_flac::CueFlacProcessor;
+use crate::cue_flac::{CueFlacPair, CueFlacProcessor};
 use crate::db::DbTrack;
-use crate::import::types::{DiscoveredFile, TrackFile};
+use crate::import::types::{CueFlacMetadata, DiscoveredFile, TrackFile, TrackToFileMappingResult};
 
 /// Map tracks to their source audio files using already-discovered files.
 ///
-/// This is a validation step that runs BEFORE database insertion.
-/// No filesystem traversal is performed.
+/// This is an analysis and validation step that runs BEFORE database insertion.
+/// - For file-per-track imports, this will map tracks to individual audio files.
+/// - For CUE/FLAC imports, this will use the CUE sheet to map tracks to the FLAC file that contains the album.
+///
+/// The data computed here is used later during import and playback.
 pub async fn map_tracks_to_files(
     tracks: &[DbTrack],
     discovered_files: &[DiscoveredFile],
-) -> Result<Vec<TrackFile>, String> {
+) -> Result<TrackToFileMappingResult, String> {
     info!(
         "Mapping {} tracks using {} pre-discovered files",
         tracks.len(),
@@ -26,83 +30,107 @@ pub async fn map_tracks_to_files(
     let cue_flac_pairs = CueFlacProcessor::detect_cue_flac_from_paths(&file_paths)
         .map_err(|e| format!("CUE/FLAC detection failed: {}", e))?;
 
-    // If CUE/FLAC pairs were found, use them to map tracks to files
-    if !cue_flac_pairs.is_empty() {
-        info!("Found {} CUE/FLAC pairs", cue_flac_pairs.len());
-        return map_tracks_to_cue_flac(cue_flac_pairs, tracks);
+    // If no CUE/FLAC pairs, map tracks to individual audio files
+    if cue_flac_pairs.is_empty() {
+        return map_tracks_to_individual_files(tracks, &file_paths);
     }
 
-    // Otherwise, map tracks to individual audio files
-    map_tracks_to_individual_files(&file_paths, tracks)
+    // Map tracks to CUE/FLAC files
+    info!("Found {} CUE/FLAC pairs", cue_flac_pairs.len());
+    map_tracks_to_cue_flacs(tracks, cue_flac_pairs)
 }
 
-/// Map tracks to CUE/FLAC source files using CUE sheet parsing
-fn map_tracks_to_cue_flac(
-    cue_flac_pairs: Vec<crate::cue_flac::CueFlacPair>,
+/// Map tracks to CUE/FLAC source files using CUE sheet parsing.
+/// Returns track mappings AND the parsed CUE metadata for use in later stages.
+fn map_tracks_to_cue_flacs(
     tracks: &[DbTrack],
-) -> Result<Vec<TrackFile>, String> {
-    let mut mappings = Vec::new();
+    cue_flac_pairs: Vec<CueFlacPair>,
+) -> Result<TrackToFileMappingResult, String> {
+    let mut track_files = Vec::new();
+    let mut cue_flac_metadata = HashMap::new();
 
     for pair in cue_flac_pairs {
-        debug!(
-            "Processing CUE/FLAC pair: {} + {}",
-            pair.flac_path.display(),
-            pair.cue_path.display()
-        );
+        let (pair_mappings, pair_metadata) = map_tracks_to_cue_flac(&pair, tracks)?;
 
-        // Parse the CUE sheet
-        let cue_sheet = CueFlacProcessor::parse_cue_sheet(&pair.cue_path)
-            .map_err(|e| format!("Failed to parse CUE sheet: {}", e))?;
-
-        debug!("CUE sheet contains {} tracks", cue_sheet.tracks.len());
-
-        if cue_sheet.tracks.is_empty() {
-            return Err(format!(
-                "CUE sheet '{}' contains no tracks. Check CUE file format.",
-                pair.cue_path.display()
-            ));
-        }
-
-        // For CUE/FLAC, all tracks map to the same FLAC file
-        for (index, cue_track) in cue_sheet.tracks.iter().enumerate() {
-            if let Some(db_track) = tracks.get(index) {
-                mappings.push(TrackFile {
-                    db_track_id: db_track.id.clone(),
-                    file_path: pair.flac_path.clone(),
-                });
-
-                debug!(
-                    "Mapped CUE track '{}' to DB track '{}'",
-                    cue_track.title, db_track.title
-                );
-            } else {
-                warn!(
-                    "CUE track '{}' has no corresponding DB track",
-                    cue_track.title
-                );
-            }
-        }
+        track_files.extend(pair_mappings);
+        cue_flac_metadata.insert(pair.flac_path.clone(), pair_metadata);
     }
 
-    info!("Created {} CUE/FLAC mappings", mappings.len());
+    info!(
+        "Created {} CUE/FLAC mappings with validated metadata",
+        track_files.len()
+    );
 
-    // Validate that all tracks were mapped
-    if mappings.len() != tracks.len() {
+    Ok(TrackToFileMappingResult {
+        track_files,
+        cue_flac_metadata: Some(cue_flac_metadata),
+    })
+}
+
+/// Process a single CUE/FLAC pair: parse, validate, and create track mappings.
+/// Returns the track mappings and metadata for this pair.
+fn map_tracks_to_cue_flac(
+    pair: &CueFlacPair,
+    tracks: &[DbTrack],
+) -> Result<(Vec<TrackFile>, CueFlacMetadata), String> {
+    debug!(
+        "Processing CUE/FLAC pair: {} + {}",
+        pair.flac_path.display(),
+        pair.cue_path.display()
+    );
+
+    // Parse the CUE sheet (validation happens here)
+    let cue_sheet = CueFlacProcessor::parse_cue_sheet(&pair.cue_path)
+        .map_err(|e| format!("Failed to parse CUE sheet: {}", e))?;
+
+    debug!("CUE sheet contains {} tracks", cue_sheet.tracks.len());
+
+    if cue_sheet.tracks.is_empty() {
         return Err(format!(
-            "Track mapping mismatch: CUE sheet produced {} tracks but expected {} tracks from Discogs metadata",
-            mappings.len(),
+            "CUE sheet '{}' contains no tracks. Check CUE file format.",
+            pair.cue_path.display()
+        ));
+    }
+
+    // Validate track count matches Discogs metadata
+    if cue_sheet.tracks.len() != tracks.len() {
+        return Err(format!(
+            "Track count mismatch: CUE sheet has {} tracks but Discogs has {} tracks",
+            cue_sheet.tracks.len(),
             tracks.len()
         ));
     }
 
-    Ok(mappings)
+    // For CUE/FLAC, all tracks map to the same FLAC file
+    let mut mappings = Vec::new();
+    for (index, cue_track) in cue_sheet.tracks.iter().enumerate() {
+        if let Some(db_track) = tracks.get(index) {
+            mappings.push(TrackFile {
+                db_track_id: db_track.id.clone(),
+                file_path: pair.flac_path.clone(),
+            });
+
+            debug!(
+                "Mapped CUE track '{}' to DB track '{}'",
+                cue_track.title, db_track.title
+            );
+        }
+    }
+
+    let metadata = CueFlacMetadata {
+        cue_sheet,
+        cue_path: pair.cue_path.clone(),
+        flac_path: pair.flac_path.clone(),
+    };
+
+    Ok((mappings, metadata))
 }
 
 /// Map tracks to individual audio files using simple name-based matching
 fn map_tracks_to_individual_files(
-    file_paths: &[PathBuf],
     tracks: &[DbTrack],
-) -> Result<Vec<TrackFile>, String> {
+    file_paths: &[PathBuf],
+) -> Result<TrackToFileMappingResult, String> {
     let audio_files = filter_audio_files(file_paths);
 
     if audio_files.is_empty() {
@@ -146,7 +174,10 @@ fn map_tracks_to_individual_files(
     }
 
     info!("Mapped {} tracks to source files", mappings.len());
-    Ok(mappings)
+    Ok(TrackToFileMappingResult {
+        track_files: mappings,
+        cue_flac_metadata: None,
+    })
 }
 
 /// Filter audio files from a list of paths
@@ -214,7 +245,8 @@ mod tests {
         let result = map_tracks_to_files(&tracks, &discovered_files).await;
         assert!(result.is_ok());
 
-        let mappings = result.unwrap();
+        let mapping_result = result.unwrap();
+        let mappings = &mapping_result.track_files;
         assert_eq!(mappings.len(), 3);
 
         // Verify each track maps to corresponding file
@@ -382,7 +414,8 @@ mod tests {
         let result = map_tracks_to_files(&tracks, &discovered_files).await;
         assert!(result.is_ok());
 
-        let mappings = result.unwrap();
+        let mapping_result = result.unwrap();
+        let mappings = &mapping_result.track_files;
         assert_eq!(mappings.len(), 16, "All 16 tracks should be mapped");
 
         // Verify sequential mapping works despite vinyl notation:
@@ -459,7 +492,8 @@ mod tests {
         let result = map_tracks_to_files(&tracks, &discovered_files).await;
         assert!(result.is_ok(), "CUE/FLAC mapping should succeed");
 
-        let mappings = result.unwrap();
+        let mapping_result = result.unwrap();
+        let mappings = &mapping_result.track_files;
         assert_eq!(
             mappings.len(),
             16,

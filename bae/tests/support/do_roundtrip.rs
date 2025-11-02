@@ -3,7 +3,7 @@
 use bae::cache::CacheManager;
 use bae::cloud_storage::CloudStorageManager;
 use bae::db::Database;
-use bae::discogs::DiscogsAlbum;
+use bae::discogs::DiscogsRelease;
 use bae::encryption::EncryptionService;
 use bae::import::{ImportConfig, ImportRequestParams, ImportService};
 use bae::library::LibraryManager;
@@ -21,7 +21,7 @@ use bae::test_support::MockCloudStorage;
 #[allow(dead_code)]
 pub async fn do_roundtrip<F, G>(
     test_name: &str,
-    discogs_album: DiscogsAlbum,
+    discogs_release: DiscogsRelease,
     generate_files: F,
     expected_track_count: usize,
     verify_tracks: G,
@@ -116,7 +116,7 @@ pub async fn do_roundtrip<F, G>(
 
     let (_album_id, release_id) = import_handle
         .send_request(ImportRequestParams::FromFolder {
-            discogs_album,
+            discogs_release,
             folder: album_dir.clone(),
         })
         .await
@@ -185,18 +185,12 @@ pub async fn do_roundtrip<F, G>(
     info!("Verifying reassembly...");
 
     for (i, (track, expected_data)) in tracks.iter().zip(&file_data).take(3).enumerate() {
-        // Get track position to find the file
-        let track_position = library_manager
-            .get_track_position(&track.id)
+        // Get track chunk coordinates
+        let _coords = library_manager
+            .get_track_chunk_coords(&track.id)
             .await
-            .expect("Failed to get track position")
-            .expect("No track position found");
-
-        let _file = library_manager
-            .get_file_by_id(&track_position.file_id)
-            .await
-            .expect("Failed to get file")
-            .expect("No file found");
+            .expect("Failed to get track chunk coords")
+            .expect("No track chunk coords found");
 
         // Use the proper reassembly function that handles byte offsets
         let reassembled = reassemble_track(

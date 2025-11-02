@@ -535,7 +535,15 @@ impl PlaybackService {
         };
 
         info!("Decoder created, sample rate: {} Hz", decoder.sample_rate());
-        let track_duration = decoder.duration();
+
+        // Use stored duration from database for all tracks
+        // For CUE/FLAC tracks, decoder reports full file duration, so we must use stored duration
+        // For regular tracks, stored duration should match decoder (but we trust stored value)
+        let track_duration = track
+            .duration_ms
+            .map(|ms| std::time::Duration::from_millis(ms as u64))
+            .or_else(|| decoder.duration()); // Fallback to decoder if no stored duration
+
         if let Some(dur) = track_duration {
             info!("Track duration: {:?}", dur);
         } else {

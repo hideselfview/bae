@@ -14,7 +14,7 @@
 // - `ImportRequest`: Album import requests
 // - `ImportProgress`: Real-time progress updates
 
-mod album_file_layout;
+mod album_chunk_layout;
 mod discogs_parser;
 mod handle;
 mod metadata_persister;

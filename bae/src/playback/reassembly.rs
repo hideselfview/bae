@@ -1,6 +1,6 @@
 use crate::cache::CacheManager;
 use crate::cloud_storage::CloudStorageManager;
-use crate::db::{DbChunk, DbFile, DbTrackPosition};
+use crate::db::DbChunk;
 use crate::encryption::EncryptionService;
 use crate::library::LibraryManager;
 use futures::stream::{self, StreamExt};
@@ -8,84 +8,62 @@ use tracing::{debug, info, warn};
 
 /// Reassemble chunks for a track into a continuous audio buffer
 ///
-/// Unified streaming logic for all tracks:
-/// 1. Look up track_position to find which file this track uses
-/// 2. Get the file record
-/// 3. Branch based on file type:
-///    - CUE/FLAC: Use chunk range + prepend FLAC headers
-///    - Regular: Download all file chunks and reassemble
+/// Unified streaming logic for all tracks using TrackChunkCoords:
+/// 1. Get track chunk coordinates (has all location info)
+/// 2. Get audio format (has FLAC headers if needed)
+/// 3. Download chunks in range and extract byte ranges
+/// 4. Prepend FLAC headers if needed (CUE/FLAC tracks)
 ///
-/// Key insight: ALL tracks now have track_position entries (not just CUE/FLAC).
-/// This unifies the streaming code path and eliminates special cases.
+/// Key insight: Both import types produce identical TrackChunkCoords records.
+/// The only difference is whether we need to prepend FLAC headers.
 pub async fn reassemble_track(
     track_id: &str,
     library_manager: &LibraryManager,
     cloud_storage: &CloudStorageManager,
     cache: &CacheManager,
     encryption_service: &EncryptionService,
-    _chunk_size_bytes: usize,
+    chunk_size_bytes: usize,
 ) -> Result<Vec<u8>, String> {
     info!("Reassembling chunks for track: {}", track_id);
 
-    // Step 1: Get track position (links track→file with time ranges)
-    // This now exists for ALL tracks, not just CUE/FLAC
-    let track_position = library_manager
-        .get_track_position(track_id)
+    // Step 1: Get track chunk coordinates (has all location info)
+    let coords = library_manager
+        .get_track_chunk_coords(track_id)
         .await
         .map_err(|e| format!("Database error: {}", e))?
-        .ok_or_else(|| format!("No track position found for track {}", track_id))?;
+        .ok_or_else(|| format!("No chunk coordinates found for track {}", track_id))?;
 
-    // Step 2: Get the file record
-    let file = library_manager
-        .get_file_by_id(&track_position.file_id)
+    // Step 2: Get audio format (has FLAC headers if needed)
+    let audio_format = library_manager
+        .get_audio_format_by_track_id(track_id)
         .await
         .map_err(|e| format!("Database error: {}", e))?
-        .ok_or_else(|| "File not found for track".to_string())?;
-
-    // Step 3: Branch based on file type
-    if file.has_cue_sheet {
-        // CUE/FLAC: Download only the chunk range needed, prepend FLAC headers
-        info!("CUE/FLAC track detected - using efficient chunk range streaming with FLAC headers");
-        return reassemble_cue_track(
-            &track_position,
-            &file,
-            library_manager,
-            cloud_storage,
-            cache,
-            encryption_service,
-        )
-        .await;
-    }
-
-    // Regular file: Download all chunks for this file
-    info!("Regular track - reassembling full file chunks");
-    debug!(
-        "Processing file: {} ({} bytes)",
-        file.original_filename, file.file_size
-    );
-
-    // Get file_chunk mapping to know byte offsets
-    let file_chunk = library_manager
-        .get_file_chunk_mapping(&file.id)
-        .await
-        .map_err(|e| format!("Database error: {}", e))?
-        .ok_or_else(|| "No file_chunk mapping found for file".to_string())?;
+        .ok_or_else(|| format!("No audio format found for track {}", track_id))?;
 
     debug!(
-        "File spans chunks {}-{} with byte offsets {}-{}",
-        file_chunk.start_chunk_index,
-        file_chunk.end_chunk_index,
-        file_chunk.start_byte_offset,
-        file_chunk.end_byte_offset
+        "Track spans chunks {}-{} with byte offsets {}-{}",
+        coords.start_chunk_index,
+        coords.end_chunk_index,
+        coords.start_byte_offset,
+        coords.end_byte_offset
     );
 
-    // Get chunks for this track's file
+    // Step 3: Get track to find release_id
+    let track = library_manager
+        .get_track(track_id)
+        .await
+        .map_err(|e| format!("Database error: {}", e))?
+        .ok_or_else(|| format!("Track not found: {}", track_id))?;
+
+    // Step 4: Get all chunks in range
+    let chunk_range = coords.start_chunk_index..=coords.end_chunk_index;
     let chunks = library_manager
-        .get_chunks_for_file(&file.id)
+        .get_chunks_in_range(&track.release_id, chunk_range)
         .await
         .map_err(|e| format!("Database error: {}", e))?;
+
     if chunks.is_empty() {
-        return Err("No chunks found for file".to_string());
+        return Err(format!("No chunks found for track {}", track_id));
     }
 
     debug!("Found {} chunks to reassemble", chunks.len());
@@ -94,9 +72,6 @@ pub async fn reassemble_track(
     let mut sorted_chunks = chunks;
     sorted_chunks.sort_by_key(|c| c.chunk_index);
 
-    // Calculate the base chunk index (minimum) so we can compute file-relative positions
-    let base_chunk_index = sorted_chunks.first().map(|c| c.chunk_index).unwrap_or(0);
-
     // Download and decrypt all chunks in parallel (max 10 concurrent)
     let chunk_results: Vec<Result<(i32, Vec<u8>), String>> = stream::iter(sorted_chunks)
         .map(move |chunk| {
@@ -104,12 +79,10 @@ pub async fn reassemble_track(
             let cache = cache.clone();
             let encryption_service = encryption_service.clone();
             async move {
-                // Use file-relative position (0, 1, 2, ...) instead of album-level index
-                let file_position = chunk.chunk_index - base_chunk_index;
                 let chunk_data =
                     download_and_decrypt_chunk(&chunk, &cloud_storage, &cache, &encryption_service)
                         .await?;
-                Ok::<_, String>((file_position, chunk_data))
+                Ok::<_, String>((chunk.chunk_index, chunk_data))
             }
         })
         .buffer_unordered(10) // Download up to 10 chunks concurrently
@@ -122,148 +95,44 @@ pub async fn reassemble_track(
         indexed_chunks.push(result?);
     }
 
-    // Sort by file position to ensure correct order (parallel downloads may complete out of order)
-    indexed_chunks.sort_by_key(|(position, _)| *position);
+    // Sort by chunk index to ensure correct order (parallel downloads may complete out of order)
+    indexed_chunks.sort_by_key(|(idx, _)| *idx);
 
-    // Extract only the chunk data (without the position index)
+    // Extract only the chunk data (without the index)
     let chunk_data: Vec<Vec<u8>> = indexed_chunks.into_iter().map(|(_, data)| data).collect();
 
-    // Use byte offsets to extract exactly the file data
+    // Use byte offsets from coordinates to extract exactly the track data
     debug!(
-        "Extracting file data: {} chunks, start_offset={}, end_offset={}, chunk_size={}",
+        "Extracting track data: {} chunks, start_offset={}, end_offset={}, chunk_size={}",
         chunk_data.len(),
-        file_chunk.start_byte_offset,
-        file_chunk.end_byte_offset,
-        _chunk_size_bytes
+        coords.start_byte_offset,
+        coords.end_byte_offset,
+        chunk_size_bytes
     );
-    let audio_data = extract_file_from_chunks(
+    let mut audio_data = extract_file_from_chunks(
         &chunk_data,
-        file_chunk.start_byte_offset,
-        file_chunk.end_byte_offset,
-        _chunk_size_bytes,
+        coords.start_byte_offset,
+        coords.end_byte_offset,
+        chunk_size_bytes,
     );
 
+    // Prepend FLAC headers if needed (CUE/FLAC tracks)
+    if audio_format.needs_headers {
+        if let Some(ref headers) = audio_format.flac_headers {
+            debug!("Prepending FLAC headers: {} bytes", headers.len());
+            let mut complete_audio = headers.clone();
+            complete_audio.extend_from_slice(&audio_data);
+            audio_data = complete_audio;
+        } else {
+            warn!("Audio format needs headers but none provided");
+        }
+    }
+
     info!(
-        "Successfully reassembled {} bytes of audio data (expected: {} bytes)",
+        "Successfully reassembled {} bytes of audio data for track {}",
         audio_data.len(),
-        file.file_size
+        track_id
     );
-    Ok(audio_data)
-}
-
-/// Reassemble a CUE/FLAC track efficiently using chunk ranges and header prepending
-///
-/// CUE/FLAC optimization:
-/// - Instead of downloading the entire FLAC file, we only download the chunks
-///   needed for this specific track's time range
-/// - We prepend the FLAC headers (stored in database) to make it a valid FLAC file
-/// - This provides ~85% download reduction for typical CUE/FLAC albums
-///
-/// How it works:
-/// 1. Get the chunk range for this track from track_position
-/// 2. Download and decrypt only those chunks
-/// 3. Prepend FLAC headers from database
-/// 4. Return as valid FLAC audio data
-async fn reassemble_cue_track(
-    track_position: &DbTrackPosition,
-    file: &DbFile,
-    library_manager: &LibraryManager,
-    cloud_storage: &CloudStorageManager,
-    cache: &CacheManager,
-    encryption_service: &EncryptionService,
-) -> Result<Vec<u8>, String> {
-    info!(
-        "Streaming CUE/FLAC track: chunks {}-{}",
-        track_position.start_chunk_index, track_position.end_chunk_index
-    );
-
-    // Sanity check
-    if !file.has_cue_sheet {
-        return Err("File is not marked as CUE/FLAC".to_string());
-    }
-
-    let flac_headers = file
-        .flac_headers
-        .as_ref()
-        .ok_or("No FLAC headers found in database")?;
-
-    debug!("Using stored FLAC headers: {} bytes", flac_headers.len());
-
-    // Get only the chunks we need for this track (efficient!)
-    let chunk_range = track_position.start_chunk_index..=track_position.end_chunk_index;
-    let chunks = library_manager
-        .get_chunks_in_range(&file.release_id, chunk_range)
-        .await
-        .map_err(|e| format!("Failed to get chunk range: {}", e))?;
-
-    if chunks.is_empty() {
-        return Err("No chunks found in track range".to_string());
-    }
-
-    // Calculate approximate reduction (for logging purposes only)
-    let chunk_size_estimate = 1024 * 1024; // 1MB default estimate
-    let approximate_total_chunks = file.file_size / chunk_size_estimate;
-    info!(
-        "Downloading {} chunks instead of {} total chunks ({}% reduction)",
-        chunks.len(),
-        approximate_total_chunks,
-        100 - (chunks.len() * 100) / approximate_total_chunks as usize
-    );
-
-    // Sort chunks by index to ensure correct order
-    let mut sorted_chunks = chunks;
-    sorted_chunks.sort_by_key(|c| c.chunk_index);
-
-    let chunk_count = sorted_chunks.len();
-
-    // Calculate the base chunk index (minimum) so we can compute file-relative positions
-    let base_chunk_index = sorted_chunks.first().map(|c| c.chunk_index).unwrap_or(0);
-
-    // Download and decrypt all chunks in parallel (max 10 concurrent)
-    let chunk_results: Vec<Result<(i32, Vec<u8>), String>> = stream::iter(sorted_chunks)
-        .map(move |chunk| {
-            let cloud_storage = cloud_storage.clone();
-            let cache = cache.clone();
-            let encryption_service = encryption_service.clone();
-            async move {
-                // Use file-relative position (0, 1, 2, ...) instead of album-level index
-                let file_position = chunk.chunk_index - base_chunk_index;
-                let chunk_data =
-                    download_and_decrypt_chunk(&chunk, &cloud_storage, &cache, &encryption_service)
-                        .await?;
-                Ok::<_, String>((file_position, chunk_data))
-            }
-        })
-        .buffer_unordered(10) // Download up to 10 chunks concurrently
-        .collect()
-        .await;
-
-    // Check for errors and collect indexed chunks
-    let mut indexed_chunks: Vec<(i32, Vec<u8>)> = Vec::new();
-    for result in chunk_results {
-        indexed_chunks.push(result?);
-    }
-
-    // Sort by file position to ensure correct order (parallel downloads may complete out of order)
-    indexed_chunks.sort_by_key(|(position, _)| *position);
-
-    // Start with FLAC headers
-    let mut audio_data = flac_headers.clone();
-
-    // Append track chunks in order
-    for (index, chunk_data) in indexed_chunks {
-        debug!("Assembling CUE track chunk at index {}", index);
-        audio_data.extend_from_slice(&chunk_data);
-    }
-
-    info!(
-        "Successfully assembled CUE track: {} bytes (headers + {} chunks)",
-        audio_data.len(),
-        chunk_count
-    );
-
-    // For now, return the reassembled chunks with headers
-    // TODO: Use audio processing to extract precise track boundaries based on start_time_ms/end_time_ms
     Ok(audio_data)
 }
 
@@ -371,13 +240,15 @@ mod tests {
     use super::*;
     use crate::cache::CacheConfig;
     use crate::cloud_storage::CloudStorageManager;
-    use crate::db::{Database, DbChunk, DbFile, DbFileChunk, DbTrackPosition};
+    use crate::db::{Database, DbAudioFormat, DbChunk, DbFile, DbTrackChunkCoords};
     use crate::encryption::EncryptionService;
+    #[cfg(feature = "test-utils")]
     use crate::test_support::MockCloudStorage;
     use std::sync::Arc;
     use tempfile::TempDir;
 
     #[tokio::test]
+    #[cfg(feature = "test-utils")]
     async fn test_reassemble_track_with_file_ending_mid_chunk() {
         // This test simulates the vinyl album scenario:
         // File 1 is 14,832,725 bytes (~14.14 MB)
@@ -460,34 +331,25 @@ mod tests {
             library_manager.add_chunk(&chunk).await.unwrap();
         }
 
-        // Add file_chunk mapping with byte offsets
-        let file_chunk = DbFileChunk {
-            id: uuid::Uuid::new_v4().to_string(),
-            file_id: file.id.clone(),
-            start_chunk_index: 0,
-            end_chunk_index: 14,
-            start_byte_offset: 0,
-            end_byte_offset: 152_660, // Last byte of file in chunk 14 (14,832,725 - 14,680,064 - 1)
-            created_at: chrono::Utc::now(),
-        };
+        // Add audio format
+        let audio_format = DbAudioFormat::new("test-track", "flac", None, false);
         library_manager
-            .add_file_chunk_mapping(&file_chunk)
+            .add_audio_format(&audio_format)
             .await
             .unwrap();
 
-        // Add track_position
-        let track_position = DbTrackPosition {
-            id: uuid::Uuid::new_v4().to_string(),
-            track_id: "test-track".to_string(),
-            file_id: file.id.clone(),
-            start_time_ms: 0,
-            end_time_ms: 0,
-            start_chunk_index: 0,
-            end_chunk_index: 14,
-            created_at: chrono::Utc::now(),
-        };
+        // Add track chunk coordinates
+        let coords = DbTrackChunkCoords::new(
+            "test-track",
+            0,
+            14,
+            0,
+            152_660, // Last byte of file in chunk 14 (14,832,725 - 14,680,064 - 1)
+            0,
+            0,
+        );
         library_manager
-            .add_track_position(&track_position)
+            .add_track_chunk_coords(&coords)
             .await
             .unwrap();
 

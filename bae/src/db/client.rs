@@ -155,11 +155,10 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
-        // Files table (maps releases to actual files - audio or metadata)
-        // Files belong to releases, not tracks, because:
-        // - Metadata files (cover.jpg, .cue) aren't tied to specific tracks
-        // - CUE/FLAC files contain multiple tracks in one file
-        // Track→file relationship is tracked via track_positions table
+        // Files table (metadata for export/torrent features)
+        // Files belong to releases, not tracks. Used for reconstructing original
+        // file structure during export or BitTorrent seeding.
+        // Playback uses TrackChunkCoords + AudioFormat, not files.
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS files (
@@ -168,9 +167,6 @@ impl Database {
                 original_filename TEXT NOT NULL,
                 file_size INTEGER NOT NULL,
                 format TEXT NOT NULL,
-                flac_headers BLOB,
-                audio_start_byte INTEGER,
-                has_cue_sheet BOOLEAN NOT NULL DEFAULT FALSE,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (release_id) REFERENCES releases (id) ON DELETE CASCADE
             )
@@ -197,56 +193,42 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
-        // File chunks mapping (which chunks contain which files)
+        // Audio formats table (format metadata per track)
+        // Stores format information needed for playback.
+        // FLAC headers only needed for CUE/FLAC tracks.
         sqlx::query(
             r#"
-            CREATE TABLE IF NOT EXISTS file_chunks (
+            CREATE TABLE IF NOT EXISTS audio_formats (
                 id TEXT PRIMARY KEY,
-                file_id TEXT NOT NULL,
+                track_id TEXT NOT NULL UNIQUE,
+                format TEXT NOT NULL,
+                flac_headers BLOB,
+                needs_headers BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (track_id) REFERENCES tracks (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Track chunk coordinates table (precise location of track audio in chunked stream)
+        // This IS the TrackChunkCoords concept. Stores coordinates that locate a track's
+        // audio data within the chunked album stream, regardless of source structure.
+        // Both one-file-per-track and CUE/FLAC imports produce identical records here.
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS track_chunk_coords (
+                id TEXT PRIMARY KEY,
+                track_id TEXT NOT NULL UNIQUE,
                 start_chunk_index INTEGER NOT NULL,
                 end_chunk_index INTEGER NOT NULL,
                 start_byte_offset INTEGER NOT NULL,
                 end_byte_offset INTEGER NOT NULL,
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (file_id) REFERENCES files (id) ON DELETE CASCADE
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await?;
-
-        // CUE sheets table (for CUE/FLAC albums)
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS cue_sheets (
-                id TEXT PRIMARY KEY,
-                file_id TEXT NOT NULL,
-                cue_content TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (file_id) REFERENCES files (id) ON DELETE CASCADE
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await?;
-
-        // Track positions table (links tracks to files with timing information)
-        // Created for ALL tracks during import:
-        // - Regular tracks: start_time_ms=0, end_time_ms=0 (full file)
-        // - CUE tracks: actual timestamps from CUE sheet
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS track_positions (
-                id TEXT PRIMARY KEY,
-                track_id TEXT NOT NULL,
-                file_id TEXT NOT NULL,
                 start_time_ms INTEGER NOT NULL,
                 end_time_ms INTEGER NOT NULL,
-                start_chunk_index INTEGER NOT NULL,
-                end_chunk_index INTEGER NOT NULL,
                 created_at TEXT NOT NULL,
-                FOREIGN KEY (track_id) REFERENCES tracks (id) ON DELETE CASCADE,
-                FOREIGN KEY (file_id) REFERENCES files (id) ON DELETE CASCADE
+                FOREIGN KEY (track_id) REFERENCES tracks (id) ON DELETE CASCADE
             )
             "#,
         )
@@ -300,22 +282,14 @@ impl Database {
             .execute(&self.pool)
             .await?;
 
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_file_chunks_file_id ON file_chunks (file_id)")
-            .execute(&self.pool)
-            .await?;
-
-        sqlx::query("CREATE INDEX IF NOT EXISTS idx_cue_sheets_file_id ON cue_sheets (file_id)")
-            .execute(&self.pool)
-            .await?;
-
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_track_positions_track_id ON track_positions (track_id)",
+            "CREATE INDEX IF NOT EXISTS idx_audio_formats_track_id ON audio_formats (track_id)",
         )
         .execute(&self.pool)
         .await?;
 
         sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_track_positions_file_id ON track_positions (file_id)",
+            "CREATE INDEX IF NOT EXISTS idx_track_chunk_coords_track_id ON track_chunk_coords (track_id)",
         )
         .execute(&self.pool)
         .await?;
@@ -923,9 +897,8 @@ impl Database {
         sqlx::query(
             r#"
             INSERT INTO files (
-                id, release_id, original_filename, file_size, format, 
-                flac_headers, audio_start_byte, has_cue_sheet, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, release_id, original_filename, file_size, format, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&file.id)
@@ -933,9 +906,6 @@ impl Database {
         .bind(&file.original_filename)
         .bind(file.file_size)
         .bind(&file.format)
-        .bind(&file.flac_headers)
-        .bind(file.audio_start_byte)
-        .bind(file.has_cue_sheet)
         .bind(file.created_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
@@ -960,29 +930,6 @@ impl Database {
         .bind(&chunk.storage_location)
         .bind(chunk.last_accessed.as_ref().map(|dt| dt.to_rfc3339()))
         .bind(chunk.created_at.to_rfc3339())
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
-
-    /// Insert a new file chunk mapping record
-    pub async fn insert_file_chunk(&self, file_chunk: &DbFileChunk) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            r#"
-            INSERT INTO file_chunks (
-                id, file_id, start_chunk_index, end_chunk_index,
-                start_byte_offset, end_byte_offset, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(&file_chunk.id)
-        .bind(&file_chunk.file_id)
-        .bind(file_chunk.start_chunk_index)
-        .bind(file_chunk.end_chunk_index)
-        .bind(file_chunk.start_byte_offset)
-        .bind(file_chunk.end_byte_offset)
-        .bind(file_chunk.created_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
 
@@ -1020,48 +967,6 @@ impl Database {
         Ok(chunks)
     }
 
-    /// Get chunks for a file (via file_chunks mapping)
-    ///
-    /// Since files belong to releases, we join through the release_id.
-    /// The file_chunks table tells us which chunk range this file spans.
-    pub async fn get_chunks_for_file(&self, file_id: &str) -> Result<Vec<DbChunk>, sqlx::Error> {
-        let rows = sqlx::query(
-            r#"
-            SELECT c.* FROM chunks c
-            JOIN file_chunks fc ON c.chunk_index >= fc.start_chunk_index 
-                AND c.chunk_index <= fc.end_chunk_index
-                AND c.release_id = (SELECT release_id FROM files WHERE id = ?)
-            WHERE fc.file_id = ?
-            ORDER BY c.chunk_index
-            "#,
-        )
-        .bind(file_id)
-        .bind(file_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut chunks = Vec::new();
-        for row in rows {
-            chunks.push(DbChunk {
-                id: row.get("id"),
-                release_id: row.get("release_id"),
-                chunk_index: row.get("chunk_index"),
-                encrypted_size: row.get("encrypted_size"),
-                storage_location: row.get("storage_location"),
-                last_accessed: row.get::<Option<String>, _>("last_accessed").map(|s| {
-                    DateTime::parse_from_rfc3339(&s)
-                        .unwrap()
-                        .with_timezone(&Utc)
-                }),
-                created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
-                    .unwrap()
-                    .with_timezone(&Utc),
-            });
-        }
-
-        Ok(chunks)
-    }
-
     /// Get files for a release
     pub async fn get_files_for_release(
         &self,
@@ -1080,9 +985,6 @@ impl Database {
                 original_filename: row.get("original_filename"),
                 file_size: row.get("file_size"),
                 format: row.get("format"),
-                flac_headers: row.get("flac_headers"),
-                audio_start_byte: row.get("audio_start_byte"),
-                has_cue_sheet: row.get("has_cue_sheet"),
                 created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
                     .unwrap()
                     .with_timezone(&Utc),
@@ -1090,33 +992,6 @@ impl Database {
         }
 
         Ok(files)
-    }
-
-    /// Get file_chunk mapping for a file
-    pub async fn get_file_chunk_mapping(
-        &self,
-        file_id: &str,
-    ) -> Result<Option<DbFileChunk>, sqlx::Error> {
-        let row = sqlx::query("SELECT * FROM file_chunks WHERE file_id = ?")
-            .bind(file_id)
-            .fetch_optional(&self.pool)
-            .await?;
-
-        if let Some(row) = row {
-            Ok(Some(DbFileChunk {
-                id: row.get("id"),
-                file_id: row.get("file_id"),
-                start_chunk_index: row.get("start_chunk_index"),
-                end_chunk_index: row.get("end_chunk_index"),
-                start_byte_offset: row.get("start_byte_offset"),
-                end_byte_offset: row.get("end_byte_offset"),
-                created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
-                    .unwrap()
-                    .with_timezone(&Utc),
-            }))
-        } else {
-            Ok(None)
-        }
     }
 
     /// Get a specific file by ID
@@ -1133,9 +1008,6 @@ impl Database {
                 original_filename: row.get("original_filename"),
                 file_size: row.get("file_size"),
                 format: row.get("format"),
-                flac_headers: row.get("flac_headers"),
-                audio_start_byte: row.get("audio_start_byte"),
-                has_cue_sheet: row.get("has_cue_sheet"),
                 created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
                     .unwrap()
                     .with_timezone(&Utc),
@@ -1145,71 +1017,105 @@ impl Database {
         }
     }
 
-    /// Insert a new CUE sheet record
-    pub async fn insert_cue_sheet(&self, cue_sheet: &DbCueSheet) -> Result<(), sqlx::Error> {
-        sqlx::query(
-            r#"
-            INSERT INTO cue_sheets (
-                id, file_id, cue_content, created_at
-            ) VALUES (?, ?, ?, ?)
-            "#,
-        )
-        .bind(&cue_sheet.id)
-        .bind(&cue_sheet.file_id)
-        .bind(&cue_sheet.cue_content)
-        .bind(cue_sheet.created_at.to_rfc3339())
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
-
-    /// Insert a new track position record
-    pub async fn insert_track_position(
+    /// Insert audio format for a track
+    pub async fn insert_audio_format(
         &self,
-        position: &DbTrackPosition,
+        audio_format: &DbAudioFormat,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
-            INSERT INTO track_positions (
-                id, track_id, file_id, start_time_ms, end_time_ms,
-                start_chunk_index, end_chunk_index, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO audio_formats (
+                id, track_id, format, flac_headers, needs_headers, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
             "#,
         )
-        .bind(&position.id)
-        .bind(&position.track_id)
-        .bind(&position.file_id)
-        .bind(position.start_time_ms)
-        .bind(position.end_time_ms)
-        .bind(position.start_chunk_index)
-        .bind(position.end_chunk_index)
-        .bind(position.created_at.to_rfc3339())
+        .bind(&audio_format.id)
+        .bind(&audio_format.track_id)
+        .bind(&audio_format.format)
+        .bind(&audio_format.flac_headers)
+        .bind(audio_format.needs_headers)
+        .bind(audio_format.created_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
 
         Ok(())
     }
 
-    /// Get track position for a track
-    pub async fn get_track_position(
+    /// Get audio format for a track
+    pub async fn get_audio_format_by_track_id(
         &self,
         track_id: &str,
-    ) -> Result<Option<DbTrackPosition>, sqlx::Error> {
-        let row = sqlx::query("SELECT * FROM track_positions WHERE track_id = ?")
+    ) -> Result<Option<DbAudioFormat>, sqlx::Error> {
+        let row = sqlx::query("SELECT * FROM audio_formats WHERE track_id = ?")
             .bind(track_id)
             .fetch_optional(&self.pool)
             .await?;
 
         if let Some(row) = row {
-            Ok(Some(DbTrackPosition {
+            Ok(Some(DbAudioFormat {
                 id: row.get("id"),
                 track_id: row.get("track_id"),
-                file_id: row.get("file_id"),
-                start_time_ms: row.get("start_time_ms"),
-                end_time_ms: row.get("end_time_ms"),
+                format: row.get("format"),
+                flac_headers: row.get("flac_headers"),
+                needs_headers: row.get("needs_headers"),
+                created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
+                    .unwrap()
+                    .with_timezone(&Utc),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Insert track chunk coordinates
+    pub async fn insert_track_chunk_coords(
+        &self,
+        coords: &DbTrackChunkCoords,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO track_chunk_coords (
+                id, track_id, start_chunk_index, end_chunk_index,
+                start_byte_offset, end_byte_offset,
+                start_time_ms, end_time_ms, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&coords.id)
+        .bind(&coords.track_id)
+        .bind(coords.start_chunk_index)
+        .bind(coords.end_chunk_index)
+        .bind(coords.start_byte_offset)
+        .bind(coords.end_byte_offset)
+        .bind(coords.start_time_ms)
+        .bind(coords.end_time_ms)
+        .bind(coords.created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Get track chunk coordinates for a track
+    pub async fn get_track_chunk_coords(
+        &self,
+        track_id: &str,
+    ) -> Result<Option<DbTrackChunkCoords>, sqlx::Error> {
+        let row = sqlx::query("SELECT * FROM track_chunk_coords WHERE track_id = ?")
+            .bind(track_id)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        if let Some(row) = row {
+            Ok(Some(DbTrackChunkCoords {
+                id: row.get("id"),
+                track_id: row.get("track_id"),
                 start_chunk_index: row.get("start_chunk_index"),
                 end_chunk_index: row.get("end_chunk_index"),
+                start_byte_offset: row.get("start_byte_offset"),
+                end_byte_offset: row.get("end_byte_offset"),
+                start_time_ms: row.get("start_time_ms"),
+                end_time_ms: row.get("end_time_ms"),
                 created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
                     .unwrap()
                     .with_timezone(&Utc),

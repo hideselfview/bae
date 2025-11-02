@@ -186,15 +186,14 @@ pub struct DbTrack {
 }
 
 /// Physical file belonging to a release
+/// File metadata for export/torrent features
+///
+/// Stores original file information needed to reconstruct file structure for export
+/// or BitTorrent seeding. Not needed for playback - that uses TrackChunkCoords + AudioFormat.
 ///
 /// Files are linked to releases (not logical albums or tracks), because:
 /// - Files are part of a specific release (e.g., "2016 Remaster" has different files than "1973 Original")
 /// - Some files are metadata (cover.jpg, .cue sheets) not associated with any track
-/// - Some files contain multiple tracks (CUE/FLAC: one FLAC file = entire album)
-/// - The file→track relationship is tracked via `db_track_position` table
-///
-/// For regular albums: 1 file = 1 track (linked via db_track_position)
-/// For CUE/FLAC albums: 1 file = N tracks (all link to same file via db_track_position)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbFile {
     pub id: String,
@@ -202,10 +201,7 @@ pub struct DbFile {
     pub release_id: String,
     pub original_filename: String,
     pub file_size: i64,
-    pub format: String,                // "flac", "mp3", etc.
-    pub flac_headers: Option<Vec<u8>>, // FLAC header blocks for instant streaming
-    pub audio_start_byte: Option<i64>, // Where audio frames begin (after headers)
-    pub has_cue_sheet: bool,           // Is this a CUE/FLAC file?
+    pub format: String, // "flac", "mp3", etc.
     pub created_at: DateTime<Utc>,
 }
 
@@ -231,58 +227,40 @@ pub struct DbChunk {
     pub created_at: DateTime<Utc>,
 }
 
-/// Maps files to their chunk ranges
+/// Audio format metadata for a track
 ///
-/// Since files are split into chunks for storage, this table tracks
-/// which chunks contain which files and the byte offsets within those chunks.
-/// This allows efficient streaming of individual files from the chunked storage.
+/// Stores format information needed for playback. One record per track (1:1 with track).
+///
+/// **FLAC headers are only needed for CUE/FLAC:**
+/// - One-file-per-track: Headers are already in the track's first chunk, no prepending needed
+/// - CUE/FLAC: Headers are at file start, but track audio starts mid-file. Must prepend headers during playback.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DbFileChunk {
+pub struct DbAudioFormat {
     pub id: String,
-    pub file_id: String,
-    pub start_chunk_index: i32,
-    pub end_chunk_index: i32,
-    pub start_byte_offset: i64,
-    pub end_byte_offset: i64,
+    pub track_id: String,              // 1:1 with track
+    pub format: String,                // "flac", "mp3", etc.
+    pub flac_headers: Option<Vec<u8>>, // ONLY for CUE/FLAC tracks
+    pub needs_headers: bool,           // True for CUE/FLAC tracks
     pub created_at: DateTime<Utc>,
 }
 
-/// CUE sheet metadata for CUE/FLAC albums
+/// Track chunk coordinates - precise location of track audio in chunked album stream
 ///
-/// Stores the raw CUE file content for albums that use CUE/FLAC format.
-/// The CUE sheet contains track timing information that allows splitting
-/// a single FLAC file into multiple tracks during playback.
+/// This IS the TrackChunkCoords concept. Stores the coordinates that locate a track's
+/// audio data within the chunked album stream, regardless of whether the source was
+/// one-file-per-track or CUE/FLAC. Both import types produce identical records here.
+///
+/// The key insight: post-import, we only need these coordinates + audio format to play any track.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DbCueSheet {
-    pub id: String,
-    pub file_id: String,
-    /// Raw CUE file content as text
-    pub cue_content: String,
-    pub created_at: DateTime<Utc>,
-}
-
-/// Links tracks to their source files with position information
-///
-/// This table connects the logical track entity to its physical file.
-/// Created for ALL tracks during import (not just CUE/FLAC).
-///
-/// For regular tracks (1 file = 1 track):
-/// - start_time_ms = 0, end_time_ms = 0 (indicates "use full file")
-/// - start/end_chunk_index = the chunk range containing this file
-///
-/// For CUE/FLAC tracks (1 file = N tracks):
-/// - start_time_ms/end_time_ms = actual timestamps from CUE sheet
-/// - start/end_chunk_index = subset of chunks for this track's time range
-/// - Multiple tracks point to the same file_id
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DbTrackPosition {
+pub struct DbTrackChunkCoords {
     pub id: String,
     pub track_id: String,
-    pub file_id: String,
-    pub start_time_ms: i64, // Track start in milliseconds (0 = beginning of file)
-    pub end_time_ms: i64,   // Track end in milliseconds (0 = end of file)
     pub start_chunk_index: i32, // First chunk containing this track
-    pub end_chunk_index: i32, // Last chunk containing this track
+    pub end_chunk_index: i32,   // Last chunk containing this track
+    pub start_byte_offset: i64, // Where track starts in start_chunk
+    pub end_byte_offset: i64,   // Where track ends in end_chunk
+    pub start_time_ms: i64,     // Track start time (metadata/display)
+    pub end_time_ms: i64,       // Track end time (metadata/display)
     pub created_at: DateTime<Utc>,
 }
 
@@ -444,10 +422,10 @@ impl DbTrack {
 }
 
 impl DbFile {
-    /// Create a regular file record (one file = one track)
+    /// Create a file record for export/torrent metadata
     ///
-    /// The file is linked to the release, not a specific track.
-    /// Track→file relationship is established via db_track_position.
+    /// Files are linked to releases. Used for reconstructing original file structure
+    /// during export or BitTorrent seeding.
     pub fn new(release_id: &str, original_filename: &str, file_size: i64, format: &str) -> Self {
         DbFile {
             id: Uuid::new_v4().to_string(),
@@ -455,33 +433,6 @@ impl DbFile {
             original_filename: original_filename.to_string(),
             file_size,
             format: format.to_string(),
-            flac_headers: None,
-            audio_start_byte: None,
-            has_cue_sheet: false,
-            created_at: Utc::now(),
-        }
-    }
-
-    /// Create a CUE/FLAC file record (one file = multiple tracks)
-    ///
-    /// The file is linked to the release. Multiple tracks will reference this
-    /// same file via db_track_position, each with different time ranges.
-    pub fn new_cue_flac(
-        release_id: &str,
-        original_filename: &str,
-        file_size: i64,
-        flac_headers: Vec<u8>,
-        audio_start_byte: i64,
-    ) -> Self {
-        DbFile {
-            id: Uuid::new_v4().to_string(),
-            release_id: release_id.to_string(),
-            original_filename: original_filename.to_string(),
-            file_size,
-            format: "flac".to_string(),
-            flac_headers: Some(flac_headers),
-            audio_start_byte: Some(audio_start_byte),
-            has_cue_sheet: true,
             created_at: Utc::now(),
         }
     }
@@ -507,54 +458,43 @@ impl DbChunk {
     }
 }
 
-impl DbFileChunk {
+impl DbAudioFormat {
     pub fn new(
-        file_id: &str,
+        track_id: &str,
+        format: &str,
+        flac_headers: Option<Vec<u8>>,
+        needs_headers: bool,
+    ) -> Self {
+        DbAudioFormat {
+            id: Uuid::new_v4().to_string(),
+            track_id: track_id.to_string(),
+            format: format.to_string(),
+            flac_headers,
+            needs_headers,
+            created_at: Utc::now(),
+        }
+    }
+}
+
+impl DbTrackChunkCoords {
+    pub fn new(
+        track_id: &str,
         start_chunk_index: i32,
         end_chunk_index: i32,
         start_byte_offset: i64,
         end_byte_offset: i64,
+        start_time_ms: i64,
+        end_time_ms: i64,
     ) -> Self {
-        DbFileChunk {
+        DbTrackChunkCoords {
             id: Uuid::new_v4().to_string(),
-            file_id: file_id.to_string(),
+            track_id: track_id.to_string(),
             start_chunk_index,
             end_chunk_index,
             start_byte_offset,
             end_byte_offset,
-            created_at: Utc::now(),
-        }
-    }
-}
-
-impl DbCueSheet {
-    pub fn new(file_id: &str, cue_content: &str) -> Self {
-        DbCueSheet {
-            id: Uuid::new_v4().to_string(),
-            file_id: file_id.to_string(),
-            cue_content: cue_content.to_string(),
-            created_at: Utc::now(),
-        }
-    }
-}
-
-impl DbTrackPosition {
-    pub fn new(
-        track_id: &str,
-        file_id: &str,
-        start_time_ms: i64,
-        end_time_ms: i64,
-        start_chunk_index: i32,
-        end_chunk_index: i32,
-    ) -> Self {
-        DbTrackPosition {
-            id: Uuid::new_v4().to_string(),
-            track_id: track_id.to_string(),
-            file_id: file_id.to_string(),
             start_time_ms,
             end_time_ms,
-            start_chunk_index,
-            end_chunk_index,
             created_at: Utc::now(),
         }
     }

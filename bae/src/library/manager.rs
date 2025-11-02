@@ -1,7 +1,7 @@
 use crate::cloud_storage::CloudStorageError;
 use crate::db::{
-    Database, DbAlbum, DbAlbumArtist, DbArtist, DbChunk, DbCueSheet, DbFile, DbFileChunk,
-    DbRelease, DbTrack, DbTrackArtist, DbTrackPosition, ImportStatus,
+    Database, DbAlbum, DbAlbumArtist, DbArtist, DbAudioFormat, DbChunk, DbFile, DbRelease, DbTrack,
+    DbTrackArtist, DbTrackChunkCoords, ImportStatus,
 };
 use thiserror::Error;
 
@@ -113,27 +113,18 @@ impl LibraryManager {
         Ok(())
     }
 
-    /// Add a file-chunk mapping to the library
-    pub async fn add_file_chunk_mapping(
-        &self,
-        file_chunk: &DbFileChunk,
-    ) -> Result<(), LibraryError> {
-        self.database.insert_file_chunk(file_chunk).await?;
+    /// Add audio format for a track
+    pub async fn add_audio_format(&self, audio_format: &DbAudioFormat) -> Result<(), LibraryError> {
+        self.database.insert_audio_format(audio_format).await?;
         Ok(())
     }
 
-    /// Add a CUE sheet to the library
-    pub async fn add_cue_sheet(&self, cue_sheet: &DbCueSheet) -> Result<(), LibraryError> {
-        self.database.insert_cue_sheet(cue_sheet).await?;
-        Ok(())
-    }
-
-    /// Add a track position to the library
-    pub async fn add_track_position(
+    /// Add track chunk coordinates
+    pub async fn add_track_chunk_coords(
         &self,
-        track_position: &DbTrackPosition,
+        coords: &DbTrackChunkCoords,
     ) -> Result<(), LibraryError> {
-        self.database.insert_track_position(track_position).await?;
+        self.database.insert_track_chunk_coords(coords).await?;
         Ok(())
     }
 
@@ -185,20 +176,12 @@ impl LibraryManager {
         Ok(self.database.get_file_by_id(file_id).await?)
     }
 
-    /// Get file_chunk mapping for a file
-    ///
-    /// Returns the chunk range and byte offsets for a file.
-    /// Used during reassembly to extract the correct bytes from chunks.
-    pub async fn get_file_chunk_mapping(
+    /// Get audio format for a track
+    pub async fn get_audio_format_by_track_id(
         &self,
-        file_id: &str,
-    ) -> Result<Option<DbFileChunk>, LibraryError> {
-        Ok(self.database.get_file_chunk_mapping(file_id).await?)
-    }
-
-    /// Get chunks for a specific file
-    pub async fn get_chunks_for_file(&self, file_id: &str) -> Result<Vec<DbChunk>, LibraryError> {
-        Ok(self.database.get_chunks_for_file(file_id).await?)
+        track_id: &str,
+    ) -> Result<Option<DbAudioFormat>, LibraryError> {
+        Ok(self.database.get_audio_format_by_track_id(track_id).await?)
     }
 
     /// Get all chunks for a release (for testing/verification)
@@ -209,12 +192,12 @@ impl LibraryManager {
         Ok(self.database.get_chunks_for_release(release_id).await?)
     }
 
-    /// Get track position for CUE/FLAC tracks
-    pub async fn get_track_position(
+    /// Get track chunk coordinates for a track
+    pub async fn get_track_chunk_coords(
         &self,
         track_id: &str,
-    ) -> Result<Option<DbTrackPosition>, LibraryError> {
-        Ok(self.database.get_track_position(track_id).await?)
+    ) -> Result<Option<DbTrackChunkCoords>, LibraryError> {
+        Ok(self.database.get_track_chunk_coords(track_id).await?)
     }
 
     /// Get chunks in a specific range for CUE/FLAC streaming

@@ -20,7 +20,7 @@
 
 use crate::cloud_storage::CloudStorageManager;
 use crate::encryption::EncryptionService;
-use crate::import::album_file_layout::AlbumFileLayout;
+use crate::import::album_chunk_layout::AlbumChunkLayout;
 use crate::import::handle::{ImportHandle, ImportRequest};
 use crate::import::metadata_persister::MetadataPersister;
 use crate::import::pipeline;
@@ -127,6 +127,7 @@ impl ImportService {
             db_release,
             tracks_to_files,
             discovered_files,
+            cue_flac_metadata,
         } = request;
 
         // Mark release as importing now that pipeline is starting
@@ -142,20 +143,23 @@ impl ImportService {
             id: db_release.id.clone(),
         });
 
-        // Analyze album layout: files → chunks → tracks
-        let file_layout = AlbumFileLayout::build(
+        // Analyze album layout: tracks → files → chunks
+        // Uses pre-parsed CUE metadata (if present) to avoid re-parsing
+        let chunk_layout = AlbumChunkLayout::build(
             discovered_files,
             &tracks_to_files,
             self.config.chunk_size_bytes,
+            cue_flac_metadata,
         )?;
 
         // Destructure layout to move ownership of each piece to where it's needed
-        let AlbumFileLayout {
+        let AlbumChunkLayout {
             files_to_chunks,
             total_chunks,
             chunk_to_track,
             track_chunk_counts,
-        } = file_layout;
+            cue_flac_data,
+        } = chunk_layout;
 
         info!(
             "Will stream {} chunks across {} files",
@@ -210,6 +214,7 @@ impl ImportService {
                 &tracks_to_files,
                 files_to_chunks,
                 self.config.chunk_size_bytes,
+                cue_flac_data,
             )
             .await?;
 

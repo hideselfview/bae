@@ -553,51 +553,56 @@ async fn stream_track_chunks(
     let library_manager = &state.library_manager;
     info!("Starting chunk reassembly for track: {}", track_id);
 
-    // Get track position (now populated for all tracks, not just CUE)
-    let track_position = library_manager
+    // Get track chunk coordinates (has all location info)
+    let coords = library_manager
         .get()
-        .get_track_position(track_id)
+        .get_track_chunk_coords(track_id)
         .await
         .map_err(|e| format!("Database error: {}", e))?
-        .ok_or_else(|| format!("No track position found for track {}", track_id))?;
+        .ok_or_else(|| format!("No chunk coordinates found for track {}", track_id))?;
 
-    // Get the file for this track
-    let file = library_manager
+    // Get audio format (has FLAC headers if needed)
+    let audio_format = library_manager
         .get()
-        .get_file_by_id(&track_position.file_id)
+        .get_audio_format_by_track_id(track_id)
         .await
         .map_err(|e| format!("Database error: {}", e))?
-        .ok_or_else(|| "File not found for track".to_string())?;
+        .ok_or_else(|| format!("No audio format found for track {}", track_id))?;
 
-    // Check if this is a CUE/FLAC track
-    if file.has_cue_sheet {
-        info!("Detected CUE/FLAC track - using efficient chunk range streaming with FLAC headers");
-        return stream_cue_track_chunks(state, track_id, &track_position, &file).await;
-    }
+    // Get track to find release_id
+    let track = library_manager
+        .get()
+        .get_track(track_id)
+        .await
+        .map_err(|e| format!("Database error: {}", e))?
+        .ok_or_else(|| format!("Track not found: {}", track_id))?;
 
-    // Regular file streaming for individual tracks
-    info!("Using regular file streaming");
-    debug!(
-        "Processing file: {} ({} bytes)",
-        file.original_filename, file.file_size
-    );
+    // Get chunks in range
+    let release_chunks = library_manager
+        .get()
+        .get_chunks_for_release(&track.release_id)
+        .await
+        .map_err(|e| format!("Database error: {}", e))?;
 
-    // Get chunks for this file
-    let chunks = library_manager.get().get_chunks_for_file(&file.id).await?;
+    let mut chunks: Vec<_> = release_chunks
+        .into_iter()
+        .filter(|c| {
+            c.chunk_index >= coords.start_chunk_index && c.chunk_index <= coords.end_chunk_index
+        })
+        .collect();
+
     if chunks.is_empty() {
-        return Err("No chunks found for file".into());
+        return Err("No chunks found for track".into());
     }
 
     debug!("Found {} chunks to reassemble", chunks.len());
 
     // Sort chunks by index to ensure correct order
-    let mut sorted_chunks = chunks;
-    sorted_chunks.sort_by_key(|c| c.chunk_index);
+    chunks.sort_by_key(|c| c.chunk_index);
 
-    // Reassemble chunks into audio data
-    let mut audio_data = Vec::new();
-
-    for chunk in sorted_chunks {
+    // Download and decrypt chunks in parallel
+    let mut chunk_data_vec: Vec<Vec<u8>> = Vec::new();
+    for chunk in chunks {
         debug!(
             "Processing chunk {} (index {})",
             chunk.id, chunk.chunk_index
@@ -605,7 +610,26 @@ async fn stream_track_chunks(
 
         // Download and decrypt chunk (with caching)
         let chunk_data = download_and_decrypt_chunk(state, &chunk).await?;
-        audio_data.extend_from_slice(&chunk_data);
+        chunk_data_vec.push(chunk_data);
+    }
+
+    // Extract byte ranges from chunks
+    let chunk_size = state.chunk_size_bytes;
+    let mut audio_data = extract_bytes_from_chunks(
+        &chunk_data_vec,
+        coords.start_byte_offset,
+        coords.end_byte_offset,
+        chunk_size,
+    );
+
+    // Prepend FLAC headers if needed (CUE/FLAC tracks)
+    if audio_format.needs_headers {
+        if let Some(ref headers) = audio_format.flac_headers {
+            debug!("Prepending FLAC headers: {} bytes", headers.len());
+            let mut complete_audio = headers.clone();
+            complete_audio.extend_from_slice(&audio_data);
+            audio_data = complete_audio;
+        }
     }
 
     info!(
@@ -660,96 +684,39 @@ async fn download_and_decrypt_chunk(
     Ok(decrypted_data)
 }
 
-/// Stream CUE/FLAC track chunks efficiently using chunk ranges and header prepending
-/// This provides 85% download reduction compared to downloading entire files
-async fn stream_cue_track_chunks(
-    state: &SubsonicState,
-    _track_id: &str,
-    track_position: &crate::db::DbTrackPosition,
-    file: &crate::db::DbFile,
-) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-    let library_manager = &state.library_manager;
-    info!(
-        "Streaming CUE/FLAC track: chunks {}-{}",
-        track_position.start_chunk_index, track_position.end_chunk_index
-    );
-
-    // Check if this file has FLAC headers stored in database
-    if !file.has_cue_sheet {
-        return Err("File is not marked as CUE/FLAC".into());
-    }
-
-    let flac_headers = file
-        .flac_headers
-        .as_ref()
-        .ok_or("No FLAC headers found in database")?;
-
-    debug!("Using stored FLAC headers: {} bytes", flac_headers.len());
-
-    // Get only the chunks we need for this track (efficient!)
-    let chunk_range = track_position.start_chunk_index..=track_position.end_chunk_index;
-    let chunks = library_manager
-        .get()
-        .get_chunks_in_range(&file.release_id, chunk_range)
-        .await
-        .map_err(|e| format!("Failed to get chunk range: {}", e))?;
-
+/// Extract bytes from chunks using byte offsets
+fn extract_bytes_from_chunks(
+    chunks: &[Vec<u8>],
+    start_byte_offset: i64,
+    end_byte_offset: i64,
+    _chunk_size: usize,
+) -> Vec<u8> {
     if chunks.is_empty() {
-        return Err("No chunks found in track range".into());
+        return Vec::new();
     }
 
-    let approximate_total_chunks = file.file_size / state.chunk_size_bytes as i64;
-    info!(
-        "Downloading {} chunks instead of {} total chunks ({}% reduction)",
-        chunks.len(),
-        approximate_total_chunks,
-        100 - (chunks.len() * 100) / approximate_total_chunks as usize
-    );
+    let mut result = Vec::new();
 
-    // Sort chunks by index to ensure correct order
-    let mut sorted_chunks = chunks;
-    sorted_chunks.sort_by_key(|c| c.chunk_index);
+    if chunks.len() == 1 {
+        // Track is entirely within a single chunk
+        let start = start_byte_offset as usize;
+        let end = (end_byte_offset + 1) as usize; // end_byte_offset is inclusive
+        result.extend_from_slice(&chunks[0][start..end]);
+    } else {
+        // Track spans multiple chunks
+        // First chunk: from start_byte_offset to end of chunk
+        let first_chunk_start = start_byte_offset as usize;
+        result.extend_from_slice(&chunks[0][first_chunk_start..]);
 
-    // Store chunk count before moving
-    let chunk_count = sorted_chunks.len();
+        // Middle chunks: use entirely
+        for chunk in &chunks[1..chunks.len() - 1] {
+            result.extend_from_slice(chunk);
+        }
 
-    // Start with FLAC headers for instant playback
-    let mut audio_data = flac_headers.clone();
-
-    // Append track chunks
-    for chunk in sorted_chunks {
-        debug!(
-            "Processing track chunk {} (index {})",
-            chunk.id, chunk.chunk_index
-        );
-
-        // Download and decrypt chunk (with caching)
-        let chunk_data = download_and_decrypt_chunk(state, &chunk).await?;
-        audio_data.extend_from_slice(&chunk_data);
+        // Last chunk: from start to end_byte_offset
+        let last_chunk_end = (end_byte_offset + 1) as usize; // end_byte_offset is inclusive
+        result.extend_from_slice(&chunks[chunks.len() - 1][0..last_chunk_end]);
     }
 
-    info!(
-        "Successfully assembled CUE track: {} bytes (headers + {} chunks)",
-        audio_data.len(),
-        chunk_count
-    );
-
-    // Phase 4: Extract precise track boundaries using audio processing
-    debug!(
-        "Extracting precise track boundaries: {}ms to {}ms",
-        track_position.start_time_ms, track_position.end_time_ms
-    );
-
-    let precise_audio = crate::audio_processing::AudioProcessor::extract_track_from_flac(
-        &audio_data,
-        track_position.start_time_ms as u64,
-        track_position.end_time_ms as u64,
-    )
-    .map_err(|e| format!("Precise track extraction failed: {}", e))?;
-
-    info!(
-        "Successfully extracted precise track: {} bytes",
-        precise_audio.len()
-    );
-    Ok(precise_audio)
+    result
 }
