@@ -24,7 +24,7 @@ pub fn on_folder_selected(folder_path: String) -> Result<(), String> {
     }
 
     // Check for audio files
-    let audio_extensions = ["mp3", "flac", "wav", "m4a", "aac", "ogg"];
+    let audio_extensions = ["mp3", "flac"];
     let mut has_audio_files = false;
 
     if let Ok(entries) = std::fs::read_dir(path) {
