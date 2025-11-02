@@ -1,11 +1,11 @@
-use crate::discogs::DiscogsAlbum;
+use crate::discogs::DiscogsRelease;
 use std::path::PathBuf;
 
 /// Request to import an album
 #[derive(Debug)]
 pub enum ImportRequestParams {
     FromFolder {
-        discogs_album: DiscogsAlbum,
+        discogs_release: DiscogsRelease,
         folder: PathBuf,
     },
 }

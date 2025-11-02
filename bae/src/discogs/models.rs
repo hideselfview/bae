@@ -25,6 +25,7 @@ pub struct DiscogsMaster {
     pub country: Option<String>,
     pub artists: Vec<DiscogsArtist>,
     pub tracklist: Vec<DiscogsTrack>,
+    pub main_release: String,
 }
 
 /// Represents a Discogs release search result
@@ -43,83 +44,6 @@ pub struct DiscogsRelease {
     pub artists: Vec<DiscogsArtist>,
     pub tracklist: Vec<DiscogsTrack>,
     pub master_id: Option<String>, // Reference to the master release
-}
-
-/// Represents an item that can be imported (either a master or specific release)
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum DiscogsAlbum {
-    Master(DiscogsMaster),
-    Release(DiscogsRelease),
-}
-
-impl DiscogsAlbum {
-    pub fn title(&self) -> &str {
-        match self {
-            DiscogsAlbum::Master(master) => &master.title,
-            DiscogsAlbum::Release(release) => &release.title,
-        }
-    }
-
-    pub fn year(&self) -> Option<u32> {
-        match self {
-            DiscogsAlbum::Master(master) => master.year,
-            DiscogsAlbum::Release(release) => release.year,
-        }
-    }
-
-    pub fn thumb(&self) -> Option<&String> {
-        match self {
-            DiscogsAlbum::Master(master) => master.thumb.as_ref(),
-            DiscogsAlbum::Release(release) => release.thumb.as_ref(),
-        }
-    }
-
-    pub fn label(&self) -> &[String] {
-        match self {
-            DiscogsAlbum::Master(master) => &master.label,
-            DiscogsAlbum::Release(release) => &release.label,
-        }
-    }
-
-    pub fn format(&self) -> &[String] {
-        match self {
-            DiscogsAlbum::Master(_) => &[],
-            DiscogsAlbum::Release(release) => &release.format,
-        }
-    }
-
-    pub fn is_master(&self) -> bool {
-        matches!(self, DiscogsAlbum::Master(_))
-    }
-
-    /// Get the tracklist for AI matching
-    pub fn tracklist(&self) -> &[DiscogsTrack] {
-        match self {
-            DiscogsAlbum::Master(master) => &master.tracklist,
-            DiscogsAlbum::Release(release) => &release.tracklist,
-        }
-    }
-
-    /// Get artists for this album
-    pub fn artists(&self) -> &[DiscogsArtist] {
-        match self {
-            DiscogsAlbum::Master(master) => &master.artists,
-            DiscogsAlbum::Release(release) => &release.artists,
-        }
-    }
-
-    /// Extract artist name from album title (fallback when artists array is empty).
-    ///
-    /// Discogs album titles often follow "Artist - Album" format.
-    /// Splits on " - " to extract the artist. Falls back to "Unknown Artist".
-    pub fn extract_artist_name(&self) -> String {
-        let title = self.title();
-        if let Some(dash_pos) = title.find(" - ") {
-            title[..dash_pos].to_string()
-        } else {
-            "Unknown Artist".to_string()
-        }
-    }
 }
 
 /// Represents a release version from master versions API

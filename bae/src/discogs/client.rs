@@ -83,6 +83,7 @@ struct MasterResponse {
     // TODO is this optional? It might be required.
     artists: Option<Vec<ArtistCredit>>,
     tracklist: Option<Vec<TrackResponse>>,
+    main_release: u64,
 }
 
 /// Detailed release response from Discogs
@@ -233,6 +234,7 @@ impl DiscogsClient {
                 country: None, // Masters don't have country info
                 artists,
                 tracklist,
+                main_release: master.main_release.to_string(),
             };
 
             Ok(discogs_master)

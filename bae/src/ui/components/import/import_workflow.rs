@@ -1,4 +1,4 @@
-use crate::discogs::DiscogsAlbum;
+use crate::discogs::DiscogsRelease;
 use crate::import::ImportRequestParams;
 use crate::library::use_import_service;
 use crate::ui::import_context::ImportContext;
@@ -51,7 +51,7 @@ pub fn on_folder_selected(folder_path: String) -> Result<(), String> {
 #[derive(Props, PartialEq, Clone)]
 pub struct ImportWorkflowProps {
     pub master_id: String,
-    pub release_id: Option<String>,
+    pub release_id: String,
 }
 
 #[derive(PartialEq, Clone)]
@@ -67,7 +67,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
     let navigator = use_navigator();
     let import_context = use_context::<Rc<ImportContext>>();
     let mut current_step = use_signal(|| WorkflowStep::Loading);
-    let mut discogs_album = use_signal(|| None::<DiscogsAlbum>);
+    let mut discogs_release = use_signal(|| None::<DiscogsRelease>);
     let mut selected_folder = use_signal(|| None::<String>);
     let mut folder_error = use_signal(|| None::<String>);
 
@@ -83,15 +83,11 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
             let import_context = import_context.clone();
 
             spawn(async move {
-                let result = if let Some(release_id) = release_id {
-                    import_context.import_release(release_id, master_id).await
-                } else {
-                    import_context.import_master(master_id).await
-                };
+                let result = import_context.import_release(release_id, master_id).await;
 
                 match result {
-                    Ok(album) => {
-                        discogs_album.set(Some(album));
+                    Ok(release) => {
+                        discogs_release.set(Some(release));
                         current_step.set(WorkflowStep::DataSourceSelection);
                     }
                     Err(e) => {
@@ -117,11 +113,11 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
         let import_context = import_context.clone();
 
         move |_| {
-            if let (Some(folder), Some(album)) = (
+            if let (Some(folder), Some(release)) = (
                 selected_folder.read().as_ref(),
-                discogs_album.read().as_ref(),
+                discogs_release.read().as_ref(),
             ) {
-                let discogs_album = album.clone();
+                let discogs_release = release.clone();
                 let import_service = import_service.clone();
                 let folder = folder.clone();
                 let import_context = import_context.clone();
@@ -129,13 +125,12 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                 spawn(async move {
                     info!(
                         "Import started for {} from {}",
-                        discogs_album.title(),
-                        folder
+                        discogs_release.title, folder
                     );
 
                     // Send import request to service (validates and queues)
                     let request = ImportRequestParams::FromFolder {
-                        discogs_album: discogs_album.clone(),
+                        discogs_release: discogs_release.clone(),
                         folder: PathBuf::from(folder),
                     };
 
@@ -172,11 +167,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
         }
     };
 
-    let back_button_text = if props.release_id.is_some() {
-        "← Back to Releases"
-    } else {
-        "← Back to Search"
-    };
+    let back_button_text = "← Back";
 
     let current_step_value = current_step.read().clone();
 
@@ -199,10 +190,10 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
             }
         }
         WorkflowStep::DataSourceSelection => {
-            let album = discogs_album.read();
-            let album_ref = album.as_ref();
+            let release = discogs_release.read();
+            let release_ref = release.as_ref();
 
-            if album_ref.is_none() {
+            if release_ref.is_none() {
                 return rsx! {
                     div { class: "max-w-4xl mx-auto p-6",
                         div { class: "bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded",
@@ -212,7 +203,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                 };
             }
 
-            let album_data = album_ref.unwrap();
+            let release_data = release_ref.unwrap();
 
             rsx! {
                 div { class: "max-w-4xl mx-auto p-6",
@@ -229,7 +220,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                     // Album Info
                     div { class: "bg-white rounded-lg shadow p-6 mb-6",
                         div { class: "flex items-start space-x-4",
-                            if let Some(thumb) = album_data.thumb() {
+                            if let Some(thumb) = &release_data.thumb {
                                 img {
                                     class: "w-24 h-24 object-cover rounded",
                                     src: "{thumb}",
@@ -242,71 +233,45 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                             }
                             div { class: "flex-1",
                                 h2 { class: "text-xl font-semibold text-gray-900",
-                                    "{album_data.title()}"
+                                    "{release_data.title}"
                                 }
-                                if album_data.is_master() {
-                                    div { class: "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mb-2",
-                                        "Master Release"
-                                    }
-                                }
-                                if let Some(year) = album_data.year() {
+                                if let Some(year) = release_data.year {
                                     p { class: "text-gray-600", "Released: {year}" }
                                 }
-                                if !album_data.format().is_empty() {
+                                if !release_data.format.is_empty() {
                                     p { class: "text-gray-600",
-                                        "Format: {album_data.format().join(\", \")}"
+                                        "Format: {release_data.format.join(\", \")}"
                                     }
                                 }
-                                if !album_data.label().is_empty() {
+                                if !release_data.label.is_empty() {
                                     p { class: "text-gray-600",
-                                        "Label: {album_data.label().join(\", \")}"
+                                        "Label: {release_data.label.join(\", \")}"
                                     }
                                 }
                                 // Discogs links
                                 div { class: "flex flex-col gap-1 mt-2 text-sm text-gray-600",
-                                    match album_data {
-                                        crate::discogs::DiscogsAlbum::Master(master) => {
-                                            rsx! {
-                                                div {
-                                                    "Discogs Album: "
-                                                    a {
-                                                        href: "https://www.discogs.com/master/{master.id}",
-                                                        target: "_blank",
-                                                        rel: "noopener noreferrer",
-                                                        class: "text-blue-600 hover:text-blue-800 underline",
-                                                        "{master.id}"
-                                                    }
-                                                }
-                                                div { "Release: None" }
+                                    div {
+                                        "Discogs Album: "
+                                        if let Some(master_id) = &release_data.master_id {
+                                            a {
+                                                href: "https://www.discogs.com/master/{master_id}",
+                                                target: "_blank",
+                                                rel: "noopener noreferrer",
+                                                class: "text-blue-600 hover:text-blue-800 underline",
+                                                "{master_id}"
                                             }
+                                        } else {
+                                            "None"
                                         }
-                                        crate::discogs::DiscogsAlbum::Release(release) => {
-                                            rsx! {
-                                                div {
-                                                    "Discogs Album: "
-                                                    if let Some(master_id) = &release.master_id {
-                                                        a {
-                                                            href: "https://www.discogs.com/master/{master_id}",
-                                                            target: "_blank",
-                                                            rel: "noopener noreferrer",
-                                                            class: "text-blue-600 hover:text-blue-800 underline",
-                                                            "{master_id}"
-                                                        }
-                                                    } else {
-                                                        "None"
-                                                    }
-                                                }
-                                                div {
-                                                    "Discogs Release: "
-                                                    a {
-                                                        href: "https://www.discogs.com/release/{release.id}",
-                                                        target: "_blank",
-                                                        rel: "noopener noreferrer",
-                                                        class: "text-blue-600 hover:text-blue-800 underline",
-                                                        "{release.id}"
-                                                    }
-                                                }
-                                            }
+                                    }
+                                    div {
+                                        "Discogs Release: "
+                                        a {
+                                            href: "https://www.discogs.com/release/{release_data.id}",
+                                            target: "_blank",
+                                            rel: "noopener noreferrer",
+                                            class: "text-blue-600 hover:text-blue-800 underline",
+                                            "{release_data.id}"
                                         }
                                     }
                                 }

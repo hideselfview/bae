@@ -92,6 +92,16 @@ pub struct DbTrackArtist {
     pub role: Option<String>,
 }
 
+/// Discogs master release information for an album
+///
+/// When an album is imported from Discogs, both the master_id and release_id
+/// are always known together (the release_id is the main_release for that master).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DiscogsMasterRelease {
+    pub master_id: String,
+    pub release_id: String,
+}
+
 /// Album metadata - represents a logical album (the "master")
 ///
 /// A logical album can have multiple physical releases (e.g., "1973 Original", "2016 Remaster").
@@ -101,7 +111,7 @@ pub struct DbTrackArtist {
 /// Artists are linked via the `album_artists` junction table to support multiple artists.
 ///
 /// Supports multiple metadata sources:
-/// - Discogs: discogs_master_id links to the Discogs master release
+/// - Discogs: discogs_release links to the Discogs master release and its main release
 /// - Bandcamp: bandcamp_album_id would link to the Bandcamp album
 /// - Other sources can be added as needed
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -109,8 +119,8 @@ pub struct DbAlbum {
     pub id: String,
     pub title: String,
     pub year: Option<i32>,
-    /// Master ID from Discogs (optional to support other metadata sources)
-    pub discogs_master_id: Option<String>,
+    /// Discogs release information
+    pub discogs_release: Option<DiscogsMasterRelease>,
     /// Album ID from Bandcamp (optional, for future multi-source support)
     pub bandcamp_album_id: Option<String>,
     pub cover_art_url: Option<String>,
@@ -324,7 +334,7 @@ impl DbAlbum {
             id: uuid::Uuid::new_v4().to_string(),
             title: title.to_string(),
             year: None,
-            discogs_master_id: None,
+            discogs_release: None,
             bandcamp_album_id: None,
             cover_art_url: None,
             is_compilation: false,
@@ -333,32 +343,26 @@ impl DbAlbum {
         }
     }
 
-    /// Create a logical album from a Discogs master
-    /// Note: Artists should be created separately and linked via DbAlbumArtist
-    pub fn from_discogs_master(master: &crate::discogs::DiscogsMaster) -> Self {
-        let now = Utc::now();
-        DbAlbum {
-            id: Uuid::new_v4().to_string(),
-            title: master.title.clone(),
-            year: master.year.map(|y| y as i32),
-            discogs_master_id: Some(master.id.clone()),
-            bandcamp_album_id: None,
-            cover_art_url: master.thumb.clone(),
-            is_compilation: false, // Will be set based on artist analysis
-            created_at: now,
-            updated_at: now,
-        }
-    }
-
     /// Create a logical album from a Discogs release
     /// Note: Artists should be created separately and linked via DbAlbumArtist
+    ///
+    /// If the release has a master_id, both master_id and release_id are stored together in discogs_release.
     pub fn from_discogs_release(release: &crate::discogs::DiscogsRelease) -> Self {
         let now = Utc::now();
+        let discogs_release = if let Some(master_id) = &release.master_id {
+            Some(DiscogsMasterRelease {
+                master_id: master_id.clone(),
+                release_id: release.id.clone(),
+            })
+        } else {
+            None
+        };
+
         DbAlbum {
             id: Uuid::new_v4().to_string(),
             title: release.title.clone(),
             year: release.year.map(|y| y as i32),
-            discogs_master_id: release.master_id.clone(),
+            discogs_release,
             bandcamp_album_id: None,
             cover_art_url: release.thumb.clone(),
             is_compilation: false, // Will be set based on artist analysis
@@ -394,22 +398,6 @@ impl DbRelease {
             release_name: None, // Could parse from release title if needed
             year: release.year.map(|y| y as i32),
             discogs_release_id: Some(release.id.clone()),
-            bandcamp_release_id: None,
-            import_status: ImportStatus::Queued,
-            created_at: now,
-            updated_at: now,
-        }
-    }
-
-    /// Create a default release when user only selects a master (no specific release)
-    pub fn default_for_master(album_id: &str, year: Option<i32>) -> Self {
-        let now = Utc::now();
-        DbRelease {
-            id: Uuid::new_v4().to_string(),
-            album_id: album_id.to_string(),
-            release_name: None,
-            year,
-            discogs_release_id: None,
             bandcamp_release_id: None,
             import_status: ImportStatus::Queued,
             created_at: now,

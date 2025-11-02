@@ -58,10 +58,10 @@ pub fn AlbumDetailView(
                                     span { "{year}" }
                                 }
                             }
-                            if let Some(master_id) = &album.discogs_master_id {
+                            if let Some(discogs_release) = &album.discogs_release {
                                 div {
                                     span { class: "font-medium", "Discogs Master ID: " }
-                                    span { "{master_id}" }
+                                    span { "{discogs_release.master_id}" }
                                 }
                             }
                             div {

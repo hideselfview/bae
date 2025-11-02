@@ -5,7 +5,7 @@
 
 use crate::cue_flac::CueFlacProcessor;
 use crate::db::{DbAlbum, DbRelease};
-use crate::import::discogs_parser::parse_discogs_album;
+use crate::import::discogs_parser::parse_discogs_release;
 use crate::import::progress::ImportProgressHandle;
 use crate::import::track_to_file_mapper::map_tracks_to_files;
 use crate::import::types::{DiscoveredFile, ImportProgress, ImportRequestParams, TrackFile};
@@ -62,16 +62,16 @@ impl ImportHandle {
     ) -> Result<(String, String), String> {
         match params {
             ImportRequestParams::FromFolder {
-                discogs_album: album,
+                discogs_release: release,
                 folder,
             } => {
                 let library_manager = self.library_manager.get();
 
                 // ========== VALIDATION (before queueing) ==========
 
-                // 1. Parse Discogs album into database models
+                // 1. Parse Discogs release into database models
                 let (db_album, db_release, db_tracks, artists, album_artists) =
-                    parse_discogs_album(&album)?;
+                    parse_discogs_release(&release)?;
 
                 tracing::info!(
                     "Parsed Discogs album into database models:\n{:#?}",

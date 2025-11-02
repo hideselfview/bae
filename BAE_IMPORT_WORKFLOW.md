@@ -9,19 +9,19 @@ bae uses Discogs as the source of truth for album metadata. Discogs organizes mu
 - **Masters** represent abstract albums
 - **Releases** represent specific physical pressings of those albums (original UK pressing, US reissue, 180g vinyl remaster, etc.)
 
-bae's import workflow adapts to what we know about our music data. If we know which specific release our files represent, we import that release. If we only know the album title, we import the master with its canonical tracklist.
+bae always imports specific releases from Discogs. When a user selects a master, bae fetches the master to get its main_release, then imports that release. This ensures we always have both the master_id and release_id stored together.
 
 ## User Experience
 
 bae provides two import paths based on what the user knows about their music data:
 
-**Path 1: Import master**
+**Path 1: Import via master**
 
 - User searches for albums →
 - Selects a master →
+- bae fetches master to get main_release ID →
 - Provides music data →
-- bae fetches master details →
-- bae imports the master with canonical tracklist
+- bae imports the main_release
 
 **Path 2: Import specific release** 
 
@@ -29,10 +29,9 @@ bae provides two import paths based on what the user knows about their music dat
 - Views available releases →
 - Selects specific release →
 - Provides music data →
-- bae fetches release details →
 - bae imports that exact release
 
-The choice depends on whether the user knows which specific pressing their music files represent.
+Both paths result in importing a Discogs release. When importing via a master, bae automatically uses that master's main_release. The choice depends on whether the user knows which specific pressing their music files represent.
 
 ## Album Search
 
@@ -46,13 +45,18 @@ This returns basic search results for browsing. bae displays these using the `Di
 
 ## Master Import (Path 1)
 
-When the user clicks "Add to Library" on a master from search results, bae calls the Discogs API:
+When the user clicks "Add to Library" on a master from search results, bae:
 
+1. Calls the Discogs API to fetch the master:
 ```
 GET /masters/{master_id}
 ```
 
-This fetches complete master data including tracklist for import. bae converts this to `DiscogsMaster` with fields like `id`, `title`, `year`, `tracklist`, and `artists`.
+2. Extracts the `main_release` field from the master response
+
+3. Imports that release using the Release Import flow (see below)
+
+This ensures we always store both the master_id and release_id together in the database.
 
 ## Release Browser (Path 2)
 
@@ -175,11 +179,12 @@ bae handles two album formats:
 **Discogs API Client:**
 - `search_masters()` → `Vec<DiscogsSearchResult>`
 - `get_master_versions()` → `Vec<DiscogsMasterReleaseVersion>`
-- `get_master()` → `DiscogsMaster`
+- `get_master()` → `DiscogsMaster` (includes `main_release` field)
 - `get_release()` → `DiscogsRelease`
 
 **Import Module** (`src/import/`):
 - `service.rs` - `ImportService` orchestrator and `ImportHandle` public API
+- `discogs_parser.rs` - `parse_discogs_release()` converts `DiscogsRelease` into database models
 - `pipeline/` - Stream-based pipeline with `build_pipeline()` returning `impl Stream`
 - `album_layout.rs` - Analyzes file→chunk and chunk→track mappings
 - `track_file_mapper.rs` - Validates track-to-file mapping before DB insertion

@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use sqlx::{Row, SqlitePool};
 use tracing::info;
+use uuid::Uuid;
 
 use crate::db::models::*;
 
@@ -51,12 +52,26 @@ impl Database {
                 id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
                 year INTEGER,
-                discogs_master_id TEXT,
                 bandcamp_album_id TEXT,
                 cover_art_url TEXT,
                 is_compilation BOOLEAN NOT NULL DEFAULT FALSE,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Album-Discogs join table (one-to-one relationship)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS album_discogs (
+                id TEXT PRIMARY KEY,
+                album_id TEXT NOT NULL UNIQUE,
+                discogs_master_id TEXT NOT NULL,
+                discogs_release_id TEXT NOT NULL,
+                FOREIGN KEY (album_id) REFERENCES albums (id) ON DELETE CASCADE
             )
             "#,
         )
@@ -485,26 +500,45 @@ impl Database {
 
     /// Insert a new album
     pub async fn insert_album(&self, album: &DbAlbum) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+
+        // Insert album
         sqlx::query(
             r#"
             INSERT INTO albums (
-                id, title, year, discogs_master_id, 
-                bandcamp_album_id, cover_art_url, is_compilation, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, title, year, bandcamp_album_id, cover_art_url, is_compilation, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&album.id)
         .bind(&album.title)
         .bind(album.year)
-        .bind(&album.discogs_master_id)
         .bind(&album.bandcamp_album_id)
         .bind(&album.cover_art_url)
         .bind(album.is_compilation)
         .bind(album.created_at.to_rfc3339())
         .bind(album.updated_at.to_rfc3339())
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
 
+        // Insert Discogs info if present
+        if let Some(discogs_release) = &album.discogs_release {
+            sqlx::query(
+                r#"
+                INSERT INTO album_discogs (
+                    id, album_id, discogs_master_id, discogs_release_id
+                ) VALUES (?, ?, ?, ?)
+                "#,
+            )
+            .bind(&Uuid::new_v4().to_string())
+            .bind(&album.id)
+            .bind(&discogs_release.master_id)
+            .bind(&discogs_release.release_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
         Ok(())
     }
 
@@ -571,15 +605,13 @@ impl Database {
         sqlx::query(
             r#"
             INSERT INTO albums (
-                id, title, year, discogs_master_id, 
-                bandcamp_album_id, cover_art_url, is_compilation, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, title, year, bandcamp_album_id, cover_art_url, is_compilation, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&album.id)
         .bind(&album.title)
         .bind(album.year)
-        .bind(&album.discogs_master_id)
         .bind(&album.bandcamp_album_id)
         .bind(&album.cover_art_url)
         .bind(album.is_compilation)
@@ -587,6 +619,23 @@ impl Database {
         .bind(album.updated_at.to_rfc3339())
         .execute(&mut *tx)
         .await?;
+
+        // Insert Discogs info if present
+        if let Some(discogs_release) = &album.discogs_release {
+            sqlx::query(
+                r#"
+                INSERT INTO album_discogs (
+                    id, album_id, discogs_master_id, discogs_release_id
+                ) VALUES (?, ?, ?, ?)
+                "#,
+            )
+            .bind(&Uuid::new_v4().to_string())
+            .bind(&album.id)
+            .bind(&discogs_release.master_id)
+            .bind(&discogs_release.release_id)
+            .execute(&mut *tx)
+            .await?;
+        }
 
         // Insert release
         sqlx::query(
@@ -680,17 +729,37 @@ impl Database {
 
     /// Get all albums
     pub async fn get_albums(&self) -> Result<Vec<DbAlbum>, sqlx::Error> {
-        let rows = sqlx::query("SELECT * FROM albums ORDER BY title")
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sqlx::query(
+            r#"
+            SELECT 
+                a.id, a.title, a.year, a.bandcamp_album_id, a.cover_art_url, 
+                a.is_compilation, a.created_at, a.updated_at,
+                ad.discogs_master_id, ad.discogs_release_id
+            FROM albums a
+            LEFT JOIN album_discogs ad ON a.id = ad.album_id
+            ORDER BY a.title
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
 
         let mut albums = Vec::new();
         for row in rows {
+            let discogs_master_id: Option<String> = row.get("discogs_master_id");
+            let discogs_release_id: Option<String> = row.get("discogs_release_id");
+            let discogs_release = match (discogs_master_id, discogs_release_id) {
+                (Some(mid), Some(rid)) => Some(crate::db::models::DiscogsMasterRelease {
+                    master_id: mid,
+                    release_id: rid,
+                }),
+                _ => None,
+            };
+
             albums.push(DbAlbum {
                 id: row.get("id"),
                 title: row.get("title"),
                 year: row.get("year"),
-                discogs_master_id: row.get("discogs_master_id"),
+                discogs_release,
                 bandcamp_album_id: row.get("bandcamp_album_id"),
                 cover_art_url: row.get("cover_art_url"),
                 is_compilation: row.get("is_compilation"),
@@ -708,25 +777,47 @@ impl Database {
 
     /// Get album by ID
     pub async fn get_album_by_id(&self, album_id: &str) -> Result<Option<DbAlbum>, sqlx::Error> {
-        let row = sqlx::query("SELECT * FROM albums WHERE id = ?")
-            .bind(album_id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row = sqlx::query(
+            r#"
+            SELECT 
+                a.id, a.title, a.year, a.bandcamp_album_id, a.cover_art_url, 
+                a.is_compilation, a.created_at, a.updated_at,
+                ad.discogs_master_id, ad.discogs_release_id
+            FROM albums a
+            LEFT JOIN album_discogs ad ON a.id = ad.album_id
+            WHERE a.id = ?
+            "#,
+        )
+        .bind(album_id)
+        .fetch_optional(&self.pool)
+        .await?;
 
-        Ok(row.map(|row| DbAlbum {
-            id: row.get("id"),
-            title: row.get("title"),
-            year: row.get("year"),
-            discogs_master_id: row.get("discogs_master_id"),
-            bandcamp_album_id: row.get("bandcamp_album_id"),
-            cover_art_url: row.get("cover_art_url"),
-            is_compilation: row.get("is_compilation"),
-            created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
-                .unwrap()
-                .with_timezone(&Utc),
-            updated_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("updated_at"))
-                .unwrap()
-                .with_timezone(&Utc),
+        Ok(row.map(|row| {
+            let discogs_master_id: Option<String> = row.get("discogs_master_id");
+            let discogs_release_id: Option<String> = row.get("discogs_release_id");
+            let discogs_release = match (discogs_master_id, discogs_release_id) {
+                (Some(mid), Some(rid)) => Some(crate::db::models::DiscogsMasterRelease {
+                    master_id: mid,
+                    release_id: rid,
+                }),
+                _ => None,
+            };
+
+            DbAlbum {
+                id: row.get("id"),
+                title: row.get("title"),
+                year: row.get("year"),
+                discogs_release,
+                bandcamp_album_id: row.get("bandcamp_album_id"),
+                cover_art_url: row.get("cover_art_url"),
+                is_compilation: row.get("is_compilation"),
+                created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
+                    .unwrap()
+                    .with_timezone(&Utc),
+                updated_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("updated_at"))
+                    .unwrap()
+                    .with_timezone(&Utc),
+            }
         }))
     }
 

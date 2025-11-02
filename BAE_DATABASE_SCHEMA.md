@@ -20,6 +20,7 @@ erDiagram
     files ||--o{ cue_sheets : "has metadata"
     artists ||--o{ album_artists : "performs on"
     albums ||--o{ album_artists : "performed by"
+    albums ||--|| album_discogs : "has discogs metadata"
     artists ||--o{ track_artists : "performs on"
     tracks ||--o{ track_artists : "performed by"
 
@@ -27,12 +28,18 @@ erDiagram
         string id PK
         string title
         int year
-        string discogs_master_id UK
         string bandcamp_album_id
         string cover_art_url
         boolean is_compilation
         datetime created_at
         datetime updated_at
+    }
+
+    album_discogs {
+        string id PK
+        string album_id FK UK
+        string discogs_master_id
+        string discogs_release_id
     }
 
     releases {
@@ -151,12 +158,12 @@ This separation allows:
 ```mermaid
 flowchart TD
     A[User Selects Album] --> B{Master or Release?}
-    B -->|Master| C[Create Album from Master]
-    B -->|Release| D[Create Album from Release]
-    C --> E[Create Default Release]
-    D --> F[Create Specific Release]
-    E --> G[Create Tracks from Tracklist]
-    F --> G
+    B -->|Master| C[Fetch Master - Get main_release]
+    B -->|Release| D[Use Release ID]
+    C --> D
+    D --> E[Create Album from Release]
+    E --> F[Create Release Record]
+    F --> G[Create Tracks from Tracklist]
     G --> H[Import Audio Files]
     H --> I[Chunk Files]
     I --> J[Encrypt Chunks]
@@ -170,12 +177,21 @@ flowchart TD
 
 Logical albums (the "master" concept). One album can have multiple releases.
 
+**Key Fields:**
+- `is_compilation`: True for "Various Artists" albums
+- Discogs metadata is stored in the `album_discogs` join table
+
+### `album_discogs`
+
+One-to-one relationship table storing Discogs metadata for albums. When an album is imported from Discogs, both the master_id and release_id are stored together (the release_id is the main_release for that master).
+
 **Unique Constraints:**
-- `discogs_master_id` (if set) - prevents duplicate imports of the same Discogs master
+- `album_id` - one album can have one Discogs record
+- `(discogs_master_id, discogs_release_id)` - prevents duplicate imports
 
 **Key Fields:**
-- `discogs_master_id`: Links to Discogs master release (set for both master and release imports)
-- `is_compilation`: True for "Various Artists" albums
+- `discogs_master_id`: The Discogs master ID
+- `discogs_release_id`: The Discogs release ID (main_release when importing from a master)
 
 ### `releases`
 
@@ -185,11 +201,9 @@ Specific versions/pressings of albums. All audio data belongs to releases.
 - `(album_id, discogs_release_id)` - prevents duplicate imports of the same Discogs release
 - `(album_id, bandcamp_release_id)` - prevents duplicate imports of the same Bandcamp release
 
-**Note:** Multiple releases with NULL `discogs_release_id` are allowed (multiple master imports).
-
 **Key Fields:**
 - `album_id`: Links to parent album
-- `discogs_release_id`: Set only when importing a specific Discogs release (NULL for master imports)
+- `discogs_release_id`: The Discogs release ID (always set when importing from Discogs)
 - `release_name`: Human-readable version name (e.g., "2016 Remaster")
 - `import_status`: `queued`, `importing`, `complete`, or `failed`
 
@@ -348,7 +362,7 @@ The schema is designed for future extensibility:
 
 | Table | Constraint | Purpose |
 |-------|-----------|---------|
-| `albums` | `UNIQUE(discogs_master_id)` | Prevent duplicate master imports |
+| `album_discogs` | `UNIQUE(album_id)` | One Discogs record per album |
 | `releases` | `UNIQUE(album_id, discogs_release_id)` | Prevent duplicate release imports |
 | `releases` | `UNIQUE(album_id, bandcamp_release_id)` | Prevent duplicate Bandcamp imports |
 | `album_artists` | `UNIQUE(album_id, artist_id)` | One artist appears once per album |
