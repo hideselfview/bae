@@ -27,3 +27,5 @@ bae/assets/tailwind.css
 
 # But keep example file
 !.env.example
+
+.cursor/worktrees.json
