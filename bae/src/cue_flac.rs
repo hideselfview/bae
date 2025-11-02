@@ -445,6 +445,93 @@ impl CueFlacProcessor {
 
         flac_headers.audio_start_byte + estimated_audio_byte
     }
+
+    /// Generate corrected FLAC headers for a track with the track's actual duration
+    ///
+    /// Takes the original album FLAC headers and modifies the STREAMINFO block's
+    /// `total_samples` field to reflect the track's duration instead of the album duration.
+    /// This ensures each reassembled track is a semantically valid FLAC file with correct metadata.
+    ///
+    /// # Arguments
+    /// * `original_headers` - The FLAC headers from the original album file
+    /// * `track_duration_ms` - The track's duration in milliseconds
+    /// * `sample_rate` - The audio sample rate (e.g., 44100 Hz)
+    ///
+    /// # Returns
+    /// Corrected FLAC headers with updated `total_samples` field
+    pub fn write_corrected_flac_headers(
+        original_headers: &[u8],
+        track_duration_ms: i64,
+        sample_rate: u32,
+    ) -> Result<Vec<u8>, CueFlacError> {
+        // Validate FLAC signature
+        if original_headers.len() < 4 || &original_headers[0..4] != b"fLaC" {
+            return Err(CueFlacError::Flac("Invalid FLAC signature".to_string()));
+        }
+
+        let mut corrected = original_headers.to_vec();
+        let mut pos = 4;
+
+        // Find STREAMINFO block (type 0) - it's always the first metadata block
+        loop {
+            if pos + 4 > corrected.len() {
+                return Err(CueFlacError::Flac("STREAMINFO block not found".to_string()));
+            }
+
+            let header = u32::from_be_bytes([
+                corrected[pos],
+                corrected[pos + 1],
+                corrected[pos + 2],
+                corrected[pos + 3],
+            ]);
+
+            let is_last = (header & 0x80000000) != 0;
+            let block_type = (header >> 24) & 0x7F;
+            let block_size = (header & 0x00FFFFFF) as usize;
+
+            pos += 4; // Skip header
+
+            if block_type == 0 {
+                // STREAMINFO block found
+                if pos + 34 > corrected.len() {
+                    return Err(CueFlacError::Flac(
+                        "Invalid STREAMINFO block size".to_string(),
+                    ));
+                }
+
+                // Calculate correct total_samples for the track
+                let track_total_samples = ((track_duration_ms as u64) * sample_rate as u64) / 1000;
+
+                // STREAMINFO total_samples is 36 bits (5 bytes: low 4 bits of byte 13 + bytes 14-17)
+                // We need to write it in big-endian format within those 5 bytes
+                let total_samples_u64 = track_total_samples;
+
+                // Byte 13: preserve upper 4 bits (bits_per_sample info), set lower 4 bits to high 4 bits of total_samples
+                let byte13_mask = corrected[pos + 13] & 0xF0; // Preserve upper 4 bits
+                let total_samples_high_4_bits = ((total_samples_u64 >> 32) & 0x0F) as u8;
+                corrected[pos + 13] = byte13_mask | total_samples_high_4_bits;
+
+                // Bytes 14-17: 32-bit big-endian representation of lower 32 bits
+                let total_samples_low_32 = (total_samples_u64 & 0xFFFFFFFF) as u32;
+                let bytes_14_17 = total_samples_low_32.to_be_bytes();
+                corrected[pos + 14] = bytes_14_17[0];
+                corrected[pos + 15] = bytes_14_17[1];
+                corrected[pos + 16] = bytes_14_17[2];
+                corrected[pos + 17] = bytes_14_17[3];
+
+                // We've modified the headers, return the corrected version
+                return Ok(corrected);
+            }
+
+            pos += block_size; // Skip block data
+
+            if is_last {
+                break;
+            }
+        }
+
+        Err(CueFlacError::Flac("STREAMINFO block not found".to_string()))
+    }
 }
 
 #[cfg(test)]
@@ -620,6 +707,62 @@ FILE "test.flac" WAVE
         assert_eq!(cue_sheet.tracks[1].end_time_ms, Some(6 * 60 * 1000));
         // Track 3 should have no end time (last track)
         assert_eq!(cue_sheet.tracks[2].end_time_ms, None);
+    }
+
+    #[test]
+    fn test_write_corrected_flac_headers() {
+        // Basic smoke test: verify function doesn't error and preserves signature
+        // Full correctness testing would require real FLAC file headers
+
+        // Create minimal valid FLAC headers structure
+        let mut original_headers = vec![
+            b'f', b'L', b'a', b'C', // FLAC signature
+            0x00, 0x00, 0x00, 0x22, // STREAMINFO: type 0, size 34 (0x22), last block
+        ];
+
+        // STREAMINFO data (34 bytes) - minimal valid structure
+        original_headers.resize(42, 0); // 4 + 4 + 34 = 42 bytes
+
+        // Set total_samples to a known value at correct offset
+        // STREAMINFO offset 13 (byte 8+13=21): lower 4 bits of byte 21 + bytes 22-25
+        let album_total_samples: u64 = 44100 * 120; // 2 minutes
+        let streaminfo_start = 8;
+
+        // Byte 13: preserve upper 4 bits, set lower 4 to high 4 bits of total_samples
+        original_headers[streaminfo_start + 13] = 0xF0 | ((album_total_samples >> 32) & 0x0F) as u8;
+        // Bytes 14-17: lower 32 bits of total_samples
+        let samples_low_32 = (album_total_samples & 0xFFFFFFFF) as u32;
+        let bytes = samples_low_32.to_be_bytes();
+        original_headers[streaminfo_start + 14] = bytes[0];
+        original_headers[streaminfo_start + 15] = bytes[1];
+        original_headers[streaminfo_start + 16] = bytes[2];
+        original_headers[streaminfo_start + 17] = bytes[3];
+
+        // Test correction for 60-second track
+        let track_duration_ms = 60 * 1000;
+        let sample_rate = 44100;
+
+        let corrected = CueFlacProcessor::write_corrected_flac_headers(
+            &original_headers,
+            track_duration_ms as i64,
+            sample_rate,
+        )
+        .unwrap();
+
+        // Verify signature preserved
+        assert_eq!(&corrected[0..4], b"fLaC");
+
+        // Verify total_samples was modified
+        let expected_samples: u64 = (track_duration_ms as u64 * sample_rate as u64) / 1000;
+        let corrected_samples_high_4 = (corrected[streaminfo_start + 13] & 0x0F) as u64;
+        let corrected_samples_low_32 = u32::from_be_bytes([
+            corrected[streaminfo_start + 14],
+            corrected[streaminfo_start + 15],
+            corrected[streaminfo_start + 16],
+            corrected[streaminfo_start + 17],
+        ]) as u64;
+        let corrected_total_samples = (corrected_samples_high_4 << 32) | corrected_samples_low_32;
+        assert_eq!(corrected_total_samples, expected_samples);
     }
 
     #[test]

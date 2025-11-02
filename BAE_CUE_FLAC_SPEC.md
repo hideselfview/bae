@@ -40,8 +40,9 @@ Track 3: album.flac 07:22-11:05 → chunks 095-145
 ## Data Storage
 
 ### CUE/FLAC File Records
-- FLAC header blocks stored in database (enables streaming without downloading initial chunks)
-- Audio start byte position tracked in database (needed to skip headers when extracting audio from chunks)
+- FLAC header blocks stored per-track in database with corrected `total_samples` for each track
+- Headers are modified during import to reflect track duration (not album duration)
+- Enables streaming without downloading initial chunks and ensures correct decoder duration
 
 ### Track Position Records  
 - Track timing boundaries in milliseconds

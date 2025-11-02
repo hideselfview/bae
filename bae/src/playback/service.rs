@@ -307,7 +307,10 @@ impl PlaybackService {
                                 (decoder, audio_data, track_id)
                             })
                     {
-                        let preloaded_duration = self.next_duration.take();
+                        let preloaded_duration = self
+                            .next_duration
+                            .take()
+                            .expect("Preloaded track has no duration");
                         info!("Using preloaded track: {}", preloaded_track_id);
 
                         // Save current track as previous before switching
@@ -536,19 +539,13 @@ impl PlaybackService {
 
         info!("Decoder created, sample rate: {} Hz", decoder.sample_rate());
 
-        // Use stored duration from database for all tracks
-        // For CUE/FLAC tracks, decoder reports full file duration, so we must use stored duration
-        // For regular tracks, stored duration should match decoder (but we trust stored value)
+        // Use stored duration from database - required for playback
         let track_duration = track
             .duration_ms
             .map(|ms| std::time::Duration::from_millis(ms as u64))
-            .or_else(|| decoder.duration()); // Fallback to decoder if no stored duration
+            .unwrap_or_else(|| panic!("Cannot play track {} without duration", track_id));
 
-        if let Some(dur) = track_duration {
-            info!("Track duration: {:?}", dur);
-        } else {
-            info!("Track duration not available");
-        }
+        info!("Track duration: {:?}", track_duration);
 
         // Cache audio data for seeking
         self.current_audio_data = Some(audio_data.clone());
@@ -563,7 +560,7 @@ impl PlaybackService {
         track: DbTrack,
         decoder: TrackDecoder,
         audio_data: Vec<u8>,
-        track_duration: Option<std::time::Duration>,
+        track_duration: std::time::Duration,
     ) {
         info!("Starting playback with decoder for track: {}", track_id);
 
@@ -645,7 +642,7 @@ impl PlaybackService {
         self.stream = Some(stream);
         self.current_track = Some(track.clone());
         self.current_position = Some(std::time::Duration::ZERO);
-        self.current_duration = track_duration;
+        self.current_duration = Some(track_duration);
         self.is_paused = false;
         // Initialize shared position
         *self.current_position_shared.lock().unwrap() = Some(std::time::Duration::ZERO);
@@ -655,7 +652,7 @@ impl PlaybackService {
             state: PlaybackState::Playing {
                 track: track.clone(),
                 position: std::time::Duration::ZERO,
-                duration: track_duration,
+                duration: Some(track_duration),
             },
         });
 
@@ -686,12 +683,10 @@ impl PlaybackService {
                     Some(()) = completion_rx_async.recv() => {
                         info!("Track completed: {}", track_id);
                         // Send final position update matching duration to ensure progress bar reaches 100%
-                        if let Some(duration) = track_duration_for_completion {
-                            let _ = progress_tx.send(PlaybackProgress::PositionUpdate {
-                                position: duration,
-                                track_id: track_id.clone(),
-                            });
-                        }
+                        let _ = progress_tx.send(PlaybackProgress::PositionUpdate {
+                            position: track_duration_for_completion,
+                            track_id: track_id.clone(),
+                        });
                         let _ = progress_tx.send(PlaybackProgress::TrackCompleted {
                             track_id: track_id.clone(),
                         });
@@ -734,15 +729,30 @@ impl PlaybackService {
             }
         };
 
-        // Create decoder
-        if let Ok(decoder) = TrackDecoder::new(audio_data.clone()) {
-            let duration = decoder.duration();
-            self.next_decoder = Some(decoder);
-            self.next_audio_data = Some(audio_data);
-            self.next_track_id = Some(track_id.to_string());
-            self.next_duration = duration;
-            info!("Preloaded next track: {}", track_id);
-        }
+        // Fetch track to get stored duration (correct for CUE/FLAC)
+        // Duration is calculated once during import and stored in database - required for playback
+        let track = match self.library_manager.get_track(track_id).await {
+            Ok(Some(track)) => track,
+            Ok(None) => panic!("Cannot preload track {} without track record", track_id),
+            Err(e) => panic!(
+                "Cannot preload track {} due to database error: {}",
+                track_id, e
+            ),
+        };
+
+        let duration = track
+            .duration_ms
+            .map(|ms| std::time::Duration::from_millis(ms as u64))
+            .unwrap_or_else(|| panic!("Cannot preload track {} without duration", track_id));
+
+        let decoder = TrackDecoder::new(audio_data.clone())
+            .unwrap_or_else(|_| panic!("Cannot preload track {} without decoder", track_id));
+
+        self.next_decoder = Some(decoder);
+        self.next_audio_data = Some(audio_data);
+        self.next_track_id = Some(track_id.to_string());
+        self.next_duration = Some(duration);
+        info!("Preloaded next track: {}", track_id);
     }
 
     async fn pause(&mut self) {
@@ -872,23 +882,24 @@ impl PlaybackService {
             }
         };
 
-        let decoder_duration = decoder.duration();
+        // Use stored track duration for validation (required - should always be Some if playing)
+        let track_duration = self
+            .current_duration
+            .expect("Cannot seek: track has no duration");
 
         // Check if seeking past the end - return error instead of clamping
-        if let Some(duration) = decoder_duration {
-            if position > duration {
-                error!(
-                    "Cannot seek past end of track: requested {}, track duration {}",
-                    position.as_secs_f64(),
-                    duration.as_secs_f64()
-                );
-                // Send error notification through progress channel
-                let _ = self.progress_tx.send(PlaybackProgress::SeekError {
-                    requested_position: position,
-                    track_duration: duration,
-                });
-                return;
-            }
+        if position > track_duration {
+            error!(
+                "Cannot seek past end of track: requested {}, track duration {}",
+                position.as_secs_f64(),
+                track_duration.as_secs_f64()
+            );
+            // Send error notification through progress channel
+            let _ = self.progress_tx.send(PlaybackProgress::SeekError {
+                requested_position: position,
+                track_duration,
+            });
+            return;
         }
 
         // Seek decoder to desired position
@@ -959,7 +970,7 @@ impl PlaybackService {
         // This ensures the receiver is ready when completion signals arrive
         let progress_tx_for_task = self.progress_tx.clone();
         let track_id_for_task = track_id.clone();
-        let decoder_duration_for_completion = decoder_duration;
+        let track_duration_for_completion = track_duration;
         let current_position_for_seek_listener = self.current_position_shared.clone();
         let was_paused = self.is_paused;
         tokio::spawn(async move {
@@ -988,12 +999,10 @@ impl PlaybackService {
                     Some(()) = completion_rx_async.recv() => {
                         info!("Seek: Track completed: {}", track_id_for_task);
                         // Send final position update matching duration to ensure progress bar reaches 100%
-                        if let Some(duration) = decoder_duration_for_completion {
-                            let _ = progress_tx_for_task.send(PlaybackProgress::PositionUpdate {
-                                position: duration,
-                                track_id: track_id_for_task.clone(),
-                            });
-                        }
+                        let _ = progress_tx_for_task.send(PlaybackProgress::PositionUpdate {
+                            position: track_duration_for_completion,
+                            track_id: track_id_for_task.clone(),
+                        });
                         let _ = progress_tx_for_task.send(PlaybackProgress::TrackCompleted {
                             track_id: track_id_for_task.clone(),
                         });
@@ -1041,8 +1050,10 @@ impl PlaybackService {
         self.stream = Some(stream);
 
         // Update shared position
+        // Note: We preserve self.current_duration (track duration) instead of using decoder.duration()
+        // because for CUE/FLAC tracks, decoder.duration() returns the full album duration, not track duration
         *self.current_position_shared.lock().unwrap() = Some(position);
-        self.current_duration = decoder_duration;
+        // self.current_duration remains unchanged - it's already the correct track duration
         trace!("Seek: Updated shared position to: {:?}", position);
 
         // If we were paused, keep it paused; otherwise play

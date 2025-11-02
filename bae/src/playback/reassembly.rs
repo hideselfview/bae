@@ -117,9 +117,10 @@ pub async fn reassemble_track(
     );
 
     // Prepend FLAC headers if needed (CUE/FLAC tracks)
+    // These headers are corrected per-track during import with accurate total_samples
     if audio_format.needs_headers {
         if let Some(ref headers) = audio_format.flac_headers {
-            debug!("Prepending FLAC headers: {} bytes", headers.len());
+            debug!("Prepending corrected FLAC headers: {} bytes", headers.len());
             let mut complete_audio = headers.clone();
             complete_audio.extend_from_slice(&audio_data);
             audio_data = complete_audio;

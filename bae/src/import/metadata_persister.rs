@@ -1,10 +1,9 @@
 use crate::db::{DbAudioFormat, DbFile, DbTrackChunkCoords};
 use crate::import::types::{CueFlacLayoutData, FileToChunks, TrackFile};
 use crate::library::LibraryManager;
-use crate::playback::symphonia_decoder::TrackDecoder;
 use std::collections::HashMap;
 use std::path::Path;
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// Service responsible for persisting track metadata to the database.
 ///
@@ -23,41 +22,6 @@ impl<'a> MetadataPersister<'a> {
     /// Create a new metadata persister
     pub fn new(library: &'a LibraryManager) -> Self {
         Self { library }
-    }
-
-    /// Extract duration from an audio file
-    fn extract_duration_from_file(file_path: &Path) -> Option<i64> {
-        debug!("Extracting duration from file: {}", file_path.display());
-        let file_data = match std::fs::read(file_path) {
-            Ok(data) => {
-                debug!("Read {} bytes from file", data.len());
-                data
-            }
-            Err(e) => {
-                warn!("Failed to read file for duration extraction: {}", e);
-                return None;
-            }
-        };
-
-        match TrackDecoder::new(file_data) {
-            Ok(decoder) => {
-                let duration = decoder.duration().map(|d| d.as_millis() as i64);
-                if let Some(dur_ms) = duration {
-                    debug!(
-                        "Extracted duration: {} ms from {}",
-                        dur_ms,
-                        file_path.display()
-                    );
-                } else {
-                    warn!("Duration not available for file: {}", file_path.display());
-                }
-                duration
-            }
-            Err(e) => {
-                warn!("Failed to decode file for duration extraction: {:?}", e);
-                None
-            }
-        }
     }
 
     /// Persist all release metadata to database.
@@ -221,11 +185,37 @@ impl<'a> MetadataPersister<'a> {
             let start_byte_offset = absolute_start_byte % chunk_size_i64;
             let end_byte_offset = (absolute_end_byte - 1) % chunk_size_i64;
 
-            // Create audio format (with FLAC headers for CUE/FLAC)
+            // Get track duration from database to generate corrected headers
+            let track = self
+                .library
+                .get_track(&mapping.db_track_id)
+                .await
+                .map_err(|e| format!("Failed to get track for header correction: {}", e))?
+                .ok_or_else(|| format!("Track not found: {}", mapping.db_track_id))?;
+
+            // Generate corrected FLAC headers with track's actual duration
+            let corrected_headers = if let Some(duration_ms) = track.duration_ms {
+                use crate::cue_flac::CueFlacProcessor;
+                CueFlacProcessor::write_corrected_flac_headers(
+                    &flac_headers.headers,
+                    duration_ms,
+                    flac_headers.sample_rate,
+                )
+                .map_err(|e| format!("Failed to write corrected FLAC headers: {}", e))?
+            } else {
+                // Fallback to original headers if duration not available
+                debug!(
+                    "Track {} has no duration, using original FLAC headers",
+                    mapping.db_track_id
+                );
+                flac_headers.headers.clone()
+            };
+
+            // Create audio format (with corrected FLAC headers for CUE/FLAC)
             let audio_format = DbAudioFormat::new(
                 &mapping.db_track_id,
                 "flac",
-                Some(flac_headers.headers.clone()),
+                Some(corrected_headers),
                 true, // needs_headers = true for CUE/FLAC
             );
             self.library
@@ -247,25 +237,6 @@ impl<'a> MetadataPersister<'a> {
                 .add_track_chunk_coords(&coords)
                 .await
                 .map_err(|e| format!("Failed to insert track chunk coords: {}", e))?;
-
-            // Calculate and store duration from CUE sheet times
-            let duration_ms = if let Some(end_time) = cue_track.end_time_ms {
-                Some((end_time - cue_track.start_time_ms) as i64)
-            } else {
-                // Last track - calculate from file duration
-                let file_duration = Self::extract_duration_from_file(&files_to_chunks.file_path);
-                file_duration
-                    .map(|file_duration_ms| file_duration_ms - cue_track.start_time_ms as i64)
-            };
-
-            debug!(
-                "Updating CUE track {} duration to {:?} ms",
-                mapping.db_track_id, duration_ms
-            );
-            self.library
-                .update_track_duration(&mapping.db_track_id, duration_ms)
-                .await
-                .map_err(|e| format!("Failed to update track duration: {}", e))?;
         }
 
         Ok(())
@@ -323,16 +294,8 @@ impl<'a> MetadataPersister<'a> {
             .await
             .map_err(|e| format!("Failed to insert track chunk coords: {}", e))?;
 
-        // Extract and store duration from audio file
-        let duration_ms = Self::extract_duration_from_file(&mapping.file_path);
-        debug!(
-            "Updating track {} duration to {:?} ms",
-            mapping.db_track_id, duration_ms
-        );
-        self.library
-            .update_track_duration(&mapping.db_track_id, duration_ms)
-            .await
-            .map_err(|e| format!("Failed to update track duration: {}", e))?;
+        // Note: Duration is already calculated and stored in Phase 1 (handle.rs)
+        // No need to recalculate here during metadata persistence
 
         Ok(())
     }
