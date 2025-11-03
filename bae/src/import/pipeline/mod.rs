@@ -13,11 +13,15 @@
 
 pub(super) mod chunk_producer;
 
+use std::collections::HashMap;
+use std::path::PathBuf;
+
 use crate::cloud_storage::CloudStorageManager;
 use crate::db::DbChunk;
 use crate::encryption::{EncryptedChunk, EncryptionService};
 use crate::import::progress::ImportProgressTracker;
 use crate::import::service::ImportConfig;
+use crate::import::types::{CueFlacLayoutData, FileToChunks, TrackFile};
 use crate::library::LibraryManager;
 use futures::stream::{Stream, StreamExt};
 use tokio::sync::mpsc;
@@ -45,6 +49,10 @@ pub(super) fn build_import_pipeline(
     cloud_storage: CloudStorageManager,
     library_manager: LibraryManager,
     progress_tracker: ImportProgressTracker,
+    track_files: Vec<TrackFile>,
+    files_to_chunks: Vec<FileToChunks>,
+    chunk_size_bytes: usize,
+    cue_flac_data: HashMap<PathBuf, CueFlacLayoutData>,
 ) -> (
     impl Stream<Item = Result<(), String>>,
     mpsc::Sender<Result<ChunkData, String>>,
@@ -52,6 +60,10 @@ pub(super) fn build_import_pipeline(
     // Clone library_manager for both persistence and progress tracking stages
     let library_manager_persist = library_manager.clone();
     let library_manager_track = library_manager;
+
+    // Clone release_id for both persistence and progress tracking stages
+    let release_id_persist = release_id.clone();
+    let release_id_track = release_id.clone();
 
     // Stage 1: Read files and stream chunks (bounded channel for backpressure)
     let (chunk_tx, chunk_rx) = mpsc::channel::<Result<ChunkData, String>>(10);
@@ -82,7 +94,7 @@ pub(super) fn build_import_pipeline(
         .buffer_unordered(config.max_upload_workers)
         // Stage 4: Persist chunk metadata to database
         .map(move |upload_result| {
-            let release_id = release_id.clone();
+            let release_id = release_id_persist.clone();
             let library_manager = library_manager_persist.clone();
 
             async move {
@@ -103,11 +115,26 @@ pub(super) fn build_import_pipeline(
         .map(move |persist_result| {
             let library_manager = library_manager_track.clone();
             let progress_tracker = progress_tracker.clone();
+            let release_id = release_id_track.clone();
+            let track_files_clone = track_files.clone();
+            let files_to_chunks_clone = files_to_chunks.clone();
+            let chunk_size_bytes_clone = chunk_size_bytes;
+            let cue_flac_data_clone = cue_flac_data.clone();
 
             async move {
                 match persist_result {
                     Ok(uploaded_chunk) => {
-                        track_progress(uploaded_chunk, &library_manager, &progress_tracker).await
+                        track_progress(
+                            uploaded_chunk,
+                            &library_manager,
+                            &progress_tracker,
+                            &release_id,
+                            &track_files_clone,
+                            &files_to_chunks_clone,
+                            chunk_size_bytes_clone,
+                            &cue_flac_data_clone,
+                        )
+                        .await
                     }
                     Err(error) => Err(error),
                 }
@@ -240,17 +267,37 @@ async fn persist_chunk(
 /// Stage 5: Track progress and mark completed tracks.
 ///
 /// Final stage of the pipeline. Checks if this chunk completes any tracks,
-/// marks them complete in the database, and emits progress events.
+/// persists their metadata, marks them complete in the database, and emits progress events.
 async fn track_progress(
     uploaded_chunk: UploadedChunk,
     library_manager: &LibraryManager,
     progress_tracker: &ImportProgressTracker,
+    release_id: &str,
+    track_files: &[TrackFile],
+    files_to_chunks: &[FileToChunks],
+    chunk_size_bytes: usize,
+    cue_flac_data: &HashMap<PathBuf, CueFlacLayoutData>,
 ) -> Result<(), String> {
     // Track progress and get newly completed tracks
     let newly_completed_tracks = progress_tracker.on_chunk_complete(uploaded_chunk.chunk_index);
 
-    // Mark newly completed tracks in the database
+    // Persist metadata and mark newly completed tracks in the database
+    let persister = crate::import::metadata_persister::MetadataPersister::new(library_manager);
     for track_id in &newly_completed_tracks {
+        // Persist track metadata before marking complete
+        persister
+            .persist_track_metadata(
+                release_id,
+                track_id,
+                track_files,
+                files_to_chunks,
+                chunk_size_bytes,
+                cue_flac_data,
+            )
+            .await
+            .map_err(|e| format!("Failed to persist track metadata: {}", e))?;
+
+        // Mark track complete
         library_manager
             .mark_track_complete(track_id)
             .await

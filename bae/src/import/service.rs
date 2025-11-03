@@ -185,6 +185,10 @@ impl ImportService {
             self.cloud_storage.clone(),
             library_manager.clone(),
             progress_tracker,
+            tracks_to_files.clone(),
+            files_to_chunks.clone(),
+            self.config.chunk_size_bytes,
+            cue_flac_data.clone(),
         );
 
         // Spawn chunk producer task with the file to chunk mappings that tell it what to produce
@@ -206,16 +210,10 @@ impl ImportService {
 
         // ========== TEARDOWN ==========
 
-        // Persist file metadata to database
+        // Persist release-level metadata to database
         let persister = MetadataPersister::new(library_manager);
         persister
-            .persist_album_metadata(
-                &db_release.id,
-                &tracks_to_files,
-                files_to_chunks,
-                self.config.chunk_size_bytes,
-                cue_flac_data,
-            )
+            .persist_release_metadata(&db_release.id, &tracks_to_files, &files_to_chunks)
             .await?;
 
         // Mark release complete
