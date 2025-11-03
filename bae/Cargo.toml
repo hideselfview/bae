@@ -68,6 +68,9 @@ default = ["desktop"]
 desktop = ["dioxus/desktop"]
 test-utils = []  # Feature for test helper APIs
 
+[lints.clippy]
+too_many_arguments = "allow"
+
 [profile]
 
 [profile.wasm-dev]
