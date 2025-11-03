@@ -107,7 +107,7 @@ impl ImportContext {
         spawn(async move {
             match client.get_master(&master_id).await {
                 Ok(master) => {
-                    let master_year = master.year.expect("master must have a year");
+                    let master_year = master.year;
                     let release_id = release_id.unwrap_or(master.main_release);
                     let step = ImportStep::ImportWorkflow {
                         master_id,

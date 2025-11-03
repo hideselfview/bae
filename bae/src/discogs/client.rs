@@ -231,7 +231,7 @@ impl DiscogsClient {
             let discogs_master = DiscogsMaster {
                 id: master.id.to_string(),
                 title: master.title,
-                year: master.year,
+                year: master.year.unwrap_or(0),
                 thumb: master.thumb,
                 label,
                 country: None, // Masters don't have country info

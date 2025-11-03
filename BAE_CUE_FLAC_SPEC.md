@@ -40,13 +40,68 @@ Track 3: album.flac 07:22-11:05 → chunks 095-145
 ## Data Storage
 
 ### CUE/FLAC File Records
-- FLAC header blocks stored per-track in database with corrected `total_samples` for each track
-- Headers are modified during import to reflect track duration (not album duration)
-- Enables streaming without downloading initial chunks and ensures correct decoder duration
+
+**During Import:**
+- The FLAC file is chunked and uploaded as-is (no modification to audio data)
+- After chunks upload, we generate corrected FLAC headers for each track
+- Headers are stored in the database as metadata (not in the chunks themselves)
+
+**Database-Stored FLAC Headers (per track):**
+- Only STREAMINFO block (all other metadata blocks removed)
+- `total_samples` corrected to reflect track duration (not album duration)
+- MD5 and min/max frame sizes zeroed (unknown for extracted track)
+
+**Chunks (uploaded audio data):**
+- Original FLAC file bytes, including original headers and all frames
+- No modification during import
+
+**Why This Matters:**
+- Enables playback without downloading initial chunks (headers come from database)
+- Ensures decoder shows correct track duration
 
 ### Track Position Records  
 - Track timing boundaries in milliseconds
 - Chunk index ranges for efficient retrieval
+
+## FLAC Processing for CUE Tracks
+
+### Header Generation (Metadata Persistence)
+After chunks are uploaded, we generate corrected FLAC headers and store them in the database:
+
+- **Extract STREAMINFO** from album FLAC
+- **Update `total_samples`** to track duration (samples in this track, not entire album)
+- **Zero MD5 signature** - signals "no signature" (unknown for extracted track)
+- **Zero min/max frame sizes** - signals "unknown" for extracted track
+- **Remove all other metadata blocks**:
+  - SEEKTABLE (type 3) - offsets are incorrect for extracted track
+  - VORBIS_COMMENT (type 4) - album-level tags don't apply to track
+  - PADDING (type 1) - unnecessary space filler
+  - APPLICATION (type 2) - encoder-specific data not needed
+- **Keep only STREAMINFO** (type 0) - required for playback
+
+Note: The FLAC file is chunked and uploaded as-is. Headers are generated and stored as metadata
+in the database, not written to the chunks. Track metadata lives in the database. SEEKTABLE
+could be rebuilt with correct offsets if needed in the future. Tags can be added later if needed.
+
+### Frame Rewriting (Playback Time)
+During track reassembly, we rewrite FLAC frame headers to create valid standalone FLAC files:
+
+1. **Calculate track's starting position**: `start_sample = (start_time_ms * sample_rate) / 1000`
+2. **Scan reassembled audio** for FLAC frame boundaries (sync code 0xFFF8)
+3. **For each frame header**:
+   - Parse frame/sample number (UTF-8 coded variable-length integer)
+   - Subtract track start to get relative number (starts from 0)
+   - Re-encode number in UTF-8 (size may change)
+   - Rebuild header with new number
+   - Recalculate CRC-8 checksum
+4. **Result**: Byte-correct FLAC file with frames starting from 0
+
+### Why Frame Rewriting?
+- Makes extracted tracks valid standalone FLAC files
+- Enables future streaming without full reassembly
+- Ensures correct seeking behavior in decoders
+- Frame/sample numbers must start from 0 for proper playback
+- Handles both fixed and variable block size strategies
 
 ## Requirements
 

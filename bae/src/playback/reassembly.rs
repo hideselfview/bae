@@ -124,6 +124,48 @@ pub async fn reassemble_track(
             let mut complete_audio = headers.clone();
             complete_audio.extend_from_slice(&audio_data);
             audio_data = complete_audio;
+
+            // Rewrite frame headers to start from 0 for proper standalone FLAC files
+            use crate::cue_flac::{CueFlacProcessor, FlacHeaders};
+            match FlacHeaders::parse_sample_rate_from_headers(headers) {
+                Ok(sample_rate) => {
+                    // Calculate track's starting sample and frame numbers
+                    let start_sample = (coords.start_time_ms as u64 * sample_rate as u64) / 1000;
+                    // For fixed block size, estimate frame number (typical block size is 4096)
+                    let estimated_block_size = 4096u64;
+                    let start_frame = start_sample / estimated_block_size;
+
+                    debug!(
+                        "Rewriting FLAC frame headers: start_sample={}, start_frame={}, sample_rate={}",
+                        start_sample, start_frame, sample_rate
+                    );
+
+                    // Rewrite all frame headers in the audio data (skip the headers we just prepended)
+                    match CueFlacProcessor::rewrite_all_frame_headers(
+                        &audio_data[headers.len()..], // Skip headers, only rewrite frame data
+                        start_sample,
+                        start_frame,
+                        sample_rate,
+                        4096, // Estimated block size
+                    ) {
+                        Ok(rewritten_frames) => {
+                            // Rebuild complete audio with rewritten frames
+                            let mut rewritten_audio = headers.clone();
+                            rewritten_audio.extend_from_slice(&rewritten_frames);
+                            audio_data = rewritten_audio;
+                            debug!("Successfully rewritten frame headers");
+                        }
+                        Err(e) => {
+                            warn!("Failed to rewrite frame headers: {}", e);
+                            // Continue with original audio - decoder may still work
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to parse FLAC headers for frame rewriting: {}", e);
+                    // Continue without frame rewriting
+                }
+            }
         } else {
             warn!("Audio format needs headers but none provided");
         }
