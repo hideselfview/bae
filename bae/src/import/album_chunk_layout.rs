@@ -219,19 +219,29 @@ fn build_chunk_track_mappings(
                     continue;
                 };
 
-                // Calculate track byte boundaries within the file
-                let start_byte = CueFlacProcessor::estimate_byte_position(
+                // Calculate track byte boundaries within the file (frame-aligned)
+                let start_byte = CueFlacProcessor::byte_position(
+                    &cue_metadata.flac_path,
                     cue_track.start_time_ms,
                     &flac_headers,
                     file_size,
-                ) as i64;
+                )
+                .map_err(|e| format!("Failed to find frame-aligned start position: {}", e))?
+                    as i64;
 
                 let end_byte = cue_track
                     .end_time_ms
                     .map(|end_time| {
-                        CueFlacProcessor::estimate_byte_position(end_time, &flac_headers, file_size)
-                            as i64
+                        CueFlacProcessor::byte_position(
+                            &cue_metadata.flac_path,
+                            end_time,
+                            &flac_headers,
+                            file_size,
+                        )
+                        .map_err(|e| format!("Failed to find frame-aligned end position: {}", e))
+                        .map(|pos| pos as i64)
                     })
+                    .transpose()?
                     .unwrap_or(file_size as i64);
 
                 // Convert to absolute chunk indices (relative to album, not file)

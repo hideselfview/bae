@@ -428,22 +428,152 @@ impl CueFlacProcessor {
         Ok((input, total_ms))
     }
 
-    /// Estimate byte position from time for a FLAC file
-    pub fn estimate_byte_position(time_ms: u64, flac_headers: &FlacHeaders, file_size: u64) -> u64 {
+    /// Find the nearest FLAC frame boundary near the given byte position
+    ///
+    /// FLAC frames start with a sync code (0xFF followed by a byte with upper 6 bits = 111110).
+    /// This function searches forward and backward from the estimated position to find
+    /// the nearest valid frame boundary.
+    fn find_nearest_frame_boundary(
+        file_data: &[u8],
+        estimated_pos: u64,
+        audio_start_byte: u64,
+    ) -> Result<u64, CueFlacError> {
+        let estimated_pos = estimated_pos as usize;
+
+        // Ensure we're searching within audio data (after headers)
+        if estimated_pos < audio_start_byte as usize {
+            return Ok(audio_start_byte);
+        }
+
+        // Search window: look up to 64KB forward and backward
+        // (FLAC frames are typically much smaller, but this gives us a reasonable window)
+        let search_window = 64 * 1024;
+        let start_search = audio_start_byte as usize;
+        let end_search = file_data.len();
+
+        // Search backward from estimated position
+        let backward_start = estimated_pos
+            .saturating_sub(search_window)
+            .max(start_search);
+        let forward_end = (estimated_pos + search_window).min(end_search);
+
+        // Find the nearest sync code before the estimated position
+        let mut best_backward: Option<usize> = None;
+        for i in (backward_start..estimated_pos).rev() {
+            // FLAC sync code: 0xFF followed by byte with upper 6 bits = 111110 (0xFC..0xFF)
+            if i + 1 < file_data.len()
+                && file_data[i] == 0xFF
+                && (file_data[i + 1] & 0xFC) == 0xFC
+                && Self::validate_flac_frame_header(file_data, i)
+            {
+                best_backward = Some(i);
+                break;
+            }
+        }
+
+        // Find the nearest sync code after the estimated position
+        let mut best_forward: Option<usize> = None;
+        for i in estimated_pos..forward_end {
+            if i + 1 < file_data.len()
+                && file_data[i] == 0xFF
+                && (file_data[i + 1] & 0xFC) == 0xFC
+                && Self::validate_flac_frame_header(file_data, i)
+            {
+                best_forward = Some(i);
+                break;
+            }
+        }
+
+        // Choose the closer one
+        match (best_backward, best_forward) {
+            (Some(backward), Some(forward)) => {
+                let backward_dist = estimated_pos - backward;
+                let forward_dist = forward - estimated_pos;
+                Ok(if backward_dist <= forward_dist {
+                    backward
+                } else {
+                    forward
+                } as u64)
+            }
+            (Some(backward), None) => Ok(backward as u64),
+            (None, Some(forward)) => Ok(forward as u64),
+            (None, None) => {
+                // No frame found - fall back to estimated position
+                // This shouldn't happen in valid FLAC files, but handle gracefully
+                Ok(estimated_pos as u64)
+            }
+        }
+    }
+
+    /// Basic validation of a FLAC frame header at the given position
+    fn validate_flac_frame_header(file_data: &[u8], pos: usize) -> bool {
+        if pos + 4 >= file_data.len() {
+            return false;
+        }
+
+        // Check sync code: 0xFF followed by byte with upper 6 bits = 111110
+        if file_data[pos] != 0xFF || (file_data[pos + 1] & 0xFC) != 0xFC {
+            return false;
+        }
+
+        // Basic sanity check: the frame header should be reasonable
+        // We can't fully validate without parsing the variable-length header,
+        // but we can check that we're not reading out of bounds
+        true
+    }
+
+    /// Get accurate byte position aligned to FLAC frame boundaries
+    ///
+    /// This function estimates the byte position from time, then finds the nearest
+    /// FLAC frame boundary to ensure we don't cut frames in the middle.
+    pub fn byte_position(
+        flac_path: &Path,
+        time_ms: u64,
+        flac_headers: &FlacHeaders,
+        file_size: u64,
+    ) -> Result<u64, CueFlacError> {
         if flac_headers.total_samples == 0 {
-            return flac_headers.audio_start_byte;
+            return Ok(flac_headers.audio_start_byte);
         }
 
         let total_duration_ms =
             (flac_headers.total_samples * 1000) / flac_headers.sample_rate as u64;
         if total_duration_ms == 0 {
-            return flac_headers.audio_start_byte;
+            return Ok(flac_headers.audio_start_byte);
         }
 
+        // Estimate position using linear interpolation
         let audio_size = file_size - flac_headers.audio_start_byte;
         let estimated_audio_byte = (time_ms * audio_size) / total_duration_ms;
+        let estimated_pos = flac_headers.audio_start_byte + estimated_audio_byte;
 
-        flac_headers.audio_start_byte + estimated_audio_byte
+        // Read only a window around the estimated position (64KB search window on each side)
+        // This avoids loading entire large FLAC files into memory
+        let search_window = 64 * 1024;
+        let read_start = estimated_pos
+            .saturating_sub(search_window)
+            .max(flac_headers.audio_start_byte);
+        let read_end = (estimated_pos + search_window).min(file_size);
+
+        // Read the window
+        let mut file = std::fs::File::open(flac_path)?;
+        let mut file_data = vec![0u8; (read_end - read_start) as usize];
+        use std::io::{Read, Seek, SeekFrom};
+        file.seek(SeekFrom::Start(read_start))?;
+        file.read_exact(&mut file_data)?;
+
+        // Adjust estimated position to be relative to the window we read
+        let estimated_pos_in_window = estimated_pos - read_start;
+
+        // Find nearest frame boundary (returns position relative to window)
+        let frame_pos_in_window = Self::find_nearest_frame_boundary(
+            &file_data,
+            estimated_pos_in_window,
+            0, // audio_start is at position 0 in our window
+        )?;
+
+        // Convert back to absolute file position
+        Ok(read_start + frame_pos_in_window)
     }
 
     /// Generate corrected FLAC headers for a track with the track's actual duration
@@ -787,44 +917,6 @@ FILE "test.flac" WAVE
         // Tracks without explicit performer should have None
         assert_eq!(cue_sheet.tracks[0].performer, None);
         assert_eq!(cue_sheet.tracks[1].performer, None);
-    }
-
-    #[test]
-    fn test_estimate_byte_position() {
-        let flac_headers = FlacHeaders {
-            headers: vec![],
-            audio_start_byte: 1000,
-            sample_rate: 44100,
-            total_samples: 44100 * 60, // 60 seconds of audio
-            channels: 2,
-            bits_per_sample: 16,
-        };
-
-        let file_size = 1000 + 1000000; // 1000 byte header + 1MB audio
-
-        // At 30 seconds (halfway), should be roughly halfway through audio
-        let position = CueFlacProcessor::estimate_byte_position(30000, &flac_headers, file_size);
-
-        // Should be approximately: 1000 (header) + 500000 (half of audio)
-        assert!(position > 400000 && position < 600000);
-    }
-
-    #[test]
-    fn test_estimate_byte_position_at_start() {
-        let flac_headers = FlacHeaders {
-            headers: vec![],
-            audio_start_byte: 1000,
-            sample_rate: 44100,
-            total_samples: 44100 * 60,
-            channels: 2,
-            bits_per_sample: 16,
-        };
-
-        let file_size = 1000 + 1000000;
-
-        // At 0 seconds, should be at audio start
-        let position = CueFlacProcessor::estimate_byte_position(0, &flac_headers, file_size);
-        assert_eq!(position, 1000);
     }
 
     #[test]

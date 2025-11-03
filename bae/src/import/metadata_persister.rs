@@ -113,23 +113,31 @@ impl<'a> MetadataPersister<'a> {
                 .get(track_id)
                 .ok_or_else(|| format!("No chunk range found for track {}", track_id))?;
 
-            // Calculate track byte boundaries within the file
+            // Calculate track byte boundaries within the file (frame-aligned)
             use crate::cue_flac::CueFlacProcessor;
-            let start_byte = CueFlacProcessor::estimate_byte_position(
+            let start_byte = CueFlacProcessor::byte_position(
+                &track_file.file_path,
                 cue_track.start_time_ms,
                 &cue_flac_layout.flac_headers,
                 file_size as u64,
-            ) as i64;
+            )
+            .map_err(|e| format!("Failed to find frame-aligned start position: {}", e))?
+                as i64;
 
             let end_byte = cue_track
                 .end_time_ms
                 .map(|end_time| {
-                    CueFlacProcessor::estimate_byte_position(
+                    CueFlacProcessor::byte_position(
+                        &track_file.file_path,
                         end_time,
                         &cue_flac_layout.flac_headers,
                         file_size as u64,
-                    ) as i64
+                    )
+                    .map_err(|e| format!("Failed to find frame-aligned end position: {}", e))
+                    .map(|pos| pos as i64)
                 })
+                .transpose()
+                .map_err(|e| format!("Failed to calculate end byte: {}", e))?
                 .unwrap_or(file_size);
 
             // Convert to absolute chunk positions
