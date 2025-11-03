@@ -324,22 +324,24 @@ impl DbAlbum {
     /// Create a logical album from a Discogs release
     /// Note: Artists should be created separately and linked via DbAlbumArtist
     ///
-    /// If the release has a master_id, both master_id and release_id are stored together in discogs_release.
-    pub fn from_discogs_release(release: &crate::discogs::DiscogsRelease) -> Self {
+    /// master_id and master_year are always provided for releases imported from Discogs.
+    /// The master year is used for the album year (not the release year).
+    pub fn from_discogs_release(
+        release: &crate::discogs::DiscogsRelease,
+        master_year: u32,
+    ) -> Self {
         let now = Utc::now();
-        let discogs_release = release
-            .master_id
-            .as_ref()
-            .map(|master_id| DiscogsMasterRelease {
-                master_id: master_id.clone(),
-                release_id: release.id.clone(),
-            });
+
+        let discogs_release = DiscogsMasterRelease {
+            master_id: release.master_id.clone(),
+            release_id: release.id.clone(),
+        };
 
         DbAlbum {
             id: Uuid::new_v4().to_string(),
             title: release.title.clone(),
-            year: release.year.map(|y| y as i32),
-            discogs_release,
+            year: Some(master_year as i32),
+            discogs_release: Some(discogs_release),
             bandcamp_album_id: None,
             cover_art_url: release.thumb.clone(),
             is_compilation: false, // Will be set based on artist analysis

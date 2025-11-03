@@ -52,6 +52,7 @@ pub fn on_folder_selected(folder_path: String) -> Result<(), String> {
 pub struct ImportWorkflowProps {
     pub master_id: String,
     pub release_id: String,
+    pub master_year: u32,
 }
 
 #[derive(PartialEq, Clone)]
@@ -111,6 +112,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
     let on_start_import = {
         let import_service = import_service.clone();
         let import_context = import_context.clone();
+        let master_year = props.master_year;
 
         move |_| {
             if let (Some(folder), Some(release)) = (
@@ -121,6 +123,7 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                 let import_service = import_service.clone();
                 let folder = folder.clone();
                 let import_context = import_context.clone();
+                let master_year = master_year;
 
                 spawn(async move {
                     info!(
@@ -129,9 +132,11 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                     );
 
                     // Send import request to service (validates and queues)
+                    // master_year is already available from props (fetched when navigating to import workflow)
                     let request = ImportRequestParams::FromFolder {
                         discogs_release: discogs_release.clone(),
                         folder: PathBuf::from(folder),
+                        master_year,
                     };
 
                     match import_service.send_request(request).await {
@@ -252,16 +257,12 @@ pub fn ImportWorkflow(props: ImportWorkflowProps) -> Element {
                                 div { class: "flex flex-col gap-1 mt-2 text-sm text-gray-600",
                                     div {
                                         "Discogs Album: "
-                                        if let Some(master_id) = &release_data.master_id {
-                                            a {
-                                                href: "https://www.discogs.com/master/{master_id}",
-                                                target: "_blank",
-                                                rel: "noopener noreferrer",
-                                                class: "text-blue-600 hover:text-blue-800 underline",
-                                                "{master_id}"
-                                            }
-                                        } else {
-                                            "None"
+                                        a {
+                                            href: "https://www.discogs.com/master/{release_data.master_id}",
+                                            target: "_blank",
+                                            rel: "noopener noreferrer",
+                                            class: "text-blue-600 hover:text-blue-800 underline",
+                                            "{release_data.master_id}"
                                         }
                                     }
                                     div {

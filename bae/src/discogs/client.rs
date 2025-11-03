@@ -388,6 +388,11 @@ impl DiscogsClient {
             let thumb =
                 primary_image.and_then(|img| img.uri150.clone().or_else(|| Some(img.uri.clone())));
 
+            let master_id = release
+                .master_id
+                .expect("Release must have a master_id")
+                .to_string();
+
             Ok(DiscogsRelease {
                 id: release.id.to_string(),
                 title: release.title,
@@ -406,7 +411,7 @@ impl DiscogsClient {
                 thumb,
                 artists,
                 tracklist,
-                master_id: release.master_id.map(|id| id.to_string()), // Use master_id from detailed release
+                master_id,
             })
         } else if response.status() == 404 {
             Err(DiscogsError::NotFound)

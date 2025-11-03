@@ -204,8 +204,12 @@ fn filter_audio_files(paths: &[PathBuf]) -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs::read_to_string;
+
     use super::*;
-    use crate::db::ImportStatus;
+    use crate::{
+        db::ImportStatus, discogs::DiscogsMaster, import::discogs_parser::parse_discogs_release,
+    };
     use chrono::Utc;
 
     fn create_test_tracks(count: usize) -> Vec<DbTrack> {
@@ -353,15 +357,14 @@ mod tests {
         let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/vinyl_master_test.json");
         let json_data =
-            std::fs::read_to_string(&fixture_path).expect("Failed to read vinyl_master_test.json");
-        let master: crate::discogs::DiscogsMaster =
-            serde_json::from_str(&json_data).expect("Failed to parse JSON");
+            read_to_string(&fixture_path).expect("Failed to read vinyl_master_test.json");
+        let master: DiscogsMaster = serde_json::from_str(&json_data).expect("Failed to parse JSON");
 
         // Convert master to release for parsing
         let release = crate::discogs::DiscogsRelease {
             id: master.id.clone(),
             title: master.title.clone(),
-            year: master.year,
+            year: Some(master.year),
             genre: Vec::new(),
             style: Vec::new(),
             format: Vec::new(),
@@ -371,12 +374,11 @@ mod tests {
             thumb: None,
             artists: master.artists.clone(),
             tracklist: master.tracklist.clone(),
-            master_id: Some(master.id),
+            master_id: master.id,
         };
 
         // Parse through album_track_creator to get real DbTracks with vinyl positions
-        let (_, _, tracks, _, _) =
-            crate::import::discogs_parser::parse_discogs_release(&release).unwrap();
+        let (_, _, tracks, _, _) = parse_discogs_release(&release, master.year).unwrap();
 
         // Verify tracks have vinyl positions but sequential track_numbers
         assert_eq!(tracks.len(), 2); // Fixture only has 2 tracks (A1-A2)
@@ -446,15 +448,14 @@ mod tests {
         let fixture_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/vinyl_master_test.json");
         let json_data =
-            std::fs::read_to_string(&fixture_path).expect("Failed to read vinyl_master_test.json");
-        let master: crate::discogs::DiscogsMaster =
-            serde_json::from_str(&json_data).expect("Failed to parse JSON");
+            read_to_string(&fixture_path).expect("Failed to read vinyl_master_test.json");
+        let master: DiscogsMaster = serde_json::from_str(&json_data).expect("Failed to parse JSON");
 
         // Convert master to release for parsing
         let release = crate::discogs::DiscogsRelease {
             id: master.id.clone(),
             title: master.title.clone(),
-            year: master.year,
+            year: Some(master.year),
             genre: Vec::new(),
             style: Vec::new(),
             format: Vec::new(),
@@ -464,12 +465,11 @@ mod tests {
             thumb: None,
             artists: master.artists.clone(),
             tracklist: master.tracklist.clone(),
-            master_id: Some(master.id),
+            master_id: master.id.clone(),
         };
 
         // Parse through album_track_creator to get real DbTracks with vinyl positions
-        let (_, _, tracks, _, _) =
-            crate::import::discogs_parser::parse_discogs_release(&release).unwrap();
+        let (_, _, tracks, _, _) = parse_discogs_release(&release, master.year).unwrap();
 
         assert_eq!(tracks.len(), 2); // Fixture only has 2 tracks (A1-A2)
 

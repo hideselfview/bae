@@ -38,11 +38,13 @@ pub fn ImportWorkflowManager() -> Element {
         ImportStep::ImportWorkflow {
             master_id,
             release_id,
+            master_year,
         } => {
             rsx! {
                 ImportWorkflow {
                     master_id: master_id.clone(),
                     release_id: release_id.clone(),
+                    master_year: master_year,
                 }
             }
         }

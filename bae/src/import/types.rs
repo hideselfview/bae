@@ -42,6 +42,7 @@ pub enum ImportRequestParams {
     FromFolder {
         discogs_release: DiscogsRelease,
         folder: PathBuf,
+        master_year: u32,
     },
 }
 

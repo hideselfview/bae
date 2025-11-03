@@ -69,6 +69,7 @@ impl ImportHandle {
             ImportRequestParams::FromFolder {
                 discogs_release: release,
                 folder,
+                master_year,
             } => {
                 let library_manager = self.library_manager.get();
 
@@ -76,7 +77,7 @@ impl ImportHandle {
 
                 // 1. Parse Discogs release into database models
                 let (db_album, db_release, db_tracks, artists, album_artists) =
-                    parse_discogs_release(&release)?;
+                    parse_discogs_release(&release, master_year)?;
 
                 tracing::info!(
                     "Parsed Discogs album into database models:\n{:#?}",

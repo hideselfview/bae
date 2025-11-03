@@ -17,10 +17,15 @@ pub type ParsedAlbum = (
 /// ready for database insertion. Extracts artist data from Discogs API response,
 /// generates IDs, and links all entities together.
 ///
+/// master_year is always provided and used for the album year (not the release year).
+///
 /// Returns: (album, release, tracks, artists, album_artists)
-pub fn parse_discogs_release(release: &DiscogsRelease) -> Result<ParsedAlbum, String> {
+pub fn parse_discogs_release(
+    release: &DiscogsRelease,
+    master_year: u32,
+) -> Result<ParsedAlbum, String> {
     // Create album record (logical album entity)
-    let album = DbAlbum::from_discogs_release(release);
+    let album = DbAlbum::from_discogs_release(release, master_year);
 
     // Create release record (specific version/pressing)
     let db_release = DbRelease::from_discogs_release(&album.id, release);

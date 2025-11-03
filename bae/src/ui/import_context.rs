@@ -16,6 +16,7 @@ pub enum ImportStep {
     ImportWorkflow {
         master_id: String,
         release_id: String,
+        master_year: u32,
     },
 }
 
@@ -100,35 +101,27 @@ impl ImportContext {
     }
 
     pub fn navigate_to_import_workflow(&self, master_id: String, release_id: Option<String>) {
-        if let Some(release_id) = release_id {
-            // We already have the release_id, navigate directly
-            let mut navigation_stack = self.navigation_stack;
-            let step = ImportStep::ImportWorkflow {
-                master_id,
-                release_id,
-            };
-            navigation_stack.write().push(step);
-        } else {
-            // Need to fetch master to get main_release
-            let client = self.client.clone();
-            let mut navigation_stack = self.navigation_stack;
-            let mut error_message = self.error_message;
-            spawn(async move {
-                match client.get_master(&master_id).await {
-                    Ok(master) => {
-                        let step = ImportStep::ImportWorkflow {
-                            master_id,
-                            release_id: master.main_release,
-                        };
-                        navigation_stack.write().push(step);
-                    }
-                    Err(e) => {
-                        let error = format!("Failed to fetch master details: {}", e);
-                        error_message.set(Some(error));
-                    }
+        let client = self.client.clone();
+        let mut navigation_stack = self.navigation_stack;
+        let mut error_message = self.error_message;
+        spawn(async move {
+            match client.get_master(&master_id).await {
+                Ok(master) => {
+                    let master_year = master.year.expect("master must have a year");
+                    let release_id = release_id.unwrap_or(master.main_release);
+                    let step = ImportStep::ImportWorkflow {
+                        master_id,
+                        release_id,
+                        master_year,
+                    };
+                    navigation_stack.write().push(step);
                 }
-            });
-        }
+                Err(e) => {
+                    let error = format!("Failed to fetch master details: {}", e);
+                    error_message.set(Some(error));
+                }
+            }
+        });
     }
 
     pub fn navigate_back(&self) {
@@ -168,8 +161,11 @@ impl ImportContext {
         error_message.set(None);
 
         match self.client.get_release(&release_id).await {
-            Ok(mut release) => {
-                release.master_id = Some(master_id);
+            Ok(release) => {
+                // The release from API already has master_id, but we use the one passed to us
+                // (which might differ if we're importing via master vs specific release)
+                let mut release = release;
+                release.master_id = master_id;
                 Ok(release)
             }
             Err(e) => {

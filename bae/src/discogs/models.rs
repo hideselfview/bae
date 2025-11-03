@@ -19,7 +19,7 @@ pub struct DiscogsArtist {
 pub struct DiscogsMaster {
     pub id: String,
     pub title: String,
-    pub year: Option<u32>,
+    pub year: u32,
     pub thumb: Option<String>,
     pub label: Vec<String>,
     pub country: Option<String>,
@@ -43,7 +43,7 @@ pub struct DiscogsRelease {
     pub thumb: Option<String>,
     pub artists: Vec<DiscogsArtist>,
     pub tracklist: Vec<DiscogsTrack>,
-    pub master_id: Option<String>, // Reference to the master release
+    pub master_id: String,
 }
 
 /// Represents a release version from master versions API
