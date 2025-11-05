@@ -26,6 +26,7 @@ use crate::library::LibraryManager;
 use futures::stream::{Stream, StreamExt};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
+use tracing::error;
 
 // ============================================================================
 // Public API
@@ -103,9 +104,9 @@ pub(super) fn build_import_pipeline(
                         persist_chunk(&uploaded_chunk, &release_id, &library_manager).await?;
                         Ok(uploaded_chunk)
                     }
-                    Err(error) => {
-                        eprintln!("Upload failed: {}", error);
-                        Err(error)
+                    Err(err) => {
+                        error!("Upload failed: {}", err);
+                        Err(err)
                     }
                 }
             }

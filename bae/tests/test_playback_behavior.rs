@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use tokio::time::timeout;
+use tracing::debug;
 
 use crate::support::tracing_init;
 use bae::cache::{CacheConfig, CacheManager};
@@ -307,20 +308,20 @@ fn should_skip_audio_tests() -> bool {
 #[tokio::test]
 async fn test_pause_then_seek_stays_paused() {
     if should_skip_audio_tests() {
-        eprintln!("Skipping audio test - no audio device available");
+        debug!("Skipping audio test - no audio device available");
         return;
     }
 
     let mut fixture = match PlaybackTestFixture::new().await {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("Failed to set up test fixture: {}", e);
+            debug!("Failed to set up test fixture: {}", e);
             return;
         }
     };
 
     if fixture.track_ids.is_empty() {
-        eprintln!("No tracks available for testing");
+        debug!("No tracks available for testing");
         return;
     }
 
@@ -338,7 +339,7 @@ async fn test_pause_then_seek_stays_paused() {
         .await;
 
     if playing_state.is_none() {
-        eprintln!("Failed to start playback");
+        debug!("Failed to start playback");
         return;
     }
 
@@ -381,27 +382,27 @@ async fn test_pause_then_seek_stays_paused() {
     // The Seeked event doesn't change the paused/playing state, only position
     if final_state.is_none() {
         // No state change after seek is expected - we stayed paused
-        eprintln!("Good: No state change after seek, stayed paused");
+        debug!("No state change after seek, stayed paused");
     }
 }
 
 #[tokio::test]
 async fn test_play_then_seek_continues_playing() {
     if should_skip_audio_tests() {
-        eprintln!("Skipping audio test - no audio device available");
+        debug!("Skipping audio test - no audio device available");
         return;
     }
 
     let mut fixture = match PlaybackTestFixture::new().await {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("Failed to set up test fixture: {}", e);
+            debug!("Failed to set up test fixture: {}", e);
             return;
         }
     };
 
     if fixture.track_ids.is_empty() {
-        eprintln!("No tracks available for testing");
+        debug!("No tracks available for testing");
         return;
     }
 
@@ -446,27 +447,27 @@ async fn test_play_then_seek_continues_playing() {
     // The Seeked event doesn't change the paused/playing state, only position
     if final_state.is_none() {
         // No state change after seek is expected - we stayed playing
-        eprintln!("Good: No state change after seek, stayed playing");
+        debug!("No state change after seek, stayed playing");
     }
 }
 
 #[tokio::test]
 async fn test_auto_advance_to_next_track() {
     if should_skip_audio_tests() {
-        eprintln!("Skipping audio test - no audio device available");
+        debug!("Skipping audio test - no audio device available");
         return;
     }
 
     let mut fixture = match PlaybackTestFixture::new().await {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("Failed to set up test fixture: {}", e);
+            debug!("Failed to set up test fixture: {}", e);
             return;
         }
     };
 
     if fixture.track_ids.len() < 2 {
-        eprintln!("Need at least 2 tracks for auto-advance test");
+        debug!("Need at least 2 tracks for auto-advance test");
         return;
     }
 
@@ -508,27 +509,27 @@ async fn test_auto_advance_to_next_track() {
     if next_track_state.is_some() {
         // Success - auto-advance worked
     } else {
-        eprintln!("Auto-advance test inconclusive - may need valid FLAC files");
+        debug!("Auto-advance test inconclusive - may need valid FLAC files");
     }
 }
 
 #[tokio::test]
 async fn test_position_maintained_across_pause_resume() {
     if should_skip_audio_tests() {
-        eprintln!("Skipping audio test - no audio device available");
+        debug!("Skipping audio test - no audio device available");
         return;
     }
 
     let mut fixture = match PlaybackTestFixture::new().await {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("Failed to set up test fixture: {}", e);
+            debug!("Failed to set up test fixture: {}", e);
             return;
         }
     };
 
     if fixture.track_ids.is_empty() {
-        eprintln!("No tracks available for testing");
+        debug!("No tracks available for testing");
         return;
     }
 
@@ -598,20 +599,20 @@ async fn test_position_maintained_across_pause_resume() {
 #[tokio::test]
 async fn test_previous_track_navigation() {
     if should_skip_audio_tests() {
-        eprintln!("Skipping audio test - no audio device available");
+        debug!("Skipping audio test - no audio device available");
         return;
     }
 
     let mut fixture = match PlaybackTestFixture::new().await {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("Failed to set up test fixture: {}", e);
+            debug!("Failed to set up test fixture: {}", e);
             return;
         }
     };
 
     if fixture.track_ids.len() < 2 {
-        eprintln!("Need at least 2 tracks for previous track test");
+        debug!("Need at least 2 tracks for previous track test");
         return;
     }
 
@@ -717,20 +718,20 @@ async fn test_previous_track_navigation() {
 #[tokio::test]
 async fn test_previous_track_when_starting_on_second_track() {
     if should_skip_audio_tests() {
-        eprintln!("Skipping audio test - no audio device available");
+        debug!("Skipping audio test - no audio device available");
         return;
     }
 
     let mut fixture = match PlaybackTestFixture::new().await {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("Failed to set up test fixture: {}", e);
+            debug!("Failed to set up test fixture: {}", e);
             return;
         }
     };
 
     if fixture.track_ids.len() < 2 {
-        eprintln!("Need at least 2 tracks for previous track test");
+        debug!("Need at least 2 tracks for previous track test");
         return;
     }
 
@@ -790,14 +791,14 @@ async fn test_previous_track_when_starting_on_second_track() {
 #[tokio::test]
 async fn test_previous_track_multiple_navigation() {
     if should_skip_audio_tests() {
-        eprintln!("Skipping audio test - no audio device available");
+        debug!("Skipping audio test - no audio device available");
         return;
     }
 
     let mut fixture = match PlaybackTestFixture::new().await {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("Failed to set up test fixture: {}", e);
+            debug!("Failed to set up test fixture: {}", e);
             return;
         }
     };
@@ -805,7 +806,7 @@ async fn test_previous_track_multiple_navigation() {
     // Need at least 3 tracks for this test, but we only have 2
     // So we'll test with 2 tracks: start on track 2, go back to track 1
     if fixture.track_ids.len() < 2 {
-        eprintln!("Need at least 2 tracks for previous track test");
+        debug!("Need at least 2 tracks for previous track test");
         return;
     }
 
@@ -890,20 +891,20 @@ async fn test_previous_track_multiple_navigation() {
 #[tokio::test]
 async fn test_seek_to_same_position_sends_state_changed() {
     if should_skip_audio_tests() {
-        eprintln!("Skipping audio test - no audio device available");
+        debug!("Skipping audio test - no audio device available");
         return;
     }
 
     let mut fixture = match PlaybackTestFixture::new().await {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("Failed to set up test fixture: {}", e);
+            debug!("Failed to set up test fixture: {}", e);
             return;
         }
     };
 
     if fixture.track_ids.is_empty() {
-        eprintln!("No tracks available for testing");
+        debug!("No tracks available for testing");
         return;
     }
 
@@ -982,20 +983,20 @@ async fn test_seek_to_same_position_sends_state_changed() {
 #[tokio::test]
 async fn test_queue_maintained_after_previous_navigation() {
     if should_skip_audio_tests() {
-        eprintln!("Skipping audio test - no audio device available");
+        debug!("Skipping audio test - no audio device available");
         return;
     }
 
     let mut fixture = match PlaybackTestFixture::new().await {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("Failed to set up test fixture: {}", e);
+            debug!("Failed to set up test fixture: {}", e);
             return;
         }
     };
 
     if fixture.track_ids.len() < 2 {
-        eprintln!("Need at least 2 tracks for queue navigation test");
+        debug!("Need at least 2 tracks for queue navigation test");
         return;
     }
 

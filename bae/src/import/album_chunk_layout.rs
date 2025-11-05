@@ -227,7 +227,6 @@ fn build_flac_seektable(flac_path: &Path) -> Result<HashMap<u64, u64>, String> {
     }
 
     debug!("Created FLAC decoder");
-    eprintln!("[DEBUG] Created FLAC decoder");
 
     // Box the state and pass to callbacks
     let mut state = Box::new(state);
@@ -235,7 +234,6 @@ fn build_flac_seektable(flac_path: &Path) -> Result<HashMap<u64, u64>, String> {
 
     unsafe {
         debug!("Initializing FLAC stream decoder...");
-        eprintln!("[DEBUG] Initializing FLAC stream decoder...");
         let result = libflac_sys::FLAC__stream_decoder_init_stream(
             decoder,
             Some(read_callback),
@@ -269,10 +267,6 @@ fn build_flac_seektable(flac_path: &Path) -> Result<HashMap<u64, u64>, String> {
                 }
                 _ => "Unknown error",
             };
-            eprintln!(
-                "[DEBUG] FLAC decoder init failed with code {}: {}",
-                result, error_msg
-            );
             libflac_sys::FLAC__stream_decoder_delete(decoder);
             return Err(format!(
                 "Failed to initialize FLAC decoder: {} ({})",

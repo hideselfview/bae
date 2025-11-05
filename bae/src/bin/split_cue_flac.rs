@@ -13,13 +13,20 @@ use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use symphonia::core::units::Time;
+use tracing::{debug, error, info};
 
 fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_line_number(true)
+        .with_target(false)
+        .init();
+
     let args: Vec<String> = env::args().collect();
 
     if args.len() != 3 {
-        eprintln!("Usage: {} <cue_file> <flac_file>", args[0]);
-        eprintln!("Example: {} album.cue album.flac", args[0]);
+        error!("Usage: {} <cue_file> <flac_file>", args[0]);
+        error!("Example: {} album.cue album.flac", args[0]);
         std::process::exit(1);
     }
 
@@ -27,12 +34,12 @@ fn main() {
     let flac_path = PathBuf::from(&args[2]);
 
     if let Err(e) = validate_inputs(&cue_path, &flac_path) {
-        eprintln!("Error: {}", e);
+        error!("{}", e);
         std::process::exit(1);
     }
 
     if let Err(e) = split_cue_flac(&cue_path, &flac_path) {
-        eprintln!("Error: {}", e);
+        error!("{}", e);
         std::process::exit(1);
     }
 }
@@ -48,11 +55,11 @@ fn validate_inputs(cue_path: &Path, flac_path: &Path) -> Result<(), String> {
 }
 
 fn split_cue_flac(cue_path: &Path, flac_path: &Path) -> Result<(), String> {
-    println!("Parsing CUE sheet: {}", cue_path.display());
+    info!("Parsing CUE sheet: {}", cue_path.display());
     let cue_sheet = CueFlacProcessor::parse_cue_sheet(cue_path)
         .map_err(|e| format!("Failed to parse CUE sheet: {}", e))?;
 
-    println!("Found {} tracks", cue_sheet.tracks.len());
+    info!("Found {} tracks", cue_sheet.tracks.len());
 
     if cue_sheet.tracks.is_empty() {
         return Err("CUE sheet contains no tracks".to_string());
@@ -81,13 +88,12 @@ fn split_cue_flac(cue_path: &Path, flac_path: &Path) -> Result<(), String> {
 
     let tracks_processed = results?;
 
-    // Print results in order
-    println!();
-    for (number, title, filename) in tracks_processed {
-        println!("✓ Track {}: {} -> {}", number, title, filename);
+    // Log results
+    for (number, title, filename) in &tracks_processed {
+        info!("Track {}: {} -> {}", number, title, filename);
     }
 
-    println!("\n✓ Successfully split {} tracks", cue_sheet.tracks.len());
+    info!("Successfully split {} tracks", cue_sheet.tracks.len());
     Ok(())
 }
 
@@ -133,11 +139,11 @@ fn decode_and_encode_track(
         .bits_per_sample
         .ok_or_else(|| "No bits per sample found".to_string())?;
 
-    println!(
-        "  Sample rate: {} Hz, Channels: {}, Bits: {}",
+    debug!(
         sample_rate,
-        channels.count(),
-        bits_per_sample
+        channels = channels.count(),
+        bits_per_sample,
+        "Audio format detected"
     );
 
     // Create decoder
@@ -165,7 +171,7 @@ fn decode_and_encode_track(
     let mut all_samples: Vec<i32> = Vec::new();
     let mut current_sample = (start_ms * sample_rate as u64) / 1000;
 
-    println!("  Decoding audio...");
+    debug!("Decoding audio");
 
     loop {
         let packet = match format.next_packet() {
@@ -219,14 +225,14 @@ fn decode_and_encode_track(
         }
     }
 
-    println!(
-        "  Decoded {} samples ({} frames)",
-        all_samples.len(),
-        all_samples.len() / num_channels
+    debug!(
+        samples = all_samples.len(),
+        frames = all_samples.len() / num_channels,
+        "Decoded audio"
     );
 
     // Encode to FLAC using flacenc
-    println!("  Encoding to FLAC...");
+    debug!("Encoding to FLAC");
     encode_flac(
         output_path,
         &all_samples,
