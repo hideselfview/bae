@@ -27,41 +27,196 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::debug;
 
-/// Find byte range for a track using Symphonia to seek to time positions.
-/// Returns (start_byte, end_byte) relative to the start of the FLAC file.
+/// Find exact byte position for a time offset by scanning for FLAC frame boundaries
+fn find_byte_position_at_time(
+    file_data: &[u8],
+    time_ms: u64,
+    sample_rate: u32,
+    total_samples: u64,
+    audio_start_byte: u64,
+    file_size: u64,
+) -> Result<u64, String> {
+    if time_ms == 0 {
+        return Ok(audio_start_byte);
+    }
+
+    if total_samples == 0 {
+        return Ok(audio_start_byte);
+    }
+
+    // Estimate byte position using linear interpolation
+    let total_duration_ms = (total_samples * 1000) / sample_rate as u64;
+    let audio_size = file_size - audio_start_byte;
+    let estimated_audio_byte = (time_ms * audio_size) / total_duration_ms;
+    let estimated_pos = audio_start_byte + estimated_audio_byte;
+
+    debug!(
+        "Time {}ms: estimated byte {} (total duration {}ms, file size {})",
+        time_ms, estimated_pos, total_duration_ms, file_size
+    );
+
+    // Search for nearest frame boundary around estimated position
+    let frame_pos =
+        find_nearest_frame_boundary(file_data, estimated_pos as usize, audio_start_byte as usize)?;
+
+    debug!(
+        "Time {}ms: found frame at byte {} (estimated was {}, diff {})",
+        time_ms,
+        frame_pos,
+        estimated_pos,
+        frame_pos as i64 - estimated_pos as i64
+    );
+
+    Ok(frame_pos)
+}
+
+/// Find the nearest FLAC frame boundary to the estimated position
+fn find_nearest_frame_boundary(
+    file_data: &[u8],
+    estimated_pos: usize,
+    audio_start_byte: usize,
+) -> Result<u64, String> {
+    // Search window: 64KB in each direction
+    let search_window = 64 * 1024;
+    let backward_start = estimated_pos
+        .saturating_sub(search_window)
+        .max(audio_start_byte);
+    let forward_end = (estimated_pos + search_window).min(file_data.len());
+
+    // Search backward from estimated position for sync code
+    let mut best_backward: Option<usize> = None;
+    for i in (backward_start..estimated_pos).rev() {
+        if is_flac_frame_sync(file_data, i) && validate_flac_frame_header(file_data, i) {
+            best_backward = Some(i);
+            break;
+        }
+    }
+
+    // Search forward from estimated position for sync code
+    let mut best_forward: Option<usize> = None;
+    for i in estimated_pos..forward_end {
+        if is_flac_frame_sync(file_data, i) && validate_flac_frame_header(file_data, i) {
+            best_forward = Some(i);
+            break;
+        }
+    }
+
+    // Choose the closer one
+    match (best_backward, best_forward) {
+        (Some(backward), Some(forward)) => {
+            let backward_dist = estimated_pos - backward;
+            let forward_dist = forward - estimated_pos;
+            Ok(if backward_dist <= forward_dist {
+                backward
+            } else {
+                forward
+            } as u64)
+        }
+        (Some(backward), None) => Ok(backward as u64),
+        (None, Some(forward)) => Ok(forward as u64),
+        (None, None) => Err(format!(
+            "No FLAC frame boundary found near position {}",
+            estimated_pos
+        )),
+    }
+}
+
+/// Check if position contains a FLAC frame sync code
+fn is_flac_frame_sync(data: &[u8], pos: usize) -> bool {
+    if pos + 1 >= data.len() {
+        return false;
+    }
+    // FLAC sync code: 0xFFF8 to 0xFFF9 (14 bits set, then blocking strategy bit)
+    // This is 0xFF followed by 0xF8 or 0xF9
+    data[pos] == 0xFF && (data[pos + 1] & 0xFE) == 0xF8
+}
+
+/// Validate a FLAC frame header at the given position
+fn validate_flac_frame_header(data: &[u8], pos: usize) -> bool {
+    if pos + 4 >= data.len() {
+        return false;
+    }
+
+    // Check sync code
+    if !is_flac_frame_sync(data, pos) {
+        return false;
+    }
+
+    // Parse frame header byte 2
+    let byte2 = data[pos + 2];
+
+    // Block size (bits 4-7 of byte 2)
+    let block_size_code = (byte2 >> 4) & 0x0F;
+    if block_size_code == 0b0000 {
+        return false; // Reserved
+    }
+
+    // Sample rate (bits 0-3 of byte 2)
+    let sample_rate_code = byte2 & 0x0F;
+    if sample_rate_code == 0b1111 {
+        return false; // Invalid
+    }
+
+    // Parse frame header byte 3
+    let byte3 = data[pos + 3];
+
+    // Channel assignment (bits 4-7 of byte 3)
+    let channel_code = (byte3 >> 4) & 0x0F;
+    if channel_code >= 0b1011 {
+        return false; // Reserved
+    }
+
+    // Sample size (bits 1-3 of byte 3)
+    let sample_size_code = (byte3 >> 1) & 0x07;
+    if sample_size_code == 0b011 || sample_size_code == 0b111 {
+        return false; // Reserved/invalid
+    }
+
+    // Bit 0 of byte 3 must be 0
+    if (byte3 & 0x01) != 0 {
+        return false;
+    }
+
+    true
+}
+
+/// Find exact byte range for a track by scanning for FLAC frame boundaries
 fn find_track_byte_range(
     flac_path: &Path,
     start_time_ms: u64,
     end_time_ms: Option<u64>,
-    file_size: u64,
 ) -> Result<(i64, i64), String> {
+    use std::fs;
     use std::fs::File;
     use symphonia::core::codecs::CODEC_TYPE_FLAC;
-    use symphonia::core::formats::{FormatOptions, SeekMode, SeekTo};
+    use symphonia::core::formats::FormatOptions;
     use symphonia::core::io::MediaSourceStream;
     use symphonia::core::meta::MetadataOptions;
     use symphonia::core::probe::Hint;
-    use symphonia::core::units::Time;
 
-    // Open FLAC file with Symphonia
+    // Read entire file (we need it for frame scanning)
+    let file_data = fs::read(flac_path).map_err(|e| format!("Failed to read FLAC file: {}", e))?;
+    let file_size = file_data.len() as u64;
+
+    // Use Symphonia to get audio parameters
     let file = File::open(flac_path).map_err(|e| format!("Failed to open FLAC file: {}", e))?;
-
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
 
     let mut hint = Hint::new();
     hint.with_extension("flac");
 
-    let format_opts = FormatOptions::default();
-    let metadata_opts = MetadataOptions::default();
-
     let probed = symphonia::default::get_probe()
-        .format(&hint, mss, &format_opts, &metadata_opts)
+        .format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
         .map_err(|e| format!("Failed to probe FLAC file: {}", e))?;
 
-    let mut format = probed.format;
+    let format = probed.format;
 
-    // Get codec params before borrowing format mutably
-    let (track_id, sample_rate, total_samples) = {
+    let (sample_rate, total_samples) = {
         let track = format
             .tracks()
             .iter()
@@ -72,37 +227,72 @@ fn find_track_byte_range(
         let sample_rate = codec_params.sample_rate.unwrap_or(44100);
         let total_samples = codec_params.n_frames.unwrap_or(0);
 
-        (track.id, sample_rate, total_samples)
+        (sample_rate, total_samples)
     };
 
-    // Seek to start position
-    let start_time = Time::from(start_time_ms as f64 / 1000.0);
-    format
-        .seek(
-            SeekMode::Accurate,
-            SeekTo::Time {
-                time: start_time,
-                track_id: Some(track_id),
-            },
-        )
-        .map_err(|e| format!("Failed to seek to start: {}", e))?;
+    // Find audio start position (after headers)
+    let audio_start_byte = find_audio_start(&file_data)?;
 
-    if total_samples == 0 {
-        return Err("Cannot determine track duration".to_string());
-    }
+    // Find start byte position
+    let start_byte = find_byte_position_at_time(
+        &file_data,
+        start_time_ms,
+        sample_rate,
+        total_samples,
+        audio_start_byte,
+        file_size,
+    )? as i64;
 
-    let total_duration_ms = (total_samples * 1000) / sample_rate as u64;
-
-    // Estimate byte positions using linear interpolation
-    // This is approximate but sufficient for chunk mapping
-    let start_byte = ((start_time_ms * file_size) / total_duration_ms) as i64;
+    // Find end byte position
     let end_byte = if let Some(end_ms) = end_time_ms {
-        ((end_ms * file_size) / total_duration_ms) as i64
+        find_byte_position_at_time(
+            &file_data,
+            end_ms,
+            sample_rate,
+            total_samples,
+            audio_start_byte,
+            file_size,
+        )? as i64
     } else {
         file_size as i64
     };
 
     Ok((start_byte, end_byte))
+}
+
+/// Find where audio data starts (after FLAC headers)
+fn find_audio_start(file_data: &[u8]) -> Result<u64, String> {
+    if file_data.len() < 4 || &file_data[0..4] != b"fLaC" {
+        return Err("Invalid FLAC signature".to_string());
+    }
+
+    let mut pos = 4; // Skip "fLaC" signature
+
+    // Parse metadata blocks
+    loop {
+        if pos + 4 > file_data.len() {
+            return Err("Unexpected end of file".to_string());
+        }
+
+        // Read metadata block header
+        let header = u32::from_be_bytes([
+            file_data[pos],
+            file_data[pos + 1],
+            file_data[pos + 2],
+            file_data[pos + 3],
+        ]);
+
+        let is_last = (header >> 31) & 1 == 1;
+        let block_size = (header & 0x00FFFFFF) as usize;
+
+        pos += 4 + block_size;
+
+        if is_last {
+            break;
+        }
+    }
+
+    Ok(pos as u64)
 }
 
 /// Return type for `build_chunk_track_mappings`.
@@ -284,13 +474,9 @@ fn build_chunk_track_mappings(
             let flac_headers = CueFlacProcessor::extract_flac_headers(&cue_metadata.flac_path)
                 .map_err(|e| format!("Failed to extract FLAC headers: {}", e))?;
 
-            // Get file size for byte position calculations
-            let file_size = std::fs::metadata(&file_to_chunks.file_path)
-                .map_err(|e| format!("Failed to read file metadata: {}", e))?
-                .len();
-
-            // Calculate per-track chunk ranges using Symphonia to find byte positions
+            // For CUE/FLAC, calculate exact byte ranges using Symphonia position tracking
             let mut track_chunk_ranges = HashMap::new();
+            let mut track_byte_ranges = HashMap::new();
             let chunk_size_i64 = chunk_size as i64;
 
             for (cue_track_idx, cue_track) in cue_metadata.cue_sheet.tracks.iter().enumerate() {
@@ -298,16 +484,24 @@ fn build_chunk_track_mappings(
                     continue;
                 };
 
-                // Use Symphonia to find byte positions from time offsets
-                // This matches the approach in split_cue_flac.rs
+                // Find exact byte positions by seeking with Symphonia
                 let (start_byte, end_byte) = find_track_byte_range(
                     &cue_metadata.flac_path,
                     cue_track.start_time_ms,
                     cue_track.end_time_ms,
-                    file_size,
                 )?;
 
-                // Convert to absolute chunk indices (relative to album, not file)
+                debug!(
+                    "Track {}: time {}ms-{}ms → bytes {}-{} ({}MB)",
+                    cue_track.number,
+                    cue_track.start_time_ms,
+                    cue_track.end_time_ms.unwrap_or(0),
+                    start_byte,
+                    end_byte,
+                    (end_byte - start_byte) / 1_000_000
+                );
+
+                // Convert file byte positions to chunk indices
                 let file_start_byte = file_to_chunks.start_byte_offset
                     + (file_to_chunks.start_chunk_index as i64 * chunk_size_i64);
                 let absolute_start_byte = file_start_byte + start_byte;
@@ -316,10 +510,22 @@ fn build_chunk_track_mappings(
                 let start_chunk_index = (absolute_start_byte / chunk_size_i64) as i32;
                 let end_chunk_index = ((absolute_end_byte - 1) / chunk_size_i64) as i32;
 
-                // Store chunk range for this track
+                debug!(
+                    "Track {}: chunks {}-{} ({} chunks)",
+                    cue_track.number,
+                    start_chunk_index,
+                    end_chunk_index,
+                    end_chunk_index - start_chunk_index + 1
+                );
+
+                // Store chunk range and byte range for this track
                 track_chunk_ranges.insert(
                     track_file.db_track_id.clone(),
                     (start_chunk_index, end_chunk_index),
+                );
+                track_byte_ranges.insert(
+                    track_file.db_track_id.clone(),
+                    (absolute_start_byte, absolute_end_byte),
                 );
 
                 // Map each chunk in range to this track
@@ -343,6 +549,7 @@ fn build_chunk_track_mappings(
                     cue_sheet: cue_metadata.cue_sheet.clone(),
                     flac_headers,
                     track_chunk_ranges,
+                    track_byte_ranges,
                 },
             );
         } else {

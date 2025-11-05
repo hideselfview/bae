@@ -1,6 +1,6 @@
 mod cpal_output;
 pub mod progress;
-mod reassembly;
+pub mod reassembly; // Public for tests and internal use
 pub mod service;
 pub mod symphonia_decoder;
 

@@ -148,4 +148,6 @@ pub struct CueFlacLayoutData {
     pub flac_headers: crate::cue_flac::FlacHeaders,
     /// Per-track chunk ranges: track_id → (start_chunk_index, end_chunk_index)
     pub track_chunk_ranges: HashMap<String, (i32, i32)>,
+    /// Per-track byte ranges: track_id → (start_byte, end_byte) in file
+    pub track_byte_ranges: HashMap<String, (i64, i64)>,
 }

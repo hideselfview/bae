@@ -3,6 +3,7 @@ use crate::import::types::{CueFlacLayoutData, FileToChunks, TrackFile};
 use crate::library::LibraryManager;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use tracing::debug;
 
 /// Service responsible for persisting track metadata to the database.
 ///
@@ -108,18 +109,26 @@ impl<'a> MetadataPersister<'a> {
                 .get(track_id)
                 .ok_or_else(|| format!("No chunk range found for track {}", track_id))?;
 
-            // Calculate byte offsets within the start and end chunks
+            // Get the actual byte positions from album_chunk_layout
+            // These are stored in the track_byte_ranges map
+            let (start_byte, end_byte) = cue_flac_layout
+                .track_byte_ranges
+                .get(track_id)
+                .ok_or_else(|| format!("No byte range found for track {}", track_id))?;
+
+            // Convert absolute byte positions to offsets within the chunk range
             let chunk_size_i64 = _chunk_size_bytes as i64;
+            let start_byte_offset = start_byte % chunk_size_i64;
+            let end_byte_offset = end_byte % chunk_size_i64;
 
-            // Calculate track byte boundaries from chunk indices
-            let absolute_start_byte = *start_chunk_index as i64 * chunk_size_i64;
-            let absolute_end_byte = (*end_chunk_index as i64 + 1) * chunk_size_i64 - 1;
-
-            let start_byte_offset = absolute_start_byte % chunk_size_i64;
-            let end_byte_offset = absolute_end_byte % chunk_size_i64;
+            debug!(
+                "Track {}: storing byte offsets {}-{} within chunks {}-{}",
+                track_id, start_byte_offset, end_byte_offset, start_chunk_index, end_chunk_index
+            );
 
             // For CUE/FLAC, we store the original album FLAC headers
-            // Playback will use Symphonia to decode + flacenc to re-encode
+            // Playback will download track's chunks, prepend headers,
+            // and use Symphonia to seek to the track's time position and decode
             let audio_format = DbAudioFormat::new(
                 track_id,
                 "flac",
@@ -131,9 +140,9 @@ impl<'a> MetadataPersister<'a> {
                 .await
                 .map_err(|e| format!("Failed to insert audio format: {}", e))?;
 
-            // Create track chunk coordinates with both byte and time offsets
-            // Byte offsets: for chunk extraction
-            // Time offsets: for Symphonia seeking during decode
+            // Create track chunk coordinates
+            // Byte offsets: which chunks and bytes within them contain the track
+            // Time offsets: where to seek with Symphonia during decode
             let coords = DbTrackChunkCoords::new(
                 track_id,
                 *start_chunk_index,
