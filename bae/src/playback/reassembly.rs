@@ -116,6 +116,12 @@ pub async fn reassemble_track(
         chunk_size_bytes,
     );
 
+    debug!(
+        "Extracted {} bytes of audio data ({}MB)",
+        audio_data.len(),
+        audio_data.len() / 1_000_000
+    );
+
     // For CUE/FLAC tracks, decode and re-encode (like split_cue_flac.rs)
     if audio_format.needs_headers {
         if let Some(ref headers) = audio_format.flac_headers {
@@ -126,14 +132,11 @@ pub async fn reassemble_track(
             temp_flac.extend_from_slice(&audio_data);
 
             // Decode with Symphonia and re-encode with flacenc
+            // Note: audio_data already contains only this track's byte range,
+            // so we decode from the start (time 0), not from the track's original position
             audio_data = decode_and_reencode_track(
-                &temp_flac,
-                coords.start_time_ms as u64,
-                if coords.end_time_ms > 0 {
-                    Some(coords.end_time_ms as u64)
-                } else {
-                    None
-                },
+                &temp_flac, 0,    // Start from beginning of extracted audio
+                None, // Decode until end
             )
             .await?;
 

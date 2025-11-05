@@ -106,7 +106,11 @@ impl ImportHandle {
                 let cue_flac_metadata = mapping_result.cue_flac_metadata;
 
                 // 4. Insert or lookup artists (deduplicate across imports)
+                // Build a map from parsed artist ID to actual database artist ID
+                let mut artist_id_map = std::collections::HashMap::new();
                 for artist in &artists {
+                    let parsed_id = artist.id.clone();
+
                     // Check if artist already exists by Discogs ID
                     let existing = if let Some(ref discogs_id) = artist.discogs_artist_id {
                         library_manager
@@ -118,12 +122,17 @@ impl ImportHandle {
                     };
 
                     // Insert only if artist doesn't exist
-                    if existing.is_none() {
+                    let actual_id = if let Some(existing_artist) = existing {
+                        existing_artist.id
+                    } else {
                         library_manager
                             .insert_artist(artist)
                             .await
                             .map_err(|e| format!("Failed to insert artist: {}", e))?;
-                    }
+                        artist.id.clone()
+                    };
+
+                    artist_id_map.insert(parsed_id, actual_id);
                 }
 
                 // 5. Insert album + release + tracks with status='queued'
@@ -135,10 +144,21 @@ impl ImportHandle {
                 // 6. Extract and store durations early (before pipeline starts)
                 extract_and_store_durations(library_manager, &tracks_to_files).await?;
 
-                // 7. Insert album-artist relationships
+                // 7. Insert album-artist relationships (using actual database artist IDs)
                 for album_artist in &album_artists {
+                    let actual_artist_id =
+                        artist_id_map.get(&album_artist.artist_id).ok_or_else(|| {
+                            format!(
+                                "Artist ID {} not found in artist map",
+                                album_artist.artist_id
+                            )
+                        })?;
+
+                    let mut updated_album_artist = album_artist.clone();
+                    updated_album_artist.artist_id = actual_artist_id.clone();
+
                     library_manager
-                        .insert_album_artist(album_artist)
+                        .insert_album_artist(&updated_album_artist)
                         .await
                         .map_err(|e| {
                             format!("Failed to insert album-artist relationship: {}", e)
