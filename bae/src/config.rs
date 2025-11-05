@@ -1,12 +1,10 @@
 use std::path::PathBuf;
 use tracing::{info, warn};
 
-#[cfg(not(debug_assertions))]
 use thiserror::Error;
 
 /// Configuration errors (production mode only)
 #[derive(Error, Debug)]
-#[cfg(not(debug_assertions))]
 pub enum ConfigError {
     #[error("Keyring error: {0}")]
     Keyring(#[from] keyring::Error),
@@ -41,7 +39,6 @@ pub struct Config {
 
 /// Credential data loaded from keyring (production mode only)
 #[derive(Debug, Clone)]
-#[cfg(not(debug_assertions))]
 struct CredentialData {
     discogs_api_key: String,
     s3_config: crate::cloud_storage::S3Config,
@@ -50,27 +47,21 @@ struct CredentialData {
 
 impl Config {
     /// Load configuration based on build mode
+    /// Dev mode is activated if .env file exists or BAE_DEV_MODE env var is set
     pub fn load() -> Self {
-        #[cfg(debug_assertions)]
-        {
-            // Try to load .env file
-            if dotenvy::dotenv().is_ok() {
-                info!("Dev mode activated - loaded .env file");
-            } else {
-                info!("No .env file found, using production config");
-            }
+        // Check for dev mode: .env file exists or BAE_DEV_MODE env var is set
+        let dev_mode = std::env::var("BAE_DEV_MODE").is_ok() || dotenvy::dotenv().is_ok();
 
+        if dev_mode {
+            info!("Dev mode activated - loading from .env");
             Self::from_env()
-        }
-
-        #[cfg(not(debug_assertions))]
-        {
+        } else {
+            info!("Production mode - loading from config.yaml");
             Self::from_config_file()
         }
     }
 
     /// Load configuration from environment variables (dev mode)
-    #[cfg(debug_assertions)]
     fn from_env() -> Self {
         let library_id = match std::env::var("BAE_LIBRARY_ID").ok() {
             Some(id) => {
@@ -168,7 +159,6 @@ impl Config {
     }
 
     /// Load configuration from config.yaml + keyring (production mode)
-    #[cfg(not(debug_assertions))]
     fn from_config_file() -> Self {
         // TODO: Implement config.yaml loading
         info!("Production mode - loading from config.yaml (not implemented yet)");
@@ -213,7 +203,6 @@ impl Config {
     }
 
     /// Load credentials from keyring (production mode only)
-    #[cfg(not(debug_assertions))]
     fn load_from_keyring() -> Result<CredentialData, ConfigError> {
         use keyring::Entry;
 

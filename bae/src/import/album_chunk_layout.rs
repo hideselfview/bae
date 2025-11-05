@@ -24,8 +24,86 @@ use crate::cue_flac::CueFlacProcessor;
 use crate::import::types::FileToChunks;
 use crate::import::types::{CueFlacLayoutData, CueFlacMetadata, DiscoveredFile, TrackFile};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::debug;
+
+/// Find byte range for a track using Symphonia to seek to time positions.
+/// Returns (start_byte, end_byte) relative to the start of the FLAC file.
+fn find_track_byte_range(
+    flac_path: &Path,
+    start_time_ms: u64,
+    end_time_ms: Option<u64>,
+    file_size: u64,
+) -> Result<(i64, i64), String> {
+    use std::fs::File;
+    use symphonia::core::codecs::CODEC_TYPE_FLAC;
+    use symphonia::core::formats::{FormatOptions, SeekMode, SeekTo};
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::probe::Hint;
+    use symphonia::core::units::Time;
+
+    // Open FLAC file with Symphonia
+    let file = File::open(flac_path).map_err(|e| format!("Failed to open FLAC file: {}", e))?;
+
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+
+    let mut hint = Hint::new();
+    hint.with_extension("flac");
+
+    let format_opts = FormatOptions::default();
+    let metadata_opts = MetadataOptions::default();
+
+    let probed = symphonia::default::get_probe()
+        .format(&hint, mss, &format_opts, &metadata_opts)
+        .map_err(|e| format!("Failed to probe FLAC file: {}", e))?;
+
+    let mut format = probed.format;
+
+    // Get codec params before borrowing format mutably
+    let (track_id, sample_rate, total_samples) = {
+        let track = format
+            .tracks()
+            .iter()
+            .find(|t| t.codec_params.codec == CODEC_TYPE_FLAC)
+            .ok_or_else(|| "No FLAC track found".to_string())?;
+
+        let codec_params = &track.codec_params;
+        let sample_rate = codec_params.sample_rate.unwrap_or(44100);
+        let total_samples = codec_params.n_frames.unwrap_or(0);
+
+        (track.id, sample_rate, total_samples)
+    };
+
+    // Seek to start position
+    let start_time = Time::from(start_time_ms as f64 / 1000.0);
+    format
+        .seek(
+            SeekMode::Accurate,
+            SeekTo::Time {
+                time: start_time,
+                track_id: Some(track_id),
+            },
+        )
+        .map_err(|e| format!("Failed to seek to start: {}", e))?;
+
+    if total_samples == 0 {
+        return Err("Cannot determine track duration".to_string());
+    }
+
+    let total_duration_ms = (total_samples * 1000) / sample_rate as u64;
+
+    // Estimate byte positions using linear interpolation
+    // This is approximate but sufficient for chunk mapping
+    let start_byte = ((start_time_ms * file_size) / total_duration_ms) as i64;
+    let end_byte = if let Some(end_ms) = end_time_ms {
+        ((end_ms * file_size) / total_duration_ms) as i64
+    } else {
+        file_size as i64
+    };
+
+    Ok((start_byte, end_byte))
+}
 
 /// Return type for `build_chunk_track_mappings`.
 ///
@@ -202,15 +280,16 @@ fn build_chunk_track_mappings(
                 file_to_chunks.file_path.display()
             );
 
-            // Extract FLAC headers (needed for byte position calculation)
+            // Extract FLAC headers (needed for playback decode/re-encode)
             let flac_headers = CueFlacProcessor::extract_flac_headers(&cue_metadata.flac_path)
                 .map_err(|e| format!("Failed to extract FLAC headers: {}", e))?;
 
+            // Get file size for byte position calculations
             let file_size = std::fs::metadata(&file_to_chunks.file_path)
                 .map_err(|e| format!("Failed to read file metadata: {}", e))?
                 .len();
 
-            // Calculate per-track chunk ranges
+            // Calculate per-track chunk ranges using Symphonia to find byte positions
             let mut track_chunk_ranges = HashMap::new();
             let chunk_size_i64 = chunk_size as i64;
 
@@ -219,30 +298,14 @@ fn build_chunk_track_mappings(
                     continue;
                 };
 
-                // Calculate track byte boundaries within the file (frame-aligned)
-                let start_byte = CueFlacProcessor::byte_position(
+                // Use Symphonia to find byte positions from time offsets
+                // This matches the approach in split_cue_flac.rs
+                let (start_byte, end_byte) = find_track_byte_range(
                     &cue_metadata.flac_path,
                     cue_track.start_time_ms,
-                    &flac_headers,
+                    cue_track.end_time_ms,
                     file_size,
-                )
-                .map_err(|e| format!("Failed to find frame-aligned start position: {}", e))?
-                    as i64;
-
-                let end_byte = cue_track
-                    .end_time_ms
-                    .map(|end_time| {
-                        CueFlacProcessor::byte_position(
-                            &cue_metadata.flac_path,
-                            end_time,
-                            &flac_headers,
-                            file_size,
-                        )
-                        .map_err(|e| format!("Failed to find frame-aligned end position: {}", e))
-                        .map(|pos| pos as i64)
-                    })
-                    .transpose()?
-                    .unwrap_or(file_size as i64);
+                )?;
 
                 // Convert to absolute chunk indices (relative to album, not file)
                 let file_start_byte = file_to_chunks.start_byte_offset

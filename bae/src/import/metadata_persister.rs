@@ -3,7 +3,6 @@ use crate::import::types::{CueFlacLayoutData, FileToChunks, TrackFile};
 use crate::library::LibraryManager;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tracing::debug;
 
 /// Service responsible for persisting track metadata to the database.
 ///
@@ -36,7 +35,7 @@ impl<'a> MetadataPersister<'a> {
         track_id: &str,
         track_files: &[TrackFile],
         files_to_chunks: &[FileToChunks],
-        chunk_size_bytes: usize,
+        _chunk_size_bytes: usize,
         cue_flac_data: &HashMap<PathBuf, CueFlacLayoutData>,
     ) -> Result<(), String> {
         // Find the TrackFile for this track
@@ -56,10 +55,6 @@ impl<'a> MetadataPersister<'a> {
                 )
             })?;
 
-        // Get file metadata
-        let file_metadata = std::fs::metadata(&track_file.file_path)
-            .map_err(|e| format!("Failed to read file metadata: {}", e))?;
-        let file_size = file_metadata.len() as i64;
         let format = track_file
             .file_path
             .extension()
@@ -113,75 +108,22 @@ impl<'a> MetadataPersister<'a> {
                 .get(track_id)
                 .ok_or_else(|| format!("No chunk range found for track {}", track_id))?;
 
-            // Calculate track byte boundaries within the file (frame-aligned)
-            use crate::cue_flac::CueFlacProcessor;
-            let start_byte = CueFlacProcessor::byte_position(
-                &track_file.file_path,
-                cue_track.start_time_ms,
-                &cue_flac_layout.flac_headers,
-                file_size as u64,
-            )
-            .map_err(|e| format!("Failed to find frame-aligned start position: {}", e))?
-                as i64;
-
-            let end_byte = cue_track
-                .end_time_ms
-                .map(|end_time| {
-                    CueFlacProcessor::byte_position(
-                        &track_file.file_path,
-                        end_time,
-                        &cue_flac_layout.flac_headers,
-                        file_size as u64,
-                    )
-                    .map_err(|e| format!("Failed to find frame-aligned end position: {}", e))
-                    .map(|pos| pos as i64)
-                })
-                .transpose()
-                .map_err(|e| format!("Failed to calculate end byte: {}", e))?
-                .unwrap_or(file_size);
-
-            // Convert to absolute chunk positions
-            let chunk_size_i64 = chunk_size_bytes as i64;
-            let file_start_byte = file_to_chunks.start_byte_offset
-                + (file_to_chunks.start_chunk_index as i64 * chunk_size_i64);
-            let absolute_start_byte = file_start_byte + start_byte;
-            let absolute_end_byte = file_start_byte + end_byte;
-
             // Calculate byte offsets within the start and end chunks
+            let chunk_size_i64 = _chunk_size_bytes as i64;
+
+            // Calculate track byte boundaries from chunk indices
+            let absolute_start_byte = *start_chunk_index as i64 * chunk_size_i64;
+            let absolute_end_byte = (*end_chunk_index as i64 + 1) * chunk_size_i64 - 1;
+
             let start_byte_offset = absolute_start_byte % chunk_size_i64;
-            let end_byte_offset = (absolute_end_byte - 1) % chunk_size_i64;
+            let end_byte_offset = absolute_end_byte % chunk_size_i64;
 
-            // Get track duration from database to generate corrected headers
-            let track = self
-                .library
-                .get_track(track_id)
-                .await
-                .map_err(|e| format!("Failed to get track for header correction: {}", e))?
-                .ok_or_else(|| format!("Track not found: {}", track_id))?;
-
-            // Generate corrected FLAC headers with track's actual duration
-            let corrected_headers = if let Some(duration_ms) = track.duration_ms {
-                use crate::cue_flac::CueFlacProcessor;
-                CueFlacProcessor::write_corrected_flac_headers(
-                    &cue_flac_layout.flac_headers.headers,
-                    duration_ms,
-                    cue_flac_layout.flac_headers.sample_rate,
-                )
-                .map_err(|e| format!("Failed to write corrected FLAC headers: {}", e))?
-            } else {
-                // Fallback to original headers if duration not available
-                debug!(
-                    "Track {} has no duration, using original FLAC headers",
-                    track_id
-                );
-                cue_flac_layout.flac_headers.headers.clone()
-            };
-
-            // Create audio format (with corrected FLAC headers for CUE/FLAC)
+            // For CUE/FLAC, we store the original album FLAC headers
+            // Playback will use Symphonia to decode + flacenc to re-encode
             let audio_format = DbAudioFormat::new(
                 track_id,
                 "flac",
-                Some(corrected_headers),
+                Some(cue_flac_layout.flac_headers.headers.clone()), // Original album headers
                 true, // needs_headers = true for CUE/FLAC
             );
             self.library
@@ -189,7 +131,9 @@ impl<'a> MetadataPersister<'a> {
                 .await
                 .map_err(|e| format!("Failed to insert audio format: {}", e))?;
 
-            // Create track chunk coordinates
+            // Create track chunk coordinates with both byte and time offsets
+            // Byte offsets: for chunk extraction
+            // Time offsets: for Symphonia seeking during decode
             let coords = DbTrackChunkCoords::new(
                 track_id,
                 *start_chunk_index,

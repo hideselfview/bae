@@ -116,56 +116,28 @@ pub async fn reassemble_track(
         chunk_size_bytes,
     );
 
-    // Prepend FLAC headers if needed (CUE/FLAC tracks)
-    // These headers are corrected per-track during import with accurate total_samples
+    // For CUE/FLAC tracks, decode and re-encode (like split_cue_flac.rs)
     if audio_format.needs_headers {
         if let Some(ref headers) = audio_format.flac_headers {
-            debug!("Prepending corrected FLAC headers: {} bytes", headers.len());
-            let mut complete_audio = headers.clone();
-            complete_audio.extend_from_slice(&audio_data);
-            audio_data = complete_audio;
+            debug!("CUE/FLAC track: prepending headers and decode/re-encode");
 
-            // Rewrite frame headers to start from 0 for proper standalone FLAC files
-            use crate::cue_flac::{CueFlacProcessor, FlacHeaders};
-            match FlacHeaders::parse_sample_rate_from_headers(headers) {
-                Ok(sample_rate) => {
-                    // Calculate track's starting sample and frame numbers
-                    let start_sample = (coords.start_time_ms as u64 * sample_rate as u64) / 1000;
-                    // For fixed block size, estimate frame number (typical block size is 4096)
-                    let estimated_block_size = 4096u64;
-                    let start_frame = start_sample / estimated_block_size;
+            // Prepend original album headers to make valid FLAC file
+            let mut temp_flac = headers.clone();
+            temp_flac.extend_from_slice(&audio_data);
 
-                    debug!(
-                        "Rewriting FLAC frame headers: start_sample={}, start_frame={}, sample_rate={}",
-                        start_sample, start_frame, sample_rate
-                    );
+            // Decode with Symphonia and re-encode with flacenc
+            audio_data = decode_and_reencode_track(
+                &temp_flac,
+                coords.start_time_ms as u64,
+                if coords.end_time_ms > 0 {
+                    Some(coords.end_time_ms as u64)
+                } else {
+                    None
+                },
+            )
+            .await?;
 
-                    // Rewrite all frame headers in the audio data (skip the headers we just prepended)
-                    match CueFlacProcessor::rewrite_all_frame_headers(
-                        &audio_data[headers.len()..], // Skip headers, only rewrite frame data
-                        start_sample,
-                        start_frame,
-                        sample_rate,
-                        4096, // Estimated block size
-                    ) {
-                        Ok(rewritten_frames) => {
-                            // Rebuild complete audio with rewritten frames
-                            let mut rewritten_audio = headers.clone();
-                            rewritten_audio.extend_from_slice(&rewritten_frames);
-                            audio_data = rewritten_audio;
-                            debug!("Successfully rewritten frame headers");
-                        }
-                        Err(e) => {
-                            warn!("Failed to rewrite frame headers: {}", e);
-                            // Continue with original audio - decoder may still work
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!("Failed to parse FLAC headers for frame rewriting: {}", e);
-                    // Continue without frame rewriting
-                }
-            }
+            debug!("Decode/re-encode complete: {} bytes", audio_data.len());
         } else {
             warn!("Audio format needs headers but none provided");
         }
@@ -276,6 +248,195 @@ fn extract_file_from_chunks(
     }
 
     file_data
+}
+
+/// Decode and re-encode a track from FLAC data using Symphonia + flacenc
+///
+/// This matches the approach in split_cue_flac.rs binary.
+/// The input is a complete FLAC file (with headers), and we seek to the
+/// specified time range, decode, and re-encode.
+async fn decode_and_reencode_track(
+    flac_data: &[u8],
+    start_ms: u64,
+    end_ms: Option<u64>,
+) -> Result<Vec<u8>, String> {
+    use std::io::Cursor;
+    use symphonia::core::audio::{AudioBufferRef, Signal};
+    use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_FLAC};
+    use symphonia::core::errors::Error as SymphoniaError;
+    use symphonia::core::formats::{FormatOptions, SeekMode, SeekTo};
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::probe::Hint;
+    use symphonia::core::units::Time;
+
+    // Run decode/encode in spawn_blocking since it's CPU-intensive
+    let flac_data = flac_data.to_vec();
+    tokio::task::spawn_blocking(move || {
+        // Open FLAC data with Symphonia
+        let cursor = Cursor::new(flac_data);
+        let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
+
+        let mut hint = Hint::new();
+        hint.with_extension("flac");
+
+        let format_opts = FormatOptions::default();
+        let metadata_opts = MetadataOptions::default();
+
+        let probed = symphonia::default::get_probe()
+            .format(&hint, mss, &format_opts, &metadata_opts)
+            .map_err(|e| format!("Failed to probe FLAC: {}", e))?;
+
+        let mut format = probed.format;
+
+        let track = format
+            .tracks()
+            .iter()
+            .find(|t| t.codec_params.codec == CODEC_TYPE_FLAC)
+            .ok_or_else(|| "No FLAC track found".to_string())?;
+
+        let track_id = track.id;
+        let codec_params = track.codec_params.clone();
+
+        let sample_rate = codec_params
+            .sample_rate
+            .ok_or_else(|| "No sample rate found".to_string())?;
+        let channels = codec_params
+            .channels
+            .ok_or_else(|| "No channel info found".to_string())?;
+        let bits_per_sample = codec_params
+            .bits_per_sample
+            .ok_or_else(|| "No bits per sample found".to_string())?;
+
+        // Create decoder
+        let mut decoder = symphonia::default::get_codecs()
+            .make(&codec_params, &DecoderOptions::default())
+            .map_err(|e| format!("Failed to create decoder: {}", e))?;
+
+        // Seek to start position
+        let start_time = Time::from(start_ms as f64 / 1000.0);
+        format
+            .seek(
+                SeekMode::Accurate,
+                SeekTo::Time {
+                    time: start_time,
+                    track_id: Some(track_id),
+                },
+            )
+            .map_err(|e| format!("Failed to seek to start: {}", e))?;
+
+        // Calculate end sample
+        let end_sample = end_ms.map(|ms| (ms * sample_rate as u64) / 1000);
+
+        // Collect decoded samples (interleaved for all channels)
+        let num_channels = channels.count();
+        let mut all_samples: Vec<i32> = Vec::new();
+        let mut current_sample = (start_ms * sample_rate as u64) / 1000;
+
+        loop {
+            let packet = match format.next_packet() {
+                Ok(packet) => packet,
+                Err(SymphoniaError::IoError(e))
+                    if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+                {
+                    break;
+                }
+                Err(e) => return Err(format!("Failed to read packet: {}", e)),
+            };
+
+            if packet.track_id() != track_id {
+                continue;
+            }
+
+            let decoded = decoder
+                .decode(&packet)
+                .map_err(|e| format!("Failed to decode packet: {}", e))?;
+
+            // Extract samples from the decoded audio buffer (interleave channels)
+            let num_frames = decoded.frames();
+
+            for frame_idx in 0..num_frames {
+                if let Some(end) = end_sample {
+                    if current_sample >= end {
+                        break;
+                    }
+                }
+
+                // Interleave channels
+                for ch_idx in 0..num_channels {
+                    let sample = match &decoded {
+                        AudioBufferRef::S16(buf) => buf.chan(ch_idx)[frame_idx] as i32,
+                        AudioBufferRef::S32(buf) => {
+                            // S32 samples from Symphonia are in full 32-bit range
+                            // Scale down to the target bits_per_sample range
+                            let s32_sample = buf.chan(ch_idx)[frame_idx];
+                            s32_sample >> (32 - bits_per_sample)
+                        }
+                        _ => return Err("Unsupported sample format".to_string()),
+                    };
+                    all_samples.push(sample);
+                }
+
+                current_sample += 1;
+            }
+
+            if let Some(end) = end_sample {
+                if current_sample >= end {
+                    break;
+                }
+            }
+        }
+
+        // Encode to FLAC using flacenc
+        encode_to_flac(
+            &all_samples,
+            sample_rate,
+            num_channels as u32,
+            bits_per_sample,
+        )
+    })
+    .await
+    .map_err(|e| format!("Decode/encode task failed: {}", e))?
+}
+
+/// Encode samples to FLAC using flacenc
+fn encode_to_flac(
+    samples: &[i32],
+    sample_rate: u32,
+    channels: u32,
+    bits_per_sample: u32,
+) -> Result<Vec<u8>, String> {
+    use flacenc::bitsink::ByteSink;
+    use flacenc::component::BitRepr;
+    use flacenc::config;
+    use flacenc::error::Verify;
+    use flacenc::source::MemSource;
+
+    // Convert samples to the format flacenc expects (interleaved i32)
+    let source = MemSource::from_samples(
+        samples,
+        channels as usize,
+        bits_per_sample as usize,
+        sample_rate as usize,
+    );
+
+    // Create and verify encoder config
+    let config = config::Encoder::default();
+    let config = config
+        .into_verified()
+        .map_err(|(_, e)| format!("Failed to verify encoder config: {:?}", e))?;
+
+    // Encode with default block size (4096)
+    let flac_stream = flacenc::encode_with_fixed_block_size(&config, source, 4096)
+        .map_err(|e| format!("Failed to encode FLAC: {:?}", e))?;
+
+    // Write stream to a ByteSink
+    let mut sink = ByteSink::new();
+    flac_stream
+        .write(&mut sink)
+        .map_err(|e| format!("Failed to write stream to sink: {:?}", e))?;
+
+    Ok(sink.as_slice().to_vec())
 }
 
 #[cfg(test)]
