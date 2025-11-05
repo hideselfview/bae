@@ -325,12 +325,14 @@ fn build_flac_seektable(flac_path: &Path) -> Result<HashMap<u64, u64>, String> {
                 frames_processed += 1;
             }
 
-            // Safety: limit to prevent infinite loops
-            if frames_processed > 100_000 {
+            // Safety: limit to prevent infinite loops (10 million frames = ~200 hours at 44.1kHz with 1152 samples/frame)
+            // This is well beyond any reasonable audio file
+            if frames_processed > 10_000_000 {
                 libflac_sys::FLAC__stream_decoder_delete(decoder);
-                return Err(
-                    "FLAC decoder processed too many frames, possible infinite loop".to_string(),
-                );
+                return Err(format!(
+                    "FLAC decoder processed too many frames ({}), possible infinite loop",
+                    frames_processed
+                ));
             }
         }
 
