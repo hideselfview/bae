@@ -27,178 +27,355 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::debug;
 
-/// Find exact byte position for a time offset by scanning for FLAC frame boundaries
-fn find_byte_position_at_time(
-    file_data: &[u8],
-    time_ms: u64,
-    sample_rate: u32,
-    total_samples: u64,
-    audio_start_byte: u64,
-    file_size: u64,
-) -> Result<u64, String> {
-    if time_ms == 0 {
-        return Ok(audio_start_byte);
+// FFI bindings for libFLAC seektable generation
+extern crate libflac_sys;
+
+/// Build a seektable mapping sample positions to byte positions using libFLAC
+/// Returns a HashMap where key is sample number and value is byte position
+fn build_flac_seektable(flac_path: &Path) -> Result<HashMap<u64, u64>, String> {
+    use tracing::debug;
+
+    debug!("Building seektable for: {:?}", flac_path);
+
+    // Read entire file into memory for callbacks
+    let file_data =
+        std::fs::read(flac_path).map_err(|e| format!("Failed to read FLAC file: {}", e))?;
+
+    debug!("Read {} bytes from FLAC file", file_data.len());
+
+    // State for callbacks
+    struct DecoderState {
+        file_data: Vec<u8>,
+        file_pos: usize,
+        seektable: HashMap<u64, u64>,
+        cumulative_samples: u64, // Track cumulative samples for frame_number mode
     }
 
-    if total_samples == 0 {
-        return Ok(audio_start_byte);
-    }
+    let state = DecoderState {
+        file_data,
+        file_pos: 0,
+        seektable: HashMap::new(),
+        cumulative_samples: 0,
+    };
 
-    // Estimate byte position using linear interpolation
-    let total_duration_ms = (total_samples * 1000) / sample_rate as u64;
-    let audio_size = file_size - audio_start_byte;
-    let estimated_audio_byte = (time_ms * audio_size) / total_duration_ms;
-    let estimated_pos = audio_start_byte + estimated_audio_byte;
+    // Read callback
+    extern "C" fn read_callback(
+        _decoder: *const libflac_sys::FLAC__StreamDecoder,
+        buffer: *mut u8,
+        bytes: *mut libc::size_t,
+        client_data: *mut libc::c_void,
+    ) -> libflac_sys::FLAC__StreamDecoderReadStatus {
+        let state = unsafe { &mut *(client_data as *mut DecoderState) };
 
-    debug!(
-        "Time {}ms: estimated byte {} (total duration {}ms, file size {})",
-        time_ms, estimated_pos, total_duration_ms, file_size
-    );
+        let bytes_needed = unsafe { *bytes };
+        let remaining = state.file_data.len().saturating_sub(state.file_pos);
 
-    // Search for nearest frame boundary around estimated position
-    let frame_pos =
-        find_nearest_frame_boundary(file_data, estimated_pos as usize, audio_start_byte as usize)?;
-
-    debug!(
-        "Time {}ms: found frame at byte {} (estimated was {}, diff {})",
-        time_ms,
-        frame_pos,
-        estimated_pos,
-        frame_pos as i64 - estimated_pos as i64
-    );
-
-    Ok(frame_pos)
-}
-
-/// Find the nearest FLAC frame boundary to the estimated position
-fn find_nearest_frame_boundary(
-    file_data: &[u8],
-    estimated_pos: usize,
-    audio_start_byte: usize,
-) -> Result<u64, String> {
-    // Search window: 64KB in each direction
-    let search_window = 64 * 1024;
-    let backward_start = estimated_pos
-        .saturating_sub(search_window)
-        .max(audio_start_byte);
-    let forward_end = (estimated_pos + search_window).min(file_data.len());
-
-    // Search backward from estimated position for sync code
-    let mut best_backward: Option<usize> = None;
-    for i in (backward_start..estimated_pos).rev() {
-        if is_flac_frame_sync(file_data, i) && validate_flac_frame_header(file_data, i) {
-            best_backward = Some(i);
-            break;
+        if remaining == 0 {
+            unsafe { *bytes = 0 };
+            return libflac_sys::FLAC__STREAM_DECODER_READ_STATUS_END_OF_STREAM;
         }
-    }
 
-    // Search forward from estimated position for sync code
-    let mut best_forward: Option<usize> = None;
-    for i in estimated_pos..forward_end {
-        if is_flac_frame_sync(file_data, i) && validate_flac_frame_header(file_data, i) {
-            best_forward = Some(i);
-            break;
+        let to_read = bytes_needed.min(remaining);
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                state.file_data.as_ptr().add(state.file_pos),
+                buffer,
+                to_read,
+            );
         }
+        state.file_pos += to_read;
+        unsafe { *bytes = to_read as libc::size_t };
+
+        libflac_sys::FLAC__STREAM_DECODER_READ_STATUS_CONTINUE
     }
 
-    // Choose the closer one
-    match (best_backward, best_forward) {
-        (Some(backward), Some(forward)) => {
-            let backward_dist = estimated_pos - backward;
-            let forward_dist = forward - estimated_pos;
-            Ok(if backward_dist <= forward_dist {
-                backward
+    // Seek callback
+    extern "C" fn seek_callback(
+        _decoder: *const libflac_sys::FLAC__StreamDecoder,
+        absolute_byte_offset: u64,
+        client_data: *mut libc::c_void,
+    ) -> libflac_sys::FLAC__StreamDecoderSeekStatus {
+        let state = unsafe { &mut *(client_data as *mut DecoderState) };
+
+        if absolute_byte_offset as usize > state.file_data.len() {
+            return libflac_sys::FLAC__STREAM_DECODER_SEEK_STATUS_ERROR;
+        }
+
+        state.file_pos = absolute_byte_offset as usize;
+        libflac_sys::FLAC__STREAM_DECODER_SEEK_STATUS_OK
+    }
+
+    // Tell callback
+    extern "C" fn tell_callback(
+        _decoder: *const libflac_sys::FLAC__StreamDecoder,
+        absolute_byte_offset: *mut u64,
+        client_data: *mut libc::c_void,
+    ) -> libflac_sys::FLAC__StreamDecoderTellStatus {
+        let state = unsafe { &*(client_data as *const DecoderState) };
+
+        unsafe { *absolute_byte_offset = state.file_pos as u64 };
+        libflac_sys::FLAC__STREAM_DECODER_TELL_STATUS_OK
+    }
+
+    // Length callback - required if seek_callback is provided
+    extern "C" fn length_callback(
+        _decoder: *const libflac_sys::FLAC__StreamDecoder,
+        stream_length: *mut u64,
+        client_data: *mut libc::c_void,
+    ) -> libflac_sys::FLAC__StreamDecoderLengthStatus {
+        let state = unsafe { &*(client_data as *const DecoderState) };
+
+        unsafe { *stream_length = state.file_data.len() as u64 };
+        libflac_sys::FLAC__STREAM_DECODER_LENGTH_STATUS_OK
+    }
+
+    // EOF callback
+    extern "C" fn eof_callback(
+        _decoder: *const libflac_sys::FLAC__StreamDecoder,
+        client_data: *mut libc::c_void,
+    ) -> libflac_sys::FLAC__bool {
+        let state = unsafe { &*(client_data as *const DecoderState) };
+        (state.file_pos >= state.file_data.len()) as libflac_sys::FLAC__bool
+    }
+
+    // Write callback - record sample number and byte position
+    extern "C" fn write_callback(
+        decoder: *const libflac_sys::FLAC__StreamDecoder,
+        frame: *const libflac_sys::FLAC__Frame,
+        _buffer: *const *const i32,
+        client_data: *mut libc::c_void,
+    ) -> libflac_sys::FLAC__StreamDecoderWriteStatus {
+        let state = unsafe { &mut *(client_data as *mut DecoderState) };
+
+        let frame_ref = unsafe { &*frame };
+        // Extract sample number from frame header
+        // FLAC frame header has sample_number - need to access it correctly
+        // The frame structure is: FLAC__Frame { header: FLAC__FrameHeader { number: ... } }
+        // Extract sample number from frame header
+        // FLAC frame header can have either frame_number or sample_number
+        // We need sample_number for the seektable
+        let sample_number = match frame_ref.header.number_type {
+            libflac_sys::FLAC__FRAME_NUMBER_TYPE_FRAME_NUMBER => {
+                // Frame number (not sample number) - use cumulative samples
+                // We'll add the blocksize after storing
+                state.cumulative_samples
+            }
+            libflac_sys::FLAC__FRAME_NUMBER_TYPE_SAMPLE_NUMBER => {
+                // Sample number - this is what we want
+                unsafe {
+                    let sample_num = frame_ref.header.number.sample_number;
+                    state.cumulative_samples = sample_num; // Update for consistency
+                    sample_num
+                }
+            }
+            _ => {
+                // Unknown type, skip this frame
+                return libflac_sys::FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE;
+            }
+        };
+
+        // Get current byte position
+        let mut byte_pos: u64 = 0;
+        unsafe {
+            libflac_sys::FLAC__stream_decoder_get_decode_position(decoder as *mut _, &mut byte_pos);
+        }
+
+        // If decode_position is not available, use file_pos from state
+        if byte_pos == 0 {
+            byte_pos = state.file_pos as u64;
+        }
+
+        // Store in seektable
+        state.seektable.insert(sample_number, byte_pos);
+
+        // Update cumulative samples for next frame (if using frame_number mode)
+        if frame_ref.header.number_type == libflac_sys::FLAC__FRAME_NUMBER_TYPE_FRAME_NUMBER {
+            // Add blocksize to cumulative
+            // Default estimate for blocksize - this is a fallback
+            // Since we're using sample_number when available, this is less critical
+            let blocksize: u64 = 1152; // Default estimate
+            state.cumulative_samples += blocksize;
+        }
+
+        libflac_sys::FLAC__STREAM_DECODER_WRITE_STATUS_CONTINUE
+    }
+
+    // Metadata callback
+    extern "C" fn metadata_callback(
+        _decoder: *const libflac_sys::FLAC__StreamDecoder,
+        _metadata: *const libflac_sys::FLAC__StreamMetadata,
+        _client_data: *mut libc::c_void,
+    ) {
+        // We don't need to do anything with metadata
+    }
+
+    // Error callback
+    extern "C" fn error_callback(
+        _decoder: *const libflac_sys::FLAC__StreamDecoder,
+        _status: libflac_sys::FLAC__StreamDecoderErrorStatus,
+        _client_data: *mut libc::c_void,
+    ) {
+        // Log errors but continue
+        let _ = _status;
+        let _ = _client_data;
+    }
+
+    // Create decoder
+    let decoder = unsafe { libflac_sys::FLAC__stream_decoder_new() };
+    if decoder.is_null() {
+        return Err("Failed to create FLAC decoder".to_string());
+    }
+
+    debug!("Created FLAC decoder");
+    eprintln!("[DEBUG] Created FLAC decoder");
+
+    // Box the state and pass to callbacks
+    let mut state = Box::new(state);
+    let state_ptr = state.as_mut() as *mut DecoderState as *mut libc::c_void;
+
+    unsafe {
+        debug!("Initializing FLAC stream decoder...");
+        eprintln!("[DEBUG] Initializing FLAC stream decoder...");
+        let result = libflac_sys::FLAC__stream_decoder_init_stream(
+            decoder,
+            Some(read_callback),
+            Some(seek_callback),
+            Some(tell_callback),
+            Some(length_callback), // Required if seek_callback is provided
+            Some(eof_callback),
+            Some(write_callback),
+            Some(metadata_callback),
+            Some(error_callback),
+            state_ptr,
+        );
+
+        if result != libflac_sys::FLAC__STREAM_DECODER_INIT_STATUS_OK {
+            let error_msg = match result {
+                libflac_sys::FLAC__STREAM_DECODER_INIT_STATUS_OK => "OK (unexpected)",
+                libflac_sys::FLAC__STREAM_DECODER_INIT_STATUS_ERROR_OPENING_FILE => {
+                    "Error opening file"
+                }
+                libflac_sys::FLAC__STREAM_DECODER_INIT_STATUS_ALREADY_INITIALIZED => {
+                    "Already initialized"
+                }
+                libflac_sys::FLAC__STREAM_DECODER_INIT_STATUS_UNSUPPORTED_CONTAINER => {
+                    "Unsupported container"
+                }
+                libflac_sys::FLAC__STREAM_DECODER_INIT_STATUS_INVALID_CALLBACKS => {
+                    "Invalid callbacks"
+                }
+                libflac_sys::FLAC__STREAM_DECODER_INIT_STATUS_MEMORY_ALLOCATION_ERROR => {
+                    "Memory allocation error"
+                }
+                _ => "Unknown error",
+            };
+            eprintln!(
+                "[DEBUG] FLAC decoder init failed with code {}: {}",
+                result, error_msg
+            );
+            libflac_sys::FLAC__stream_decoder_delete(decoder);
+            return Err(format!(
+                "Failed to initialize FLAC decoder: {} ({})",
+                error_msg, result
+            ));
+        }
+
+        debug!("FLAC decoder initialized, starting to process...");
+
+        // Process everything (metadata + frames) using process_single
+        // This avoids the potential hang in process_until_end_of_metadata
+        let mut frames_processed = 0;
+        let mut consecutive_zeros = 0;
+        let mut iterations = 0;
+        loop {
+            iterations += 1;
+            if iterations % 1000 == 0 {
+                debug!(
+                    "Processed {} iterations, {} frames",
+                    iterations, frames_processed
+                );
+            }
+
+            let result = libflac_sys::FLAC__stream_decoder_process_single(decoder);
+
+            // Check decoder state first (this is the authoritative check)
+            let state_enum = libflac_sys::FLAC__stream_decoder_get_state(decoder);
+
+            if state_enum == libflac_sys::FLAC__STREAM_DECODER_END_OF_STREAM {
+                break;
+            }
+
+            if state_enum == libflac_sys::FLAC__STREAM_DECODER_ABORTED {
+                libflac_sys::FLAC__stream_decoder_delete(decoder);
+                return Err("FLAC decoder aborted".to_string());
+            }
+
+            // If process_single returned false (0), check if we're at end
+            if result == 0 {
+                consecutive_zeros += 1;
+                // If we get multiple zeros in a row and state isn't END_OF_STREAM, likely stuck
+                if consecutive_zeros > 3 {
+                    // Double-check state one more time
+                    let final_state = libflac_sys::FLAC__stream_decoder_get_state(decoder);
+                    if final_state != libflac_sys::FLAC__STREAM_DECODER_END_OF_STREAM {
+                        libflac_sys::FLAC__stream_decoder_delete(decoder);
+                        return Err(format!(
+                            "FLAC decoder stuck: process_single returned 0 {} times, state: {}",
+                            consecutive_zeros, final_state
+                        ));
+                    }
+                    break;
+                }
             } else {
-                forward
-            } as u64)
+                consecutive_zeros = 0; // Reset on success
+                frames_processed += 1;
+            }
+
+            // Safety: limit to prevent infinite loops
+            if frames_processed > 100_000 {
+                libflac_sys::FLAC__stream_decoder_delete(decoder);
+                return Err(
+                    "FLAC decoder processed too many frames, possible infinite loop".to_string(),
+                );
+            }
         }
-        (Some(backward), None) => Ok(backward as u64),
-        (None, Some(forward)) => Ok(forward as u64),
-        (None, None) => Err(format!(
-            "No FLAC frame boundary found near position {}",
-            estimated_pos
-        )),
+
+        debug!(
+            "Finished processing, frames: {}, seektable entries: {}",
+            frames_processed,
+            state.seektable.len()
+        );
+
+        // Finish decoder
+        libflac_sys::FLAC__stream_decoder_finish(decoder);
+        libflac_sys::FLAC__stream_decoder_delete(decoder);
+
+        // Extract seektable
+        Ok(state.seektable)
     }
 }
 
-/// Check if position contains a FLAC frame sync code
-fn is_flac_frame_sync(data: &[u8], pos: usize) -> bool {
-    if pos + 1 >= data.len() {
-        return false;
-    }
-    // FLAC sync code: 0xFFF8 to 0xFFF9 (14 bits set, then blocking strategy bit)
-    // This is 0xFF followed by 0xF8 or 0xF9
-    data[pos] == 0xFF && (data[pos + 1] & 0xFE) == 0xF8
-}
-
-/// Validate a FLAC frame header at the given position
-fn validate_flac_frame_header(data: &[u8], pos: usize) -> bool {
-    if pos + 4 >= data.len() {
-        return false;
-    }
-
-    // Check sync code
-    if !is_flac_frame_sync(data, pos) {
-        return false;
-    }
-
-    // Parse frame header byte 2
-    let byte2 = data[pos + 2];
-
-    // Block size (bits 4-7 of byte 2)
-    let block_size_code = (byte2 >> 4) & 0x0F;
-    if block_size_code == 0b0000 {
-        return false; // Reserved
-    }
-
-    // Sample rate (bits 0-3 of byte 2)
-    let sample_rate_code = byte2 & 0x0F;
-    if sample_rate_code == 0b1111 {
-        return false; // Invalid
-    }
-
-    // Parse frame header byte 3
-    let byte3 = data[pos + 3];
-
-    // Channel assignment (bits 4-7 of byte 3)
-    let channel_code = (byte3 >> 4) & 0x0F;
-    if channel_code >= 0b1011 {
-        return false; // Reserved
-    }
-
-    // Sample size (bits 1-3 of byte 3)
-    let sample_size_code = (byte3 >> 1) & 0x07;
-    if sample_size_code == 0b011 || sample_size_code == 0b111 {
-        return false; // Reserved/invalid
-    }
-
-    // Bit 0 of byte 3 must be 0
-    if (byte3 & 0x01) != 0 {
-        return false;
-    }
-
-    true
-}
-
-/// Find exact byte range for a track by scanning for FLAC frame boundaries
+/// Find exact byte range for a track using seektable and Symphonia time-based seeking
 fn find_track_byte_range(
     flac_path: &Path,
     start_time_ms: u64,
     end_time_ms: Option<u64>,
+    seektable: &HashMap<u64, u64>,
 ) -> Result<(i64, i64), String> {
-    use std::fs;
     use std::fs::File;
     use symphonia::core::codecs::CODEC_TYPE_FLAC;
-    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::formats::{FormatOptions, SeekMode, SeekTo};
     use symphonia::core::io::MediaSourceStream;
     use symphonia::core::meta::MetadataOptions;
     use symphonia::core::probe::Hint;
+    use symphonia::core::units::Time;
 
-    // Read entire file (we need it for frame scanning)
-    let file_data = fs::read(flac_path).map_err(|e| format!("Failed to read FLAC file: {}", e))?;
-    let file_size = file_data.len() as u64;
+    // Get file size for end position
+    let file_size = std::fs::metadata(flac_path)
+        .map_err(|e| format!("Failed to get file metadata: {}", e))?
+        .len() as i64;
 
-    // Use Symphonia to get audio parameters
+    // Use Symphonia to get audio parameters and seek to time position
     let file = File::open(flac_path).map_err(|e| format!("Failed to open FLAC file: {}", e))?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
 
@@ -214,9 +391,9 @@ fn find_track_byte_range(
         )
         .map_err(|e| format!("Failed to probe FLAC file: {}", e))?;
 
-    let format = probed.format;
+    let mut format = probed.format;
 
-    let (sample_rate, total_samples) = {
+    let (sample_rate, track_id) = {
         let track = format
             .tracks()
             .iter()
@@ -225,74 +402,98 @@ fn find_track_byte_range(
 
         let codec_params = &track.codec_params;
         let sample_rate = codec_params.sample_rate.unwrap_or(44100);
-        let total_samples = codec_params.n_frames.unwrap_or(0);
 
-        (sample_rate, total_samples)
+        (sample_rate, track.id)
     };
 
-    // Find audio start position (after headers)
-    let audio_start_byte = find_audio_start(&file_data)?;
+    // Seek to start time position (like split_cue_flac.rs does)
+    let start_time = Time::from(start_time_ms as f64 / 1000.0);
+    format
+        .seek(
+            SeekMode::Accurate,
+            SeekTo::Time {
+                time: start_time,
+                track_id: Some(track_id),
+            },
+        )
+        .map_err(|e| format!("Failed to seek to start: {}", e))?;
 
-    // Find start byte position
-    let start_byte = find_byte_position_at_time(
-        &file_data,
-        start_time_ms,
-        sample_rate,
-        total_samples,
-        audio_start_byte,
-        file_size,
-    )? as i64;
+    // Calculate sample position from time
+    let start_sample = (start_time_ms * sample_rate as u64) / 1000;
+
+    // Look up sample position in seektable (find nearest)
+    let start_byte = lookup_seektable(seektable, start_sample)? as i64;
 
     // Find end byte position
     let end_byte = if let Some(end_ms) = end_time_ms {
-        find_byte_position_at_time(
-            &file_data,
-            end_ms,
-            sample_rate,
-            total_samples,
-            audio_start_byte,
-            file_size,
-        )? as i64
+        // Seek to end time
+        let end_time = Time::from(end_ms as f64 / 1000.0);
+        format
+            .seek(
+                SeekMode::Accurate,
+                SeekTo::Time {
+                    time: end_time,
+                    track_id: Some(track_id),
+                },
+            )
+            .map_err(|e| format!("Failed to seek to end: {}", e))?;
+
+        let end_sample = (end_ms * sample_rate as u64) / 1000;
+        lookup_seektable(seektable, end_sample)? as i64
     } else {
-        file_size as i64
+        file_size
     };
 
     Ok((start_byte, end_byte))
 }
 
-/// Find where audio data starts (after FLAC headers)
-fn find_audio_start(file_data: &[u8]) -> Result<u64, String> {
-    if file_data.len() < 4 || &file_data[0..4] != b"fLaC" {
-        return Err("Invalid FLAC signature".to_string());
+/// Look up a sample position in the seektable, finding the nearest entry
+fn lookup_seektable(seektable: &HashMap<u64, u64>, sample: u64) -> Result<u64, String> {
+    // If exact match, return it
+    if let Some(&byte_pos) = seektable.get(&sample) {
+        return Ok(byte_pos);
     }
 
-    let mut pos = 4; // Skip "fLaC" signature
+    // Find nearest sample position (binary search on sorted keys)
+    let mut sorted_samples: Vec<u64> = seektable.keys().copied().collect();
+    sorted_samples.sort_unstable();
 
-    // Parse metadata blocks
-    loop {
-        if pos + 4 > file_data.len() {
-            return Err("Unexpected end of file".to_string());
+    // Binary search for nearest
+    match sorted_samples.binary_search(&sample) {
+        Ok(idx) => {
+            // Exact match
+            Ok(seektable[&sorted_samples[idx]])
         }
+        Err(idx) => {
+            // No exact match, find nearest
+            let (before, after) = if idx == 0 {
+                // Before first entry
+                (None, Some(sorted_samples[0]))
+            } else if idx >= sorted_samples.len() {
+                // After last entry
+                (Some(sorted_samples[sorted_samples.len() - 1]), None)
+            } else {
+                // Between two entries
+                (Some(sorted_samples[idx - 1]), Some(sorted_samples[idx]))
+            };
 
-        // Read metadata block header
-        let header = u32::from_be_bytes([
-            file_data[pos],
-            file_data[pos + 1],
-            file_data[pos + 2],
-            file_data[pos + 3],
-        ]);
-
-        let is_last = (header >> 31) & 1 == 1;
-        let block_size = (header & 0x00FFFFFF) as usize;
-
-        pos += 4 + block_size;
-
-        if is_last {
-            break;
+            match (before, after) {
+                (Some(b), Some(a)) => {
+                    // Choose closer one
+                    let dist_b = sample.abs_diff(b);
+                    let dist_a = sample.abs_diff(a);
+                    if dist_b <= dist_a {
+                        Ok(seektable[&b])
+                    } else {
+                        Ok(seektable[&a])
+                    }
+                }
+                (Some(b), None) => Ok(seektable[&b]),
+                (None, Some(a)) => Ok(seektable[&a]),
+                (None, None) => Err("Empty seektable".to_string()),
+            }
         }
     }
-
-    Ok(pos as u64)
 }
 
 /// Return type for `build_chunk_track_mappings`.
@@ -449,7 +650,7 @@ fn build_chunk_track_mappings(
     let mut track_chunk_counts: HashMap<String, usize> = HashMap::new();
     let mut cue_flac_data: HashMap<PathBuf, CueFlacLayoutData> = HashMap::new();
 
-    for file_to_chunks in files_to_chunks {
+    for file_to_chunks in files_to_chunks.iter() {
         // Skip files not associated with tracks (cover.jpg, .cue, etc.)
         let Some(track_ids) = file_to_tracks.get(&file_to_chunks.file_path) else {
             continue;
@@ -474,7 +675,16 @@ fn build_chunk_track_mappings(
             let flac_headers = CueFlacProcessor::extract_flac_headers(&cue_metadata.flac_path)
                 .map_err(|e| format!("Failed to extract FLAC headers: {}", e))?;
 
-            // For CUE/FLAC, calculate exact byte ranges using Symphonia position tracking
+            // Build seektable once for this FLAC file (reused for all tracks)
+            debug!(
+                "Building seektable for FLAC file: {}",
+                cue_metadata.flac_path.display()
+            );
+            let seektable = build_flac_seektable(&cue_metadata.flac_path)
+                .map_err(|e| format!("Failed to build seektable: {}", e))?;
+            debug!("Seektable built with {} entries", seektable.len());
+
+            // For CUE/FLAC, calculate exact byte ranges using seektable + Symphonia time-based seeking
             let mut track_chunk_ranges = HashMap::new();
             let mut track_byte_ranges = HashMap::new();
             let chunk_size_i64 = chunk_size as i64;
@@ -484,11 +694,12 @@ fn build_chunk_track_mappings(
                     continue;
                 };
 
-                // Find exact byte positions by seeking with Symphonia
+                // Find exact byte positions using seektable + Symphonia time-based seeking
                 let (start_byte, end_byte) = find_track_byte_range(
                     &cue_metadata.flac_path,
                     cue_track.start_time_ms,
                     cue_track.end_time_ms,
+                    &seektable,
                 )?;
 
                 debug!(

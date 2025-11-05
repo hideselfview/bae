@@ -10,7 +10,7 @@ use crate::support::tracing_init;
 use bae::cache::{CacheConfig, CacheManager};
 use bae::cloud_storage::CloudStorageManager;
 use bae::db::Database;
-use bae::discogs::models::{DiscogsAlbum, DiscogsArtist, DiscogsMaster, DiscogsTrack};
+use bae::discogs::models::{DiscogsArtist, DiscogsRelease, DiscogsTrack};
 use bae::encryption::EncryptionService;
 use bae::import::ImportRequestParams;
 use bae::library::{LibraryManager, SharedLibraryManager};
@@ -59,7 +59,7 @@ impl PlaybackTestFixture {
         let runtime_handle = tokio::runtime::Handle::current();
 
         // Set up import service and import test tracks
-        let discogs_album = create_test_album();
+        let discogs_release = create_test_album();
         let _track_data = generate_test_flac_files(&album_dir);
 
         let import_config = bae::import::ImportConfig {
@@ -80,10 +80,12 @@ impl PlaybackTestFixture {
         );
 
         // Send import request
+        let master_year = discogs_release.year.unwrap_or(2024);
         let (_album_id, release_id) = import_handle
             .send_request(ImportRequestParams::FromFolder {
-                discogs_album: discogs_album.clone(),
+                discogs_release,
                 folder: album_dir.clone(),
+                master_year,
             })
             .await?;
 
@@ -224,14 +226,18 @@ impl PlaybackTestFixture {
 }
 
 /// Create a test album with 2 short tracks
-fn create_test_album() -> DiscogsAlbum {
-    DiscogsAlbum::Master(DiscogsMaster {
+fn create_test_album() -> DiscogsRelease {
+    DiscogsRelease {
         id: "test-playback-123".to_string(),
         title: "Playback Test Album".to_string(),
         year: Some(2024),
-        thumb: None,
-        label: vec!["Test Label".to_string()],
+        genre: vec![],
+        style: vec![],
+        format: vec![],
         country: Some("US".to_string()),
+        label: vec!["Test Label".to_string()],
+        cover_image: None,
+        thumb: None,
         artists: vec![DiscogsArtist {
             name: "Test Artist".to_string(),
             id: "test-artist-1".to_string(),
@@ -248,7 +254,8 @@ fn create_test_album() -> DiscogsAlbum {
                 duration: Some("0:10".to_string()),
             },
         ],
-    })
+        master_id: "test-master-123".to_string(),
+    }
 }
 
 /// Copy pre-generated FLAC fixtures to test directory

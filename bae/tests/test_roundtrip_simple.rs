@@ -3,7 +3,7 @@
 mod support;
 use std::{fs, path::PathBuf};
 
-use bae::discogs::models::{DiscogsAlbum, DiscogsTrack};
+use bae::discogs::models::{DiscogsRelease, DiscogsTrack};
 use tracing::info;
 
 use crate::support::{do_roundtrip::do_roundtrip, tracing_init};
@@ -29,16 +29,18 @@ async fn test_roundtrip_simple() {
 }
 
 /// Create mock Discogs metadata for testing
-fn create_test_discogs_album() -> DiscogsAlbum {
-    use bae::discogs::models::DiscogsMaster;
-
-    DiscogsAlbum::Master(DiscogsMaster {
-        id: "test-master-123".to_string(),
+fn create_test_discogs_album() -> DiscogsRelease {
+    DiscogsRelease {
+        id: "test-release-123".to_string(),
         title: "Test Album".to_string(),
         year: Some(2024),
-        thumb: None,
-        label: vec!["Test Label".to_string()],
+        genre: vec![],
+        style: vec![],
+        format: vec![],
         country: Some("US".to_string()),
+        label: vec!["Test Label".to_string()],
+        cover_image: None,
+        thumb: None,
         artists: vec![],
         tracklist: vec![
             DiscogsTrack {
@@ -57,7 +59,8 @@ fn create_test_discogs_album() -> DiscogsAlbum {
                 duration: Some("2:30".to_string()),
             },
         ],
-    })
+        master_id: "test-master-123".to_string(),
+    }
 }
 
 /// Generate simple test files

@@ -3,7 +3,7 @@
 mod support;
 use std::fs;
 
-use bae::discogs::DiscogsAlbum;
+use bae::discogs::models::DiscogsRelease;
 use support::{do_roundtrip::do_roundtrip, tracing_init};
 use tracing::{error, info};
 
@@ -46,14 +46,28 @@ async fn test_roundtrip_vinyl() {
 }
 
 /// Load vinyl album fixture with vinyl side notation (A1-A7, B1-B9)
-fn load_vinyl_album_fixture() -> DiscogsAlbum {
-    use bae::discogs::DiscogsMaster;
+fn load_vinyl_album_fixture() -> DiscogsRelease {
+    use bae::discogs::models::DiscogsMaster;
 
     let json = std::fs::read_to_string("tests/fixtures/vinyl_master_test.json")
         .expect("Failed to read fixture");
     let master: DiscogsMaster = serde_json::from_str(&json).expect("Failed to parse fixture");
 
-    DiscogsAlbum::Master(master)
+    DiscogsRelease {
+        id: format!("release-{}", master.id),
+        title: master.title,
+        year: Some(master.year),
+        genre: vec![],
+        style: vec![],
+        format: vec![],
+        country: master.country,
+        label: master.label,
+        cover_image: None,
+        thumb: master.thumb,
+        artists: master.artists,
+        tracklist: master.tracklist,
+        master_id: master.id,
+    }
 }
 
 /// Generate vinyl album test files (16 files with varied sizes + non-audio files)

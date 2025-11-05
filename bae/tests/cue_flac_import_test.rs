@@ -1,3 +1,18 @@
+//! CUE/FLAC import integration test
+//!
+//! This test requires:
+//! - `BAE_TEST_CUE_FLAC_FOLDER`: Path to a folder containing a CUE/FLAC album
+//! - `BAE_TEST_DISCOGS_RELEASE_ID`: Discogs release ID for the album metadata
+//! - `DISCOGS_API_KEY`: Discogs API key (optional, defaults to empty string)
+//!
+//! Example:
+//! ```bash
+//! export BAE_TEST_CUE_FLAC_FOLDER="/path/to/album/folder"
+//! export BAE_TEST_DISCOGS_RELEASE_ID="2270893"
+//! export DISCOGS_API_KEY="your-api-key"
+//! cargo test --test cue_flac_import_test --release -- --ignored --nocapture
+//! ```
+
 use bae::cache::CacheManager;
 use bae::cloud_storage::{CloudStorageManager, S3Config};
 use bae::config::Config;
@@ -13,18 +28,17 @@ use uuid::Uuid;
 
 #[tokio::test]
 #[ignore] // Requires Discogs API and actual files
-async fn test_black_sabbath_cue_flac_import() {
-    // Setup logging (reads from RUST_LOG env var, defaults to warn,bae=debug)
+async fn test_cue_flac_import() {
+    // Setup logging (reads from RUST_LOG env var, defaults to info level)
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,bae=debug")),
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
-        .with_test_writer()
         .init();
 
     // Setup test environment
-    let test_dir = std::env::temp_dir().join("bae_test_black_sabbath");
+    let test_dir = std::env::temp_dir().join("bae_test_cue_flac");
     std::fs::create_dir_all(&test_dir).unwrap();
 
     let db_path = test_dir.join("test.db");
@@ -39,7 +53,6 @@ async fn test_black_sabbath_cue_flac_import() {
 
     // Generate unique bucket name for this test run
     let test_bucket_name = format!("bae-test-{}", Uuid::new_v4().to_string().replace("-", ""));
-    println!("Using test bucket: {}", test_bucket_name);
 
     // Create modified S3 config with unique bucket
     let test_s3_config = S3Config {
@@ -70,7 +83,6 @@ async fn test_black_sabbath_cue_flac_import() {
         max_upload_workers: 4,
         max_db_write_workers: 2,
     };
-
     let import_handle = ImportService::start(
         import_config,
         runtime.clone(),
@@ -80,22 +92,21 @@ async fn test_black_sabbath_cue_flac_import() {
     );
 
     // Check if test folder exists
-    let folder_path = PathBuf::from("/Users/dima/Torrents/1970. Black Sabbath - Black Sabbath ( Creative Sounds,6006,USA (red))");
+    let folder_path = std::env::var("BAE_TEST_CUE_FLAC_FOLDER")
+        .map(PathBuf::from)
+        .expect("BAE_TEST_CUE_FLAC_FOLDER environment variable must be set");
     if !folder_path.exists() {
-        eprintln!("Test folder not found: {}", folder_path.display());
-        eprintln!("Skipping test");
         return;
     }
 
     // Fetch Discogs release
     let discogs_client = DiscogsClient::new(std::env::var("DISCOGS_API_KEY").unwrap_or_default());
-
+    let discogs_release_id = std::env::var("BAE_TEST_DISCOGS_RELEASE_ID")
+        .expect("BAE_TEST_DISCOGS_RELEASE_ID environment variable must be set");
     let discogs_release = discogs_client
-        .get_release("2270893")
+        .get_release(&discogs_release_id)
         .await
         .expect("Failed to fetch Discogs release");
-
-    println!("Fetched Discogs release: {}", discogs_release.title);
 
     // Import
     let params = ImportRequestParams::FromFolder {
@@ -104,13 +115,10 @@ async fn test_black_sabbath_cue_flac_import() {
         master_year: 1970,
     };
 
-    println!("Sending import request...");
-    let (album_id, release_id) = import_handle
+    let (_album_id, release_id) = import_handle
         .send_request(params)
         .await
         .expect("Import request failed");
-
-    println!("Import queued: album={}, release={}", album_id, release_id);
 
     // Wait for import to complete (poll status via tracks)
     let mut attempts = 0;
@@ -131,14 +139,6 @@ async fn test_black_sabbath_cue_flac_import() {
             .iter()
             .any(|t| matches!(t.import_status, bae::db::ImportStatus::Failed));
 
-        println!(
-            "Import status: {} tracks, all_complete={}, any_failed={} (attempt {})",
-            tracks.len(),
-            all_complete,
-            any_failed,
-            attempts
-        );
-
         if all_complete {
             break;
         }
@@ -150,8 +150,6 @@ async fn test_black_sabbath_cue_flac_import() {
         }
     }
 
-    println!("Import completed!");
-
     // Verify tracks
     let tracks = library_manager
         .get()
@@ -161,35 +159,11 @@ async fn test_black_sabbath_cue_flac_import() {
 
     assert_eq!(tracks.len(), 5, "Should have 5 tracks");
 
-    println!("\n=== Track Details ===");
     for track in &tracks {
-        println!(
-            "Track {}: {} - duration: {:?}ms",
-            track.track_number.unwrap_or(0),
-            track.title,
-            track.duration_ms
-        );
         assert!(track.duration_ms.is_some(), "Track should have duration");
-
-        // Get chunk coordinates
-        if let Some(coords) = library_manager
-            .get()
-            .get_track_chunk_coords(&track.id)
-            .await
-            .expect("Failed to get chunk coords")
-        {
-            println!(
-                "  Chunks: {}-{}, Byte offsets: {}-{}",
-                coords.start_chunk_index,
-                coords.end_chunk_index,
-                coords.start_byte_offset,
-                coords.end_byte_offset
-            );
-        }
     }
 
     // Extract tracks and write FLAC files
-    println!("\n=== Extracting Tracks ===");
     let output_dir = test_dir.join("extracted_tracks");
     std::fs::create_dir_all(&output_dir).unwrap();
 
@@ -197,8 +171,6 @@ async fn test_black_sabbath_cue_flac_import() {
         let track_num = track.track_number.unwrap_or(0);
         let filename = format!("{:02}.flac", track_num);
         let output_path = output_dir.join(&filename);
-
-        println!("Extracting track {}: {}...", track_num, track.title);
 
         // Reassemble track using the same logic as playback
         let audio_data = reassemble_track(
@@ -229,19 +201,7 @@ async fn test_black_sabbath_cue_flac_import() {
         std::fs::write(&output_path, &audio_data).unwrap_or_else(|e| {
             panic!("Failed to write FLAC file {}: {}", output_path.display(), e)
         });
-
-        println!(
-            "  ✓ Wrote {} bytes to {}",
-            audio_data.len(),
-            output_path.display()
-        );
     }
-
-    println!(
-        "\n✓ Test passed! Extracted {} tracks to {}",
-        tracks.len(),
-        output_dir.display()
-    );
 
     // Cleanup
     // Note: We keep the test bucket for debugging (can be manually cleaned up later)

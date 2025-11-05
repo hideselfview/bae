@@ -36,6 +36,10 @@ Handles traditional file-per-track albums and CUE/FLAC releases (single FLAC fil
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 cargo install dioxus-cli --locked
+# Install cmake (required for libflac-sys to build libFLAC from source)
+# macOS: brew install cmake
+# Linux: apt-get install cmake (or equivalent)
+# Windows: Download from https://cmake.org/download/
 ```
 
 **Quick start:**

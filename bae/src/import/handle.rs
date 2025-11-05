@@ -79,31 +79,13 @@ impl ImportHandle {
                 let (db_album, db_release, db_tracks, artists, album_artists) =
                     parse_discogs_release(&release, master_year)?;
 
-                tracing::info!(
-                    "Parsed Discogs album into database models:\n{:#?}",
-                    db_album
-                );
-                tracing::info!(
-                    "Parsed Discogs release into database models:\n{:#?}",
-                    db_release
-                );
-                tracing::info!(
-                    "Parsed Discogs tracks into database models:\n{:#?}",
-                    db_tracks
-                );
-                tracing::info!(
-                    "Parsed {} artists and {} album-artist relationships",
-                    artists.len(),
-                    album_artists.len()
-                );
-
                 // 2. Discover files
                 let discovered_files = discover_folder_files(&folder)?;
 
                 // 3. Build track-to-file mapping (validates and parses CUE sheets if present)
                 let mapping_result = map_tracks_to_files(&db_tracks, &discovered_files).await?;
                 let tracks_to_files = mapping_result.track_files.clone();
-                let cue_flac_metadata = mapping_result.cue_flac_metadata;
+                let cue_flac_metadata = mapping_result.cue_flac_metadata.clone();
 
                 // 4. Insert or lookup artists (deduplicate across imports)
                 // Build a map from parsed artist ID to actual database artist ID

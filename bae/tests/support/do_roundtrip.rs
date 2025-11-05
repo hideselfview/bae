@@ -114,10 +114,12 @@ pub async fn do_roundtrip<F, G>(
     info!("Starting import...");
     info!("Sending import request...");
 
+    let master_year = discogs_release.year.unwrap_or(1970);
     let (_album_id, release_id) = import_handle
         .send_request(ImportRequestParams::FromFolder {
             discogs_release,
             folder: album_dir.clone(),
+            master_year,
         })
         .await
         .expect("Failed to send import request");
