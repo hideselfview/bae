@@ -1,8 +1,13 @@
+mod chunk_buffer;
 mod cpal_output;
 pub mod progress;
 pub mod reassembly; // Public for tests and internal use
 pub mod service;
+mod streaming;
 pub mod symphonia_decoder;
+
+pub use chunk_buffer::ChunkBuffer;
+pub use streaming::StreamingChunkSource;
 
 pub use progress::PlaybackProgress;
 #[cfg(feature = "test-utils")]

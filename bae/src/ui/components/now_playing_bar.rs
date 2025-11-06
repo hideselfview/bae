@@ -205,6 +205,8 @@ pub fn NowPlayingBar() -> Element {
     let mut state = use_signal(|| PlaybackState::Stopped);
     let mut current_artist = use_signal(|| "Unknown Artist".to_string());
     let mut is_seeking = use_signal(|| false);
+    // Preserve track when transitioning to Loading state
+    let mut loading_track = use_signal(|| Option::<DbTrack>::None);
 
     // Subscribe to playback progress updates
     use_effect({
@@ -224,6 +226,26 @@ pub fn NowPlayingBar() -> Element {
                             // Seek error - could show user notification, but for now just ignore
                             tracing::warn!("Seek failed: requested position past track end");
                         }
+                        PlaybackProgress::Seeking {
+                            requested_position: _,
+                            track_id: _,
+                        } => {
+                            // Seek initiated but chunks are loading - show loading state
+                            // Preserve track information from current state
+                            match state() {
+                                PlaybackState::Playing { ref track, .. }
+                                | PlaybackState::Paused { ref track, .. } => {
+                                    // Preserve track for Loading state
+                                    loading_track.set(Some(track.clone()));
+                                    // Update to Loading state
+                                    state.set(PlaybackState::Loading {
+                                        track_id: track.id.clone(),
+                                    });
+                                    // Position will be updated when Seeked is received
+                                }
+                                _ => {}
+                            }
+                        }
                         PlaybackProgress::Seeked {
                             position,
                             track_id: _,
@@ -234,8 +256,8 @@ pub fn NowPlayingBar() -> Element {
                                 is_seeking.set(false);
                             }
 
-                            // Update position in state, preserving track and duration
-                            match state() {
+                            // Get track from current state or preserved loading track
+                            let (track, duration) = match state() {
                                 PlaybackState::Playing {
                                     ref track,
                                     duration,
@@ -245,24 +267,37 @@ pub fn NowPlayingBar() -> Element {
                                     ref track,
                                     duration,
                                     ..
-                                } => {
-                                    let new_state = if was_paused {
-                                        PlaybackState::Paused {
-                                            track: track.clone(),
-                                            position,
-                                            duration,
-                                        }
+                                } => (track.clone(), duration),
+                                PlaybackState::Loading { .. } => {
+                                    // Use preserved track from Loading state
+                                    if let Some(preserved_track) = loading_track() {
+                                        // Get duration from previous state if available
+                                        // For now, use None - it will be updated when playback starts
+                                        (preserved_track, None)
                                     } else {
-                                        PlaybackState::Playing {
-                                            track: track.clone(),
-                                            position,
-                                            duration,
-                                        }
-                                    };
-                                    state.set(new_state);
+                                        return; // No track available, skip
+                                    }
                                 }
-                                _ => {}
-                            }
+                                _ => return,
+                            };
+
+                            // Clear preserved track
+                            loading_track.set(None);
+
+                            let new_state = if was_paused {
+                                PlaybackState::Paused {
+                                    track,
+                                    position,
+                                    duration,
+                                }
+                            } else {
+                                PlaybackState::Playing {
+                                    track,
+                                    position,
+                                    duration,
+                                }
+                            };
+                            state.set(new_state);
                         }
                         PlaybackProgress::SeekSkipped {
                             requested_position: _,
@@ -381,9 +416,14 @@ pub fn NowPlayingBar() -> Element {
     });
 
     // Derive reactive signals from state
+    // Include Loading state track from preserved track
     let track = use_memo(move || match state() {
         PlaybackState::Playing { ref track, .. } | PlaybackState::Paused { ref track, .. } => {
             Some(track.clone())
+        }
+        PlaybackState::Loading { .. } => {
+            // Use preserved track from Loading state
+            loading_track().clone()
         }
         _ => None,
     });
