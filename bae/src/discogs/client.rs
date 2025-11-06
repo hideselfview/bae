@@ -141,6 +141,21 @@ impl DiscogsClient {
         }
     }
 
+    /// Create a new client without system proxy detection (for tests)
+    pub fn new_no_proxy(api_key: String) -> Self {
+        let client = Client::builder()
+            .no_proxy()
+            .danger_accept_invalid_certs(true) // Allow tests to run without valid CA certs
+            .build()
+            .unwrap_or_else(|_| Client::new());
+
+        Self {
+            client,
+            api_key,
+            base_url: "https://api.discogs.com".to_string(),
+        }
+    }
+
     /// Search for masters by query string
     pub async fn search_masters(
         &self,
