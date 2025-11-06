@@ -9,7 +9,6 @@ use crate::playback::symphonia_decoder::TrackDecoder;
 use crate::playback::{ChunkBuffer, StreamingChunkSource};
 use cpal::traits::StreamTrait;
 use std::collections::VecDeque;
-use std::io::Seek;
 use std::sync::{mpsc, Arc};
 use tokio::sync::mpsc as tokio_mpsc;
 use tracing::{error, info, trace, warn};
@@ -166,6 +165,12 @@ impl PlaybackService {
             }
         });
 
+        // Check if we're in test mode before spawning thread
+        let is_test_mode = std::env::var("BAE_TEST_MODE").is_ok();
+        if is_test_mode {
+            info!("BAE_TEST_MODE detected - will use mock audio output");
+        }
+
         // Spawn the service task on a dedicated thread (CPAL Stream isn't Send-safe)
         std::thread::spawn(move || {
             // Create a new tokio runtime for this thread
@@ -173,11 +178,16 @@ impl PlaybackService {
             let rt_handle = rt.handle().clone();
 
             rt.block_on(async move {
-                let audio_output = match AudioOutput::new() {
-                    Ok(output) => output,
-                    Err(e) => {
-                        error!("Failed to initialize audio output: {:?}", e);
-                        return;
+                let audio_output = if is_test_mode {
+                    info!("Test mode enabled - using mock audio output");
+                    AudioOutput::new_mock()
+                } else {
+                    match AudioOutput::new() {
+                        Ok(output) => output,
+                        Err(e) => {
+                            error!("Failed to initialize audio output: {:?}", e);
+                            return;
+                        }
                     }
                 };
 
@@ -564,6 +574,20 @@ impl PlaybackService {
             }
         }
 
+        // Log the total_samples from stored headers (for debugging)
+        if let Some(ref headers) = audio_format.flac_headers {
+            if headers.len() >= 26 {
+                let byte_21 = headers[21];
+                let total_samples = ((byte_21 & 0x0F) as u64) << 32
+                    | (headers[22] as u64) << 24
+                    | (headers[23] as u64) << 16
+                    | (headers[24] as u64) << 8
+                    | (headers[25] as u64);
+                info!("📊 Loaded headers for track {} - STREAMINFO total_samples: {} (~{:.1}s at 44100Hz)",
+                    track_id, total_samples, total_samples as f64 / 44100.0);
+            }
+        }
+
         // Create streaming chunk source
         let streaming_source = StreamingChunkSource::new(
             chunk_buffer.clone(),
@@ -599,46 +623,64 @@ impl PlaybackService {
 
         // Spawn background task to continue fetching chunks as playback progresses
         // This ensures chunks are ready before they're needed
+        // IMPORTANT: This task is seek-aware - it bases prefetching on current playback position,
+        // not sequential loading, so seeks don't cause sequential chunk loads from the beginning
         let chunk_buffer_clone = chunk_buffer.clone();
         let coords_clone = coords.clone();
         let position_shared = self.current_position_shared.clone();
+        let track_duration_clone = track_duration;
+        let chunks_span = (coords.end_chunk_index - coords.start_chunk_index + 1) as u64;
         tokio::spawn(async move {
-            // Fetch chunks in batches as playback progresses
-            // Check position periodically and ensure chunks ahead are loaded
-            let total_chunks =
-                (coords_clone.end_chunk_index - coords_clone.start_chunk_index + 1) as usize;
-            let mut last_loaded_chunk = 4; // Start from chunk 5 (0-indexed, we already loaded 5)
+            let mut last_prefetched_chunk: Option<i32> = None;
 
             loop {
-                // Estimate current chunk based on position
-                // This is approximate - we check position every second
+                // Check position periodically and ensure chunks ahead are loaded
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-                let should_continue = {
-                    let current_position = position_shared.lock().unwrap();
-                    current_position.is_some()
+                let current_position = {
+                    let pos = position_shared.lock().unwrap();
+                    *pos
                 };
-                if !should_continue {
+
+                if current_position.is_none() {
                     // Playback stopped
                     break;
                 }
 
-                // Calculate which chunk we're likely in based on position
-                // This is a rough estimate - in practice we'd track this more accurately
-                if last_loaded_chunk < total_chunks {
-                    // Load next batch of chunks
-                    let next_chunk_idx =
-                        coords_clone.start_chunk_index + last_loaded_chunk as i32 + 1;
-                    let end_chunk = (next_chunk_idx + 4).min(coords_clone.end_chunk_index);
-                    if next_chunk_idx <= coords_clone.end_chunk_index {
-                        let _ = chunk_buffer_clone
-                            .ensure_chunks_loaded(next_chunk_idx, end_chunk, 5, true)
-                            .await;
-                        last_loaded_chunk = (end_chunk - coords_clone.start_chunk_index) as usize;
+                // Calculate which chunk we're currently in based on playback position
+                // This makes the prefetch seek-aware - after a seek, it will prefetch from the new position
+                if let Some(position) = current_position {
+                    let position_ms = position.as_millis() as u64;
+                    let track_duration_ms = track_duration_clone.as_millis() as u64;
+
+                    if track_duration_ms > 0 && chunks_span > 0 {
+                        let chunk_offset = (position_ms * chunks_span) / track_duration_ms;
+                        let current_chunk = (coords_clone.start_chunk_index as u64
+                            + chunk_offset.min(chunks_span))
+                            as i32;
+
+                        // Only prefetch if we've moved to a different chunk or this is the first check
+                        // This prevents constant database queries when position hasn't changed
+                        let should_prefetch = match last_prefetched_chunk {
+                            None => true,                        // First time - always prefetch
+                            Some(last) => current_chunk != last, // Only if we've moved to a different chunk
+                        };
+
+                        if should_prefetch {
+                            // Prefetch 5 chunks ahead of current position
+                            let prefetch_start =
+                                (current_chunk + 1).max(coords_clone.start_chunk_index);
+                            let prefetch_end =
+                                (current_chunk + 5).min(coords_clone.end_chunk_index);
+
+                            if prefetch_start <= coords_clone.end_chunk_index {
+                                let _ = chunk_buffer_clone
+                                    .ensure_chunks_loaded(prefetch_start, prefetch_end, 5, true)
+                                    .await;
+                                last_prefetched_chunk = Some(current_chunk);
+                            }
+                        }
                     }
-                } else {
-                    // All chunks loaded
-                    break;
                 }
             }
         });
@@ -805,36 +847,42 @@ impl PlaybackService {
             }
         });
 
-        // Create audio stream
-        let stream = match self
-            .audio_output
-            .create_stream(decoder, position_tx, completion_tx)
-        {
-            Ok(stream) => {
-                info!("Audio stream created successfully");
-                stream
-            }
-            Err(e) => {
-                error!("Failed to create audio stream: {:?}", e);
+        // Create audio stream (skip if mock)
+        if self.audio_output.is_mock() {
+            info!("Mock mode - skipping audio stream creation");
+            self.stream = None;
+        } else {
+            let stream = match self
+                .audio_output
+                .create_stream(decoder, position_tx, completion_tx)
+            {
+                Ok(stream) => {
+                    info!("Audio stream created successfully");
+                    stream
+                }
+                Err(e) => {
+                    error!("Failed to create audio stream: {:?}", e);
+                    self.stop().await;
+                    return;
+                }
+            };
+
+            // Start playback
+            if let Err(e) = stream.play() {
+                error!("Failed to start stream: {:?}", e);
                 self.stop().await;
                 return;
             }
-        };
 
-        // Start playback
-        if let Err(e) = stream.play() {
-            error!("Failed to start stream: {:?}", e);
-            self.stop().await;
-            return;
+            info!("Stream started, sending Play command");
+
+            // Send Play command to start audio
+            self.audio_output
+                .send_command(crate::playback::cpal_output::AudioCommand::Play);
+
+            self.stream = Some(stream);
         }
 
-        info!("Stream started, sending Play command");
-
-        // Send Play command to start audio
-        self.audio_output
-            .send_command(crate::playback::cpal_output::AudioCommand::Play);
-
-        self.stream = Some(stream);
         self.current_track = Some(track.clone());
         self.current_position = Some(std::time::Duration::ZERO);
         self.current_duration = Some(track_duration);
@@ -949,36 +997,42 @@ impl PlaybackService {
             }
         });
 
-        // Create audio stream
-        let stream = match self
-            .audio_output
-            .create_stream(decoder, position_tx, completion_tx)
-        {
-            Ok(stream) => {
-                info!("Audio stream created successfully");
-                stream
-            }
-            Err(e) => {
-                error!("Failed to create audio stream: {:?}", e);
+        // Create audio stream (skip if mock)
+        if self.audio_output.is_mock() {
+            info!("Mock mode - skipping audio stream creation");
+            self.stream = None;
+        } else {
+            let stream = match self
+                .audio_output
+                .create_stream(decoder, position_tx, completion_tx)
+            {
+                Ok(stream) => {
+                    info!("Audio stream created successfully");
+                    stream
+                }
+                Err(e) => {
+                    error!("Failed to create audio stream: {:?}", e);
+                    self.stop().await;
+                    return;
+                }
+            };
+
+            // Start playback
+            if let Err(e) = stream.play() {
+                error!("Failed to start stream: {:?}", e);
                 self.stop().await;
                 return;
             }
-        };
 
-        // Start playback
-        if let Err(e) = stream.play() {
-            error!("Failed to start stream: {:?}", e);
-            self.stop().await;
-            return;
+            info!("Stream started, sending Play command");
+
+            // Send Play command to start audio
+            self.audio_output
+                .send_command(crate::playback::cpal_output::AudioCommand::Play);
+
+            self.stream = Some(stream);
         }
 
-        info!("Stream started, sending Play command");
-
-        // Send Play command to start audio
-        self.audio_output
-            .send_command(crate::playback::cpal_output::AudioCommand::Play);
-
-        self.stream = Some(stream);
         self.current_track = Some(track.clone());
         self.current_position = Some(std::time::Duration::ZERO);
         self.current_duration = Some(track_duration);
@@ -1347,32 +1401,38 @@ impl PlaybackService {
 
         trace!("Seek: Creating new audio stream");
 
-        // Reuse existing audio output (don't create a new one)
-        let stream = match self
-            .audio_output
-            .create_stream(decoder, position_tx, completion_tx)
-        {
-            Ok(stream) => {
-                trace!("Seek: Audio stream created successfully");
-                stream
-            }
-            Err(e) => {
-                error!("Failed to create audio stream for seek: {:?}", e);
+        // Create audio stream (skip if mock)
+        if self.audio_output.is_mock() {
+            trace!("Mock mode - skipping audio stream creation for seek");
+            self.stream = None;
+        } else {
+            // Reuse existing audio output (don't create a new one)
+            let stream = match self
+                .audio_output
+                .create_stream(decoder, position_tx, completion_tx)
+            {
+                Ok(stream) => {
+                    trace!("Seek: Audio stream created successfully");
+                    stream
+                }
+                Err(e) => {
+                    error!("Failed to create audio stream for seek: {:?}", e);
+                    self.stop().await;
+                    return;
+                }
+            };
+
+            // Start playback from seeked position
+            if let Err(e) = stream.play() {
+                error!("Failed to start stream after seek: {:?}", e);
                 self.stop().await;
                 return;
             }
-        };
 
-        // Start playback from seeked position
-        if let Err(e) = stream.play() {
-            error!("Failed to start stream after seek: {:?}", e);
-            self.stop().await;
-            return;
+            trace!("Seek: Stream started successfully");
+
+            self.stream = Some(stream);
         }
-
-        trace!("Seek: Stream started successfully");
-
-        self.stream = Some(stream);
 
         // Update shared position
         *self.current_position_shared.lock().unwrap() = Some(position);
@@ -1501,22 +1561,61 @@ impl PlaybackService {
             let track_duration_ms = (coords.end_time_ms - coords.start_time_ms) as u64;
             let chunks_span = (coords.end_chunk_index - coords.start_chunk_index) as u64;
 
+            // Load chunks around the seek position BEFORE creating the decoder
+            // This prevents Symphonia from blocking on sequential chunk loads
             if track_duration_ms > 0 && chunks_span > 0 {
                 let seek_time_ms = position.as_millis() as u64;
                 let chunk_offset = (seek_time_ms * chunks_span) / track_duration_ms;
                 let estimated_chunk =
                     (coords.start_chunk_index as u64 + chunk_offset.min(chunks_span)) as i32;
 
-                // Start loading chunks around seek position immediately (don't wait, but prioritize)
-                // This ensures chunks are loading while decoder is created
-                let chunk_buffer_clone = chunk_buffer.clone();
-                let start_chunk = (estimated_chunk - 5).max(coords.start_chunk_index);
-                let end_chunk = (estimated_chunk + 5).min(coords.end_chunk_index);
-                tokio::spawn(async move {
-                    let _ = chunk_buffer_clone
-                        .ensure_chunks_loaded(start_chunk, end_chunk, 0, true)
-                        .await;
-                });
+                let start_chunk = (estimated_chunk - 10).max(coords.start_chunk_index);
+                let end_chunk = (estimated_chunk + 10).min(coords.end_chunk_index);
+
+                tracing::debug!(
+                    "Pre-loading chunks {}-{} for seek to {}s (estimated chunk: {})",
+                    start_chunk,
+                    end_chunk,
+                    position.as_secs(),
+                    estimated_chunk
+                );
+
+                // WAIT for chunks to load before creating decoder
+                // This prevents Symphonia from triggering sequential chunk loads
+                match chunk_buffer
+                    .ensure_chunks_loaded(start_chunk, end_chunk, 0, true)
+                    .await
+                {
+                    Ok(count) => {
+                        tracing::debug!("Pre-loaded {} chunks around seek target", count);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to pre-load chunks for seek: {}", e);
+                        // Continue anyway, chunks will load on-demand
+                    }
+                }
+
+                // Also pre-load the last few chunks of the track
+                // Symphonia seeks to End(0) to determine file size, so we need these loaded
+                let last_chunk_start = (coords.end_chunk_index - 5).max(coords.start_chunk_index);
+                if last_chunk_start > end_chunk {
+                    tracing::debug!(
+                        "Pre-loading last chunks {}-{} for Symphonia's End(0) seek",
+                        last_chunk_start,
+                        coords.end_chunk_index
+                    );
+                    match chunk_buffer
+                        .ensure_chunks_loaded(last_chunk_start, coords.end_chunk_index, 0, true)
+                        .await
+                    {
+                        Ok(count) => {
+                            tracing::debug!("Pre-loaded {} chunks at track end", count);
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to pre-load end chunks: {}", e);
+                        }
+                    }
+                }
             }
 
             // Create streaming source and try to seek
@@ -1529,60 +1628,26 @@ impl PlaybackService {
                 self.runtime_handle.clone(),
             );
 
+            // Check if this is a backward seek before creating the decoder
+            // We need to compare against current playback position, not the fresh decoder's position
+            let is_backward_seek = position < current_position;
+
             // Try to create decoder and seek normally
+            // With track-specific seektables injected into headers, Symphonia should handle seeks efficiently
             match TrackDecoder::from_streaming_source(streaming_source) {
                 Ok(mut decoder) => {
-                    // Try to seek decoder to the target time position
-                    let seek_result = decoder.seek(position);
-
-                    // If seeking failed, we need to load chunks at target position and recreate decoder
-                    if seek_result.is_err() {
-                        warn!(
-                            "Seek failed (likely ForwardOnly), loading chunks at target position: {:?}",
-                            seek_result.as_ref().unwrap_err()
+                    if is_backward_seek {
+                        info!(
+                            "Backward seek detected (from {}s to {}s), recreating decoder",
+                            current_position.as_secs(),
+                            position.as_secs()
                         );
 
-                        // Emit Seeking state so UI can show loading indicator
-                        let _ = self.progress_tx.send(PlaybackProgress::Seeking {
-                            requested_position: position,
-                            track_id: track_id.clone(),
-                        });
+                        // Drop the old decoder and create a new one
+                        drop(decoder);
 
-                        // Calculate which chunk we need for the seek position
-                        let track_duration_ms = (coords.end_time_ms - coords.start_time_ms) as u64;
-                        let chunks_span =
-                            (coords.end_chunk_index - coords.start_chunk_index) as u64;
-                        let estimated_chunk = if track_duration_ms > 0 && chunks_span > 0 {
-                            let seek_time_ms = position.as_millis() as u64;
-                            let chunk_offset = (seek_time_ms * chunks_span) / track_duration_ms;
-                            (coords.start_chunk_index as u64 + chunk_offset.min(chunks_span)) as i32
-                        } else {
-                            coords.start_chunk_index
-                        };
-
-                        // Load chunks at target position (wait for them to be available)
-                        // We need at least a few chunks loaded before creating the decoder
-                        let start_chunk = (estimated_chunk - 2).max(coords.start_chunk_index);
-                        let end_chunk = (estimated_chunk + 2).min(coords.end_chunk_index);
-                        match chunk_buffer
-                            .ensure_chunks_loaded(start_chunk, end_chunk, 3, true)
-                            .await
-                        {
-                            Ok(count) => {
-                                if count == 0 {
-                                    warn!("No chunks loaded at seek position, falling back");
-                                    return self.seek_legacy_fallback(position).await;
-                                }
-                            }
-                            Err(e) => {
-                                error!("Failed to load chunks at seek position: {}", e);
-                                return self.seek_legacy_fallback(position).await;
-                            }
-                        }
-
-                        // Create new stream and seek it to near the target position
-                        // This allows Symphonia to probe from near the target, avoiding the ForwardOnly issue
-                        let mut new_stream = StreamingChunkSource::new(
+                        // Create fresh streaming source
+                        let new_streaming_source = StreamingChunkSource::new(
                             chunk_buffer.clone(),
                             coords.clone(),
                             self.chunk_size_bytes,
@@ -1590,115 +1655,52 @@ impl PlaybackService {
                             self.runtime_handle.clone(),
                         );
 
-                        // Calculate target byte position in the stream
-                        // We'll seek to a position slightly before the target to ensure Symphonia can probe correctly
-                        let headers_size = audio_format
-                            .flac_headers
-                            .as_ref()
-                            .map(|h| h.len())
-                            .unwrap_or(0);
-                        let track_duration_ms = (coords.end_time_ms - coords.start_time_ms) as u64;
-                        let track_start_offset = coords.start_byte_offset as usize;
-                        let chunks_span =
-                            (coords.end_chunk_index - coords.start_chunk_index) as usize;
-                        let track_size = if chunks_span == 0 {
-                            coords.end_byte_offset as usize - track_start_offset
-                        } else {
-                            let start_chunk_remainder = self.chunk_size_bytes - track_start_offset;
-                            let middle_chunks =
-                                chunks_span.saturating_sub(1) * self.chunk_size_bytes;
-                            start_chunk_remainder + middle_chunks + coords.end_byte_offset as usize
-                        };
-
-                        // Estimate byte position for the seek target
-                        let seek_byte = if track_duration_ms > 0 {
-                            let seek_time_ms = position.as_millis() as u64;
-                            let estimated_byte =
-                                (seek_time_ms * track_size as u64) / track_duration_ms;
-                            // Seek to 1 chunk before the target to give Symphonia room to probe
-                            estimated_byte.saturating_sub(self.chunk_size_bytes as u64)
-                        } else {
-                            0
-                        };
-
-                        // If seeking near the beginning (within 2 chunks), start from 0 to let Symphonia probe correctly
-                        let stream_seek_pos = if seek_byte < (self.chunk_size_bytes * 2) as u64 {
-                            info!(
-                                "Seek target near beginning ({}s), starting from position 0",
-                                position.as_secs()
-                            );
-                            0
-                        } else {
-                            headers_size as u64 + seek_byte
-                        };
-
-                        // Seek the stream to the calculated position
-                        match new_stream.seek(std::io::SeekFrom::Start(stream_seek_pos)) {
-                            Ok(pos) => {
-                                info!(
-                                    "Seeked stream to byte {} (near target {}s)",
-                                    pos,
-                                    position.as_secs()
-                                );
-                            }
-                            Err(e) => {
-                                warn!("Failed to seek stream to target position: {:?}, starting from beginning", e);
-                                // If seeking the stream fails, start from 0
-                                let _ = new_stream.seek(std::io::SeekFrom::Start(0));
-                            }
-                        }
-
-                        // Continue loading remaining chunks in background
-                        let chunk_buffer_clone = chunk_buffer.clone();
-                        let start_chunk_bg = (estimated_chunk - 5).max(coords.start_chunk_index);
-                        let end_chunk_bg = (estimated_chunk + 5).min(coords.end_chunk_index);
-                        tokio::spawn(async move {
-                            let _ = chunk_buffer_clone
-                                .ensure_chunks_loaded(start_chunk_bg, end_chunk_bg, 0, true)
-                                .await;
-                        });
-
-                        // Create decoder from stream near target position (allows Symphonia to probe correctly)
-                        // Then try to seek the decoder (should work now as forward-only seek)
-                        match TrackDecoder::from_streaming_source(new_stream) {
+                        // Create new decoder
+                        match TrackDecoder::from_streaming_source(new_streaming_source) {
                             Ok(mut new_decoder) => {
-                                // Now try to seek again - should work as forward-only seek
-                                match new_decoder.seek(position) {
-                                    Ok(_) => {
-                                        info!(
-                                            "Second seek attempt succeeded to {}s",
-                                            position.as_secs()
-                                        );
+                                // Check if we need to seek from the beginning
+                                // Fresh decoder starts at position 0, so only seek if target != 0
+                                if position.as_secs() > 0 {
+                                    match new_decoder.seek(position) {
+                                        Ok(_) => {
+                                            info!(
+                                                "Backward seek to {}s succeeded",
+                                                position.as_secs()
+                                            );
+                                            new_decoder
+                                        }
+                                        Err(e) => {
+                                            error!(
+                                                "Backward seek to {}s failed: {:?}",
+                                                position.as_secs(),
+                                                e
+                                            );
+                                            return self.seek_legacy_fallback(position).await;
+                                        }
                                     }
-                                    Err(e) => {
-                                        warn!("Second seek attempt failed: {:?}", e);
-                                        // If seek still fails, at least we're starting from near the target
-                                        // Emit Seeked with the current decoder position so UI updates
-                                        let current_pos = new_decoder.position();
-                                        warn!(
-                                            "Emitting Seeked at position {}s after failed seek",
-                                            current_pos.as_secs()
-                                        );
-                                        let _ = self.progress_tx.send(PlaybackProgress::Seeked {
-                                            position: current_pos,
-                                            track_id: track_id.clone(),
-                                            was_paused: false,
-                                        });
-                                    }
+                                } else {
+                                    // Already at position 0, no need to seek
+                                    info!("Backward seek to 0s - fresh decoder already at start");
+                                    new_decoder
                                 }
-                                new_decoder
                             }
                             Err(e) => {
-                                error!(
-                                    "Failed to create new decoder after loading chunks: {:?}",
-                                    e
-                                );
+                                error!("Failed to create new decoder for backward seek: {:?}", e);
                                 return self.seek_legacy_fallback(position).await;
                             }
                         }
                     } else {
-                        // Seek succeeded - use decoder as-is
-                        decoder
+                        // Forward seek - use existing decoder
+                        match decoder.seek(position) {
+                            Ok(_) => {
+                                info!("Forward seek to {}s succeeded", position.as_secs());
+                                decoder
+                            }
+                            Err(e) => {
+                                error!("Forward seek to {}s failed: {:?}", position.as_secs(), e);
+                                return self.seek_legacy_fallback(position).await;
+                            }
+                        }
                     }
                 }
                 Err(e) => {
