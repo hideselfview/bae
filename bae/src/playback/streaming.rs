@@ -91,12 +91,28 @@ impl Read for StreamingChunkSource {
         // Calculate byte offset within that chunk
         let byte_offset_in_chunk = total_bytes_from_chunk_start % self.chunk_size_bytes;
 
+        // Log chunk calculation for debugging (only for large seeks)
+        if self.track_bytes_read > 10000000 {
+            debug!(
+                "📦 Read from track_bytes_read={}, calculated chunk_index={} (offset={}, start_chunk={}, total_from_start={})",
+                self.track_bytes_read, chunk_index, byte_offset_in_chunk, self.coords.start_chunk_index, total_bytes_from_chunk_start
+            );
+        }
+
         // Check if we've exceeded the track bounds
         // We need to check if we've gone past end_byte_offset in the last chunk
         if chunk_index > self.coords.end_chunk_index {
+            warn!(
+                "EOF: chunk {} exceeds end chunk {}",
+                chunk_index, self.coords.end_chunk_index
+            );
             return Ok(0); // EOF - past end chunk
         }
         if chunk_index == self.coords.end_chunk_index && byte_offset_in_chunk >= track_end_offset {
+            warn!(
+                "EOF: at end chunk {} with offset {} >= end_offset {}",
+                chunk_index, byte_offset_in_chunk, track_end_offset
+            );
             return Ok(0); // EOF - past end offset in last chunk
         }
 
@@ -146,6 +162,10 @@ impl Read for StreamingChunkSource {
             .min(bytes_remaining_in_track);
 
         if bytes_to_read == 0 {
+            warn!(
+                "EOF: bytes_to_read=0, buf_len={}, remaining_in_chunk={}, remaining_in_track={}, chunk={}, offset={}",
+                buf.len(), bytes_remaining_in_chunk, bytes_remaining_in_track, chunk_index, byte_offset_in_chunk
+            );
             return Ok(0); // EOF
         }
 
@@ -162,10 +182,13 @@ impl Read for StreamingChunkSource {
         }
         self.total_bytes_read += bytes_to_read;
 
-        debug!(
-            "Read {} bytes from chunk {} at offset {} (track position: {})",
-            bytes_to_read, chunk_index, byte_offset_in_chunk, self.track_bytes_read
-        );
+        // Only log every 100th read or large reads to avoid spam
+        if bytes_to_read > 32768 || self.total_bytes_read % 3276800 == 0 {
+            debug!(
+                "Read {} bytes from chunk {} at offset {} (track position: {})",
+                bytes_to_read, chunk_index, byte_offset_in_chunk, self.track_bytes_read
+            );
+        }
 
         Ok(bytes_to_read)
     }
@@ -173,6 +196,8 @@ impl Read for StreamingChunkSource {
 
 impl Seek for StreamingChunkSource {
     fn seek(&mut self, pos: SeekFrom) -> IoResult<u64> {
+        debug!("🔍 StreamingChunkSource::seek called with {:?}", pos);
+
         let headers_size = self.headers.as_ref().map(|h| h.len()).unwrap_or(0);
 
         // Calculate track size properly (accounting for chunks it spans)
@@ -189,6 +214,11 @@ impl Seek for StreamingChunkSource {
             let middle_chunks_bytes = chunks_span.saturating_sub(1) * self.chunk_size_bytes;
             start_chunk_remainder + middle_chunks_bytes + track_end_offset
         };
+
+        debug!(
+            "🔍 Seek context: headers_size={}, track_size={}, current track_bytes_read={}",
+            headers_size, track_size, self.track_bytes_read
+        );
 
         let new_pos = match pos {
             SeekFrom::Start(pos) => {
@@ -247,6 +277,11 @@ impl Seek for StreamingChunkSource {
                 new_pos as u64
             }
         };
+
+        debug!(
+            "🔍 Seek completed: new_pos={}, track_bytes_read={}",
+            new_pos, self.track_bytes_read
+        );
 
         Ok(new_pos)
     }
