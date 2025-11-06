@@ -3,7 +3,7 @@ use crate::import::types::{CueFlacLayoutData, FileToChunks, TrackFile};
 use crate::library::LibraryManager;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// Service responsible for persisting track metadata to the database.
 ///
@@ -126,25 +126,186 @@ impl<'a> MetadataPersister<'a> {
                 track_id, start_byte_offset, end_byte_offset, start_chunk_index, end_chunk_index
             );
 
-            // For CUE/FLAC, we store the original album FLAC headers and seektable
-            // Playback will download track's chunks, prepend headers,
-            // and use Symphonia to seek to the track's time position and decode
-            // The seektable enables accurate seeking by mapping sample positions to byte positions
-            let flac_seektable = if let Some(ref seektable) = cue_flac_layout.seektable {
-                Some(
-                    bincode::serialize(seektable)
-                        .map_err(|e| format!("Failed to serialize seektable: {}", e))?,
-                )
+            // For CUE/FLAC, we create track-specific headers with an injected seektable
+            // The seektable is track-relative (sample 0 = track start) so Symphonia can seek efficiently
+            let (track_headers, serialized_seektable) = if let Some(ref album_seektable) =
+                cue_flac_layout.seektable
+            {
+                use crate::cue_flac::update_headers_with_seektable;
+                use std::collections::HashMap;
+
+                // Calculate track's sample range from time range
+                // Assume 44.1kHz sample rate (standard for CD audio)
+                let sample_rate = 44100u64;
+                let track_start_sample = (cue_track.start_time_ms * sample_rate) / 1000;
+                let track_end_sample = if let Some(end_ms) = cue_track.end_time_ms {
+                    (end_ms * sample_rate) / 1000
+                } else {
+                    u64::MAX // Last track goes to end of file
+                };
+
+                // Filter album seektable to track range and make track-relative
+                // We filter by byte range (authoritative) and adjust sample numbers to be track-relative
+
+                // First, collect seekpoints within the track's byte range
+                let filtered_seekpoints: Vec<(u64, u64)> = album_seektable
+                    .iter()
+                    .filter_map(|(sample, byte)| {
+                        if *byte >= *start_byte as u64 && *byte < *end_byte as u64 {
+                            Some((*sample, *byte))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                // Find the minimum sample number in the filtered set
+                // This will be our "sample 0" for the track
+                let min_sample = filtered_seekpoints
+                    .iter()
+                    .map(|(sample, _)| *sample)
+                    .min()
+                    .unwrap_or(0);
+
+                // Now make everything relative to the track's actual start
+                warn!(
+                    "Track {}: making seekpoints track-relative (start_byte: {}, end_byte: {})",
+                    track_id, start_byte, end_byte
+                );
+                let track_seektable: HashMap<u64, u64> = filtered_seekpoints
+                    .into_iter()
+                    .map(|(sample, byte)| {
+                        let track_relative_sample = sample.saturating_sub(min_sample);
+                        let track_relative_byte = byte - (*start_byte as u64);
+                        (track_relative_sample, track_relative_byte)
+                    })
+                    .collect();
+
+                if track_seektable.is_empty() {
+                    warn!(
+                        "Track {}: No seekpoints found in track range! This will cause ForwardOnly errors. Track range: samples {}-{}, bytes {}-{}",
+                        track_id, track_start_sample, track_end_sample, start_byte, end_byte
+                    );
+                } else {
+                    warn!(
+                        "Track {}: created track-specific seektable with {} seekpoints (album had {})",
+                        track_id,
+                        track_seektable.len(),
+                        album_seektable.len()
+                    );
+
+                    // Log first and last seekpoints for debugging
+                    if let (Some(first_sample), Some(last_sample)) =
+                        (track_seektable.keys().min(), track_seektable.keys().max())
+                    {
+                        let actual_track_duration_s = (last_sample - first_sample) / sample_rate;
+                        warn!(
+                            "Track {}: seektable range: sample {} to {} (track duration: ~{}s)",
+                            track_id, first_sample, last_sample, actual_track_duration_s
+                        );
+
+                        // Log seekpoint density
+                        // Use actual seektable range for duration (handles last track correctly)
+                        let actual_duration_samples = last_sample - first_sample;
+                        let avg_samples_per_seekpoint = if track_seektable.len() > 1 {
+                            actual_duration_samples / (track_seektable.len() as u64 - 1)
+                        } else {
+                            0
+                        };
+                        let avg_seconds_per_seekpoint =
+                            avg_samples_per_seekpoint as f64 / sample_rate as f64;
+                        warn!(
+                            "Track {}: seekpoint density: ~{:.1}s between seekpoints (avg {} samples)",
+                            track_id, avg_seconds_per_seekpoint, avg_samples_per_seekpoint
+                        );
+                    }
+                }
+
+                // Use metaflac library to properly update STREAMINFO and inject seektable
+                // This is much cleaner than manual byte manipulation!
+                let (track_headers, serialized_seektable) = if let (
+                    Some(first_sample),
+                    Some(last_sample),
+                ) =
+                    (track_seektable.keys().min(), track_seektable.keys().max())
+                {
+                    let track_total_samples = last_sample - first_sample;
+
+                    // First pass: create headers to determine header size
+                    let temp_headers = update_headers_with_seektable(
+                        &cue_flac_layout.flac_headers.headers,
+                        track_total_samples,
+                        &track_seektable,
+                    )
+                    .map_err(|e| format!("Failed to create temp headers: {}", e))?;
+
+                    let header_size = temp_headers.len() as u64;
+
+                    // Second pass: adjust seektable offsets to account for prepended headers
+                    // When StreamingChunkSource prepends headers, Symphonia expects seektable
+                    // offsets to be relative to the first audio frame AFTER the headers
+                    let track_seektable_with_header_offset: HashMap<u64, u64> = track_seektable
+                        .iter()
+                        .map(|(sample, byte)| (*sample, byte + header_size))
+                        .collect();
+
+                    // Create final headers with adjusted seektable
+                    let final_headers = update_headers_with_seektable(
+                        &cue_flac_layout.flac_headers.headers,
+                        track_total_samples,
+                        &track_seektable_with_header_offset,
+                    )
+                    .map_err(|e| format!("Failed to update headers: {}", e))?;
+
+                    let final_header_size = final_headers.len();
+
+                    // Debug: log some seekpoints to verify they're correct
+                    let mut sorted_samples: Vec<u64> =
+                        track_seektable_with_header_offset.keys().copied().collect();
+                    sorted_samples.sort();
+                    if sorted_samples.len() >= 3 {
+                        let first = sorted_samples[0];
+                        let mid = sorted_samples[sorted_samples.len() / 2];
+                        let last = sorted_samples[sorted_samples.len() - 1];
+                        warn!(
+                                "Track {}: Seekpoint samples: first={} (offset={}), mid={} (offset={}), last={} (offset={})",
+                                track_id,
+                                first, track_seektable_with_header_offset.get(&first).unwrap(),
+                                mid, track_seektable_with_header_offset.get(&mid).unwrap(),
+                                last, track_seektable_with_header_offset.get(&last).unwrap(),
+                            );
+                    }
+
+                    warn!(
+                        "Track {}: created headers with {} seekpoints (header size: {} bytes)",
+                        track_id,
+                        track_seektable_with_header_offset.len(),
+                        final_header_size
+                    );
+
+                    // Serialize for storage
+                    let serialized = Some(
+                        bincode::serialize(&track_seektable_with_header_offset)
+                            .map_err(|e| format!("Failed to serialize track seektable: {}", e))?,
+                    );
+
+                    (final_headers, serialized)
+                } else {
+                    (cue_flac_layout.flac_headers.headers.clone(), None)
+                };
+
+                (track_headers, serialized_seektable)
             } else {
-                None
+                // No seektable available
+                (cue_flac_layout.flac_headers.headers.clone(), None)
             };
 
             let audio_format = DbAudioFormat::new_with_seektable(
                 track_id,
                 "flac",
-                Some(cue_flac_layout.flac_headers.headers.clone()), // Original album headers
-                flac_seektable, // Serialized seektable for accurate seeking
-                true,           // needs_headers = true for CUE/FLAC
+                Some(track_headers), // Headers with track-specific seektable injected
+                serialized_seektable, // Serialized track-relative seektable
+                true,                // needs_headers = true for CUE/FLAC
             );
             self.library
                 .add_audio_format(&audio_format)
