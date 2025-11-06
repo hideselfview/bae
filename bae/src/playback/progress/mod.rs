@@ -34,4 +34,10 @@ pub enum PlaybackProgress {
         requested_position: Duration,
         current_position: Duration,
     },
+    /// Seek completed but chunks are loading - playback will start when data is available
+    /// UI should show loading state and keep position at requested_position
+    Seeking {
+        requested_position: Duration,
+        track_id: String,
+    },
 }
