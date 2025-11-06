@@ -46,12 +46,13 @@ impl std::error::Error for AudioError {}
 
 /// Audio output manager using CPAL
 pub struct AudioOutput {
-    device: Device,
-    stream_config: StreamConfig,
+    device: Option<Device>,
+    stream_config: Option<StreamConfig>,
     command_tx: mpsc::Sender<AudioCommand>,
     is_playing: Arc<AtomicBool>,
     is_paused: Arc<AtomicBool>,
     volume: Arc<AtomicU32>, // 0-10000 (0.0-1.0 scaled)
+    is_mock: bool,
 }
 
 impl AudioOutput {
@@ -86,13 +87,28 @@ impl AudioOutput {
         };
 
         Ok(Self {
-            device,
-            stream_config,
+            device: Some(device),
+            stream_config: Some(stream_config),
             command_tx,
             is_playing: Arc::new(AtomicBool::new(false)),
             is_paused: Arc::new(AtomicBool::new(false)),
             volume: Arc::new(AtomicU32::new(initial_volume)),
+            is_mock: false,
         })
+    }
+
+    /// Create a mock audio output for tests (no actual audio device)
+    pub fn new_mock() -> Self {
+        let (command_tx, _command_rx) = mpsc::channel();
+        Self {
+            device: None,
+            stream_config: None,
+            command_tx,
+            is_playing: Arc::new(AtomicBool::new(false)),
+            is_paused: Arc::new(AtomicBool::new(false)),
+            volume: Arc::new(AtomicU32::new(0)), // Muted
+            is_mock: true,
+        }
     }
 
     /// Create a stream with decoder callback
@@ -102,8 +118,22 @@ impl AudioOutput {
         position_tx: mpsc::Sender<std::time::Duration>,
         completion_tx: mpsc::Sender<()>,
     ) -> Result<Stream, AudioError> {
-        let sample_rate = self.stream_config.sample_rate.0;
-        let channels = self.stream_config.channels as usize;
+        // If mock, return a dummy stream that does nothing
+        if self.is_mock {
+            info!("Mock audio output - creating dummy stream");
+            // We need to return a Stream, but we can't create a fake one
+            // Instead, we'll need to spawn a thread that simulates playback
+            return Err(AudioError::DeviceNotFound); // For now, let service handle this
+        }
+
+        let device = self.device.as_ref().ok_or(AudioError::DeviceNotFound)?;
+        let stream_config = self
+            .stream_config
+            .as_ref()
+            .ok_or(AudioError::DeviceNotFound)?;
+
+        let sample_rate = stream_config.sample_rate.0;
+        let channels = stream_config.channels as usize;
         let decoder_sample_rate = decoder.sample_rate();
 
         // Sample rate conversion factor
@@ -128,10 +158,9 @@ impl AudioOutput {
         let mut last_position_update = std::time::Instant::now();
         let position_update_interval = std::time::Duration::from_millis(250);
 
-        let stream = self
-            .device
+        let stream = device
             .build_output_stream(
-                &self.stream_config,
+                stream_config,
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                     // Check commands
                     while let Ok(cmd) = command_rx.try_recv() {
@@ -323,6 +352,10 @@ impl AudioOutput {
 
     pub fn set_volume(&self, volume: f32) {
         self.send_command(AudioCommand::SetVolume(volume));
+    }
+
+    pub fn is_mock(&self) -> bool {
+        self.is_mock
     }
 }
 
