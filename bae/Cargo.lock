@@ -853,6 +853,7 @@ dependencies = [
  "keyring",
  "libc",
  "libflac-sys",
+ "metaflac",
  "nom",
  "rand 0.8.5",
  "rayon",
@@ -871,6 +872,7 @@ dependencies = [
  "tower 0.4.13",
  "tower-http 0.5.2",
  "tracing",
+ "tracing-log",
  "tracing-subscriber",
  "uuid",
 ]
@@ -4083,6 +4085,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "metaflac"
+version = "0.2.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fdf25a3451319c52a4a56d956475fbbb763bfb8420e2187d802485cb0fd8d965"
+dependencies = [
+ "byteorder",
+ "hex",
 ]
 
 [[package]]

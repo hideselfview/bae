@@ -40,11 +40,13 @@ symphonia = { version = "0.5", features = ["flac"] }  # Audio processing for pre
 flacenc = "0.4"         # FLAC encoding for CUE/FLAC splitting
 libflac-sys = "0.3.4"    # FFI bindings to libFLAC for seektable generation
 libc = "0.2"            # C types for libflac-sys FFI
+metaflac = "0.2.8"      # FLAC metadata manipulation
 rayon = "1.10"          # Parallel processing for CUE/FLAC splitting
 cpal = "0.15"           # Cross-platform audio I/O
 dotenvy = "0.15"        # .env file loading for dev mode
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }  # Logging configuration
+tracing-log = "0.2"  # Bridge log crate to tracing (for Symphonia logs)
 futures = "0.3.31"
 tokio-stream = "0.1.17"
 souvlaki = "0.8"
