@@ -340,6 +340,369 @@ impl CueFlacProcessor {
     }
 }
 
+/// Updates STREAMINFO and injects a seektable into FLAC headers using the metaflac library
+///
+/// This replaces our manual byte manipulation with a proper library.
+pub fn update_headers_with_seektable(
+    headers: &[u8],
+    new_total_samples: u64,
+    seektable: &std::collections::HashMap<u64, u64>,
+) -> Result<Vec<u8>, String> {
+    use std::io::Cursor;
+    use tracing::info;
+
+    // Read the existing headers using metaflac
+    let mut cursor = Cursor::new(headers);
+    let mut tag = metaflac::Tag::read_from(&mut cursor)
+        .map_err(|e| format!("Failed to parse FLAC headers: {}", e))?;
+
+    // Update STREAMINFO with new total_samples
+    if let Some(mut streaminfo) = tag.get_streaminfo().cloned() {
+        streaminfo.total_samples = new_total_samples;
+        tag.set_streaminfo(streaminfo);
+        info!(
+            "✅ Updated STREAMINFO total_samples to {}",
+            new_total_samples
+        );
+    } else {
+        return Err("No STREAMINFO block found".to_string());
+    }
+
+    // Remove any existing seektable
+    tag.remove_blocks(metaflac::BlockType::SeekTable);
+
+    // Create new seektable from our HashMap
+    let mut seekpoints: Vec<(u64, u64)> = seektable.iter().map(|(s, b)| (*s, *b)).collect();
+    seekpoints.sort_by_key(|(sample, _)| *sample);
+
+    // Log first, middle, and last seekpoint for debugging
+    if !seekpoints.is_empty() {
+        let first = seekpoints[0];
+        let mid = seekpoints[seekpoints.len() / 2];
+        let last = seekpoints[seekpoints.len() - 1];
+        info!(
+            "📊 Injecting seektable: first sample={} offset={}, mid sample={} offset={}, last sample={} offset={}",
+            first.0, first.1, mid.0, mid.1, last.0, last.1
+        );
+    }
+
+    // Create SeekPoints using from_bytes since the fields are private
+    let metaflac_seekpoints: Vec<metaflac::block::SeekPoint> = seekpoints
+        .into_iter()
+        .map(|(sample, byte_offset)| {
+            // Encode as 18 bytes: 8 bytes sample + 8 bytes offset + 2 bytes num_samples
+            let mut bytes = Vec::with_capacity(18);
+            bytes.extend_from_slice(&sample.to_be_bytes());
+            bytes.extend_from_slice(&byte_offset.to_be_bytes());
+            bytes.extend_from_slice(&0u16.to_be_bytes()); // num_samples = 0 (unknown)
+            metaflac::block::SeekPoint::from_bytes(&bytes)
+        })
+        .collect();
+
+    let seektable_block = metaflac::Block::SeekTable(metaflac::block::SeekTable {
+        seekpoints: metaflac_seekpoints,
+    });
+    tag.push_block(seektable_block);
+
+    info!(
+        "✅ Injected seektable with {} seekpoints using metaflac",
+        seektable.len()
+    );
+
+    // Write the modified headers to a Vec<u8>
+    let mut output = Vec::new();
+    tag.write_to(&mut output)
+        .map_err(|e| format!("Failed to write FLAC headers: {}", e))?;
+
+    Ok(output)
+}
+
+/// Updates the total_samples field in a FLAC STREAMINFO block
+///
+/// STREAMINFO structure (34 bytes of data after 4-byte header):
+/// - Bytes 0-1: min_blocksize (16 bits)
+/// - Bytes 2-3: max_blocksize (16 bits)  
+/// - Bytes 4-6: min_framesize (24 bits)
+/// - Bytes 7-9: max_framesize (24 bits)
+/// - Bytes 10-17: sample_rate (20 bits), channels (3 bits), bits_per_sample (5 bits), total_samples (36 bits)
+/// - Bytes 18-33: MD5 signature (128 bits)
+///
+/// The total_samples field is 36 bits starting at bit 64 of the STREAMINFO data.
+pub fn update_streaminfo_total_samples(
+    headers: &[u8],
+    new_total_samples: u64,
+) -> Result<Vec<u8>, String> {
+    if headers.len() < 42 {
+        return Err("Headers too short to contain STREAMINFO".to_string());
+    }
+
+    if &headers[0..4] != b"fLaC" {
+        return Err("Invalid FLAC headers".to_string());
+    }
+
+    let mut result = headers.to_vec();
+
+    // STREAMINFO is always the first metadata block after "fLaC"
+    // Block header at bytes 4-7, block data starts at byte 8
+    let block_type = headers[4] & 0x7F;
+    if block_type != 0 {
+        return Err(format!(
+            "First block is not STREAMINFO (type {})",
+            block_type
+        ));
+    }
+
+    // total_samples is a 36-bit field within the 64-bit packed field at bytes 10-17
+    // It starts at bit 28 of that packed field (after 20 bits sample_rate + 3 bits channels + 5 bits bps)
+    // In file bytes: starts at bit 4 of byte 13 (file offset 21 = 4 fLaC + 4 header + 13)
+    //
+    // Layout:
+    // - Byte 13 (file offset 21): upper 4 bits are bits_per_sample, lower 4 bits are total_samples bits 35-32
+    // - Bytes 14-17 (file offsets 22-25): total_samples bits 31-0
+
+    let streaminfo_data_offset = 8; // After fLaC + block header
+    let byte_13_offset = streaminfo_data_offset + 13; // Byte 13 of STREAMINFO data
+
+    // Read the existing byte 13 to preserve bits_per_sample (upper 4 bits)
+    let byte_13_upper = result[byte_13_offset] & 0xF0;
+
+    // Write the 36-bit total_samples value
+    // Byte 13: bits_per_sample (upper 4 bits) + total_samples bits 35-32 (lower 4 bits)
+    // Byte 14: total_samples bits 31-24
+    // Byte 15: total_samples bits 23-16
+    // Byte 16: total_samples bits 15-8
+    // Byte 17: total_samples bits 7-0
+    result[byte_13_offset] = byte_13_upper | (((new_total_samples >> 32) & 0x0F) as u8);
+    result[byte_13_offset + 1] = ((new_total_samples >> 24) & 0xFF) as u8;
+    result[byte_13_offset + 2] = ((new_total_samples >> 16) & 0xFF) as u8;
+    result[byte_13_offset + 3] = ((new_total_samples >> 8) & 0xFF) as u8;
+    result[byte_13_offset + 4] = (new_total_samples & 0xFF) as u8;
+
+    use tracing::info;
+    info!(
+        "✅ Updated STREAMINFO total_samples to {} (was in album FLAC)",
+        new_total_samples
+    );
+
+    Ok(result)
+}
+
+/// Encodes a seektable HashMap into a FLAC SEEKTABLE metadata block
+///
+/// FLAC SEEKTABLE format:
+/// - Block header: 1 byte (type 3 + is_last flag) + 3 bytes (length in big-endian)
+/// - Each seekpoint: 8 bytes sample_number + 8 bytes byte_offset + 2 bytes samples_in_frame
+///
+/// For our purposes, we set samples_in_frame to 0xFFFF (unknown) since we only track
+/// the start of frames, not their sample count.
+pub fn encode_seektable_block(seektable: &std::collections::HashMap<u64, u64>) -> Vec<u8> {
+    use tracing::debug;
+
+    // Sort seekpoints by sample number (required by FLAC spec)
+    let mut seekpoints: Vec<(&u64, &u64)> = seektable.iter().collect();
+    seekpoints.sort_by_key(|(sample, _)| *sample);
+
+    debug!("Encoding seektable with {} seekpoints", seekpoints.len());
+
+    // Log first few seekpoints for debugging
+    if seekpoints.len() > 0 {
+        use tracing::info;
+        info!(
+            "📍 First 5 seekpoints: {:?}",
+            seekpoints
+                .iter()
+                .take(5)
+                .map(|(s, b)| (*s, *b))
+                .collect::<Vec<_>>()
+        );
+        if seekpoints.len() > 5 {
+            info!(
+                "📍 Last 5 seekpoints: {:?}",
+                seekpoints
+                    .iter()
+                    .rev()
+                    .take(5)
+                    .rev()
+                    .map(|(s, b)| (*s, *b))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    // Calculate block size: 18 bytes per seekpoint
+    let num_seekpoints = seekpoints.len();
+    let block_data_size = num_seekpoints * 18;
+
+    // Block header: 1 byte type + 3 bytes length
+    let mut block = Vec::with_capacity(4 + block_data_size);
+
+    // Type byte: 0x03 (SEEKTABLE), is_last = 0 (we'll update this when injecting)
+    block.push(0x03);
+
+    // Length in big-endian (24 bits)
+    block.push(((block_data_size >> 16) & 0xFF) as u8);
+    block.push(((block_data_size >> 8) & 0xFF) as u8);
+    block.push((block_data_size & 0xFF) as u8);
+
+    // Encode each seekpoint
+    for (sample_number, byte_offset) in seekpoints {
+        // Sample number (8 bytes, big-endian)
+        block.extend_from_slice(&sample_number.to_be_bytes());
+
+        // Byte offset (8 bytes, big-endian)
+        block.extend_from_slice(&byte_offset.to_be_bytes());
+
+        // Samples in frame (2 bytes) - use 0xFFFF for unknown
+        block.push(0xFF);
+        block.push(0xFF);
+    }
+
+    debug!("Encoded seektable block: {} bytes total", block.len());
+    block
+}
+
+/// Injects a seektable block into FLAC headers
+///
+/// This function:
+/// 1. Parses the original headers to find metadata blocks
+/// 2. Removes any existing SEEKTABLE block (type 3)
+/// 3. Inserts the new seektable block after STREAMINFO (type 0)
+/// 4. Updates the "is_last" flags appropriately
+///
+/// Returns the modified headers with the injected seektable.
+pub fn inject_seektable_into_headers(original_headers: &[u8], seektable_block: Vec<u8>) -> Vec<u8> {
+    use tracing::{debug, warn};
+
+    if original_headers.len() < 8 {
+        warn!("Headers too short, returning original");
+        return original_headers.to_vec();
+    }
+
+    // Verify fLaC marker
+    if &original_headers[0..4] != b"fLaC" {
+        warn!("Invalid FLAC headers (missing fLaC marker), returning original");
+        return original_headers.to_vec();
+    }
+
+    let mut result = Vec::with_capacity(original_headers.len() + seektable_block.len());
+    result.extend_from_slice(b"fLaC");
+
+    let mut pos = 4;
+    let mut streaminfo_block: Option<Vec<u8>> = None;
+    let mut other_blocks: Vec<Vec<u8>> = Vec::new();
+    let mut found_seektable = false;
+
+    // Parse all metadata blocks
+    while pos < original_headers.len() {
+        if pos + 4 > original_headers.len() {
+            break;
+        }
+
+        let header_byte = original_headers[pos];
+        let is_last = (header_byte & 0x80) != 0;
+        let block_type = header_byte & 0x7F;
+
+        // Read block length (24 bits, big-endian)
+        let length = ((original_headers[pos + 1] as usize) << 16)
+            | ((original_headers[pos + 2] as usize) << 8)
+            | (original_headers[pos + 3] as usize);
+
+        if pos + 4 + length > original_headers.len() {
+            warn!("Block extends beyond headers, truncating");
+            break;
+        }
+
+        // Extract the complete block (header + data)
+        let mut block = Vec::with_capacity(4 + length);
+        // Clear is_last flag for now, we'll set it properly later
+        block.push(block_type);
+        block.extend_from_slice(&original_headers[pos + 1..pos + 4 + length]);
+
+        match block_type {
+            0 => {
+                // STREAMINFO - always first
+                debug!("Found STREAMINFO block ({} bytes)", block.len());
+                streaminfo_block = Some(block);
+            }
+            3 => {
+                // SEEKTABLE - skip it, we'll inject our own
+                debug!("Found existing SEEKTABLE block, will replace");
+                found_seektable = true;
+            }
+            _ => {
+                // Other blocks (VORBIS_COMMENT, PICTURE, etc.)
+                debug!(
+                    "Found metadata block type {} ({} bytes)",
+                    block_type,
+                    block.len()
+                );
+                other_blocks.push(block);
+            }
+        }
+
+        pos += 4 + length;
+
+        if is_last {
+            break;
+        }
+    }
+
+    // Reconstruct headers: STREAMINFO, SEEKTABLE, other blocks
+    if let Some(streaminfo) = streaminfo_block {
+        result.extend_from_slice(&streaminfo);
+        debug!("Added STREAMINFO to new headers");
+    } else {
+        warn!("No STREAMINFO found, returning original headers");
+        return original_headers.to_vec();
+    }
+
+    // Add our seektable
+    result.extend_from_slice(&seektable_block);
+    debug!("Injected seektable block ({} bytes)", seektable_block.len());
+
+    // Verify the STREAMINFO total_samples in the result
+    if result.len() >= 26 {
+        let byte_21 = result[21];
+        let total_samples_in_result = ((byte_21 & 0x0F) as u64) << 32
+            | (result[22] as u64) << 24
+            | (result[23] as u64) << 16
+            | (result[24] as u64) << 8
+            | (result[25] as u64);
+        use tracing::info;
+        info!(
+            "🔍 After inject: STREAMINFO total_samples = {} (~{:.1}s)",
+            total_samples_in_result,
+            total_samples_in_result as f64 / 44100.0
+        );
+    }
+
+    // Add other blocks
+    for block in &other_blocks {
+        result.extend_from_slice(block);
+    }
+
+    // Update is_last flags
+    // The last block should have the is_last flag set
+    if !other_blocks.is_empty() {
+        // Last block is in other_blocks
+        let last_block_pos = result.len() - other_blocks.last().unwrap().len();
+        result[last_block_pos] |= 0x80;
+    } else {
+        // Seektable is the last block
+        let seektable_pos = result.len() - seektable_block.len();
+        result[seektable_pos] |= 0x80;
+    }
+
+    debug!(
+        "Final headers: {} bytes (original: {}, {} seektable)",
+        result.len(),
+        original_headers.len(),
+        if found_seektable { "replaced" } else { "added" }
+    );
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
