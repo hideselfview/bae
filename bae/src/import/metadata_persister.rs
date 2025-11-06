@@ -126,14 +126,25 @@ impl<'a> MetadataPersister<'a> {
                 track_id, start_byte_offset, end_byte_offset, start_chunk_index, end_chunk_index
             );
 
-            // For CUE/FLAC, we store the original album FLAC headers
+            // For CUE/FLAC, we store the original album FLAC headers and seektable
             // Playback will download track's chunks, prepend headers,
             // and use Symphonia to seek to the track's time position and decode
-            let audio_format = DbAudioFormat::new(
+            // The seektable enables accurate seeking by mapping sample positions to byte positions
+            let flac_seektable = if let Some(ref seektable) = cue_flac_layout.seektable {
+                Some(
+                    bincode::serialize(seektable)
+                        .map_err(|e| format!("Failed to serialize seektable: {}", e))?,
+                )
+            } else {
+                None
+            };
+
+            let audio_format = DbAudioFormat::new_with_seektable(
                 track_id,
                 "flac",
                 Some(cue_flac_layout.flac_headers.headers.clone()), // Original album headers
-                true, // needs_headers = true for CUE/FLAC
+                flac_seektable, // Serialized seektable for accurate seeking
+                true,           // needs_headers = true for CUE/FLAC
             );
             self.library
                 .add_audio_format(&audio_format)

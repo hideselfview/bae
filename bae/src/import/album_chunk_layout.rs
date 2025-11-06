@@ -757,6 +757,7 @@ fn build_chunk_track_mappings(
                     flac_headers,
                     track_chunk_ranges,
                     track_byte_ranges,
+                    seektable: Some(seektable),
                 },
             );
         } else {
