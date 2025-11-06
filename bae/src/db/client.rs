@@ -196,6 +196,7 @@ impl Database {
         // Audio formats table (format metadata per track)
         // Stores format information needed for playback.
         // FLAC headers only needed for CUE/FLAC tracks.
+        // Seektables only needed for CUE/FLAC tracks for accurate seeking.
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS audio_formats (
