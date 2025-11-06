@@ -6,7 +6,7 @@ use symphonia::core::{
     audio::AudioBufferRef,
     codecs::{Decoder, DecoderOptions},
     formats::{FormatOptions, FormatReader, SeekMode, SeekTo},
-    io::{MediaSourceStream, ReadOnlySource},
+    io::MediaSourceStream,
     meta::MetadataOptions,
     probe::Hint,
     units::Time,
@@ -84,9 +84,40 @@ impl TrackDecoder {
     ///
     /// This enables streaming playback without loading the entire track into memory.
     pub fn from_streaming_source(source: StreamingChunkSource) -> Result<Self, DecoderError> {
-        // ReadOnlySource wraps a Read implementation to make it a MediaSource
-        let read_only_source = ReadOnlySource::new(Box::new(source));
-        let media_source = MediaSourceStream::new(Box::new(read_only_source), Default::default());
+        // Wrap our Read+Seek source in a MediaSource that preserves Seek capability
+        // MediaSourceStream can work directly with Box<dyn MediaSource>
+        // We need to implement MediaSource for StreamingChunkSource to preserve Seek
+        use symphonia::core::io::MediaSource;
+
+        // Create a seekable media source from our StreamingChunkSource
+        struct SeekableMediaSource(StreamingChunkSource);
+
+        impl MediaSource for SeekableMediaSource {
+            fn is_seekable(&self) -> bool {
+                true // Our source supports seeking!
+            }
+
+            fn byte_len(&self) -> Option<u64> {
+                None // Streaming source, length unknown
+            }
+        }
+
+        impl std::io::Read for SeekableMediaSource {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                self.0.read(buf)
+            }
+        }
+
+        impl std::io::Seek for SeekableMediaSource {
+            fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+                self.0.seek(pos)
+            }
+        }
+
+        let seekable_source = SeekableMediaSource(source);
+        tracing::debug!("Created seekable media source (is_seekable=true)");
+
+        let media_source = MediaSourceStream::new(Box::new(seekable_source), Default::default());
 
         let mut hint = Hint::new();
         hint.with_extension("flac");
@@ -98,7 +129,14 @@ impl TrackDecoder {
             &MetadataOptions::default(),
         )?;
 
-        let format_reader = probed.format;
+        let mut format_reader = probed.format;
+
+        // Log whether the format reader supports seeking
+        tracing::info!(
+            "Format reader created - seekable: {}, tracks: {}",
+            format_reader.metadata().is_latest(), // Proxy for checking if metadata was read
+            format_reader.tracks().len()
+        );
 
         // Find the audio track
         let track = format_reader
@@ -183,26 +221,44 @@ impl TrackDecoder {
         let frac = position_seconds.fract();
         let seek_time = Time::new(secs, frac);
 
+        tracing::info!(
+            "Attempting seek to {}s (sample {}) using SeekMode::Coarse",
+            position_seconds,
+            sample_number
+        );
+
+        // Log format reader state before seek
+        tracing::debug!(
+            "Format reader state before seek: seekable={}, current position unknown",
+            self.format_reader.metadata().is_latest()
+        );
+
+        let seek_start = std::time::Instant::now();
+
+        tracing::debug!("Calling format_reader.seek() now...");
+
         match self.format_reader.seek(
-            SeekMode::Accurate,
+            SeekMode::Coarse,
             SeekTo::Time {
                 time: seek_time,
                 track_id: Some(self.track_id),
             },
         ) {
-            Ok(_) => {
+            Ok(seeked_to) => {
                 // Success - update decoded_samples
+                let seek_duration = seek_start.elapsed();
+                tracing::info!(
+                    "Seek succeeded to {}s (seeked to ts: {}) in {:?}",
+                    position_seconds,
+                    seeked_to.actual_ts,
+                    seek_duration
+                );
                 self.decoded_samples.store(sample_number, Ordering::Relaxed);
                 return Ok(());
             }
             Err(e) => {
-                tracing::warn!(
-                    "Seek by Time failed for {}.{}s: {:?}, falling back to decode",
-                    secs,
-                    frac,
-                    e
-                );
-                // Fall through to decode from start
+                tracing::warn!("Seek by Time failed for {}.{}s: {:?}", secs, frac, e);
+                // Fall through to return error
             }
         }
 
