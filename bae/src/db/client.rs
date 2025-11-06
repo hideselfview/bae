@@ -203,6 +203,7 @@ impl Database {
                 track_id TEXT NOT NULL UNIQUE,
                 format TEXT NOT NULL,
                 flac_headers BLOB,
+                flac_seektable BLOB,
                 needs_headers BOOLEAN NOT NULL DEFAULT FALSE,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (track_id) REFERENCES tracks (id) ON DELETE CASCADE
@@ -1025,14 +1026,15 @@ impl Database {
         sqlx::query(
             r#"
             INSERT INTO audio_formats (
-                id, track_id, format, flac_headers, needs_headers, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                id, track_id, format, flac_headers, flac_seektable, needs_headers, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&audio_format.id)
         .bind(&audio_format.track_id)
         .bind(&audio_format.format)
         .bind(&audio_format.flac_headers)
+        .bind(&audio_format.flac_seektable)
         .bind(audio_format.needs_headers)
         .bind(audio_format.created_at.to_rfc3339())
         .execute(&self.pool)
@@ -1057,6 +1059,7 @@ impl Database {
                 track_id: row.get("track_id"),
                 format: row.get("format"),
                 flac_headers: row.get("flac_headers"),
+                flac_seektable: row.get("flac_seektable"),
                 needs_headers: row.get("needs_headers"),
                 created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
                     .unwrap()

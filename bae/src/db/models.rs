@@ -234,13 +234,18 @@ pub struct DbChunk {
 /// **FLAC headers are only needed for CUE/FLAC:**
 /// - One-file-per-track: Headers are already in the track's first chunk, no prepending needed
 /// - CUE/FLAC: Headers are at file start, but track audio starts mid-file. Must prepend headers during playback.
+///
+/// **Seektables are only needed for CUE/FLAC tracks:**
+/// - One-file-per-track: Can calculate byte position from time directly
+/// - CUE/FLAC: Seektables map sample positions to byte positions in the original album FLAC file for accurate seeking
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbAudioFormat {
     pub id: String,
-    pub track_id: String,              // 1:1 with track
-    pub format: String,                // "flac", "mp3", etc.
-    pub flac_headers: Option<Vec<u8>>, // ONLY for CUE/FLAC tracks
-    pub needs_headers: bool,           // True for CUE/FLAC tracks
+    pub track_id: String,                // 1:1 with track
+    pub format: String,                  // "flac", "mp3", etc.
+    pub flac_headers: Option<Vec<u8>>,   // ONLY for CUE/FLAC tracks
+    pub flac_seektable: Option<Vec<u8>>, // ONLY for CUE/FLAC tracks, serialized HashMap<u64, u64>
+    pub needs_headers: bool,             // True for CUE/FLAC tracks
     pub created_at: DateTime<Utc>,
 }
 
@@ -467,11 +472,22 @@ impl DbAudioFormat {
         flac_headers: Option<Vec<u8>>,
         needs_headers: bool,
     ) -> Self {
+        Self::new_with_seektable(track_id, format, flac_headers, None, needs_headers)
+    }
+
+    pub fn new_with_seektable(
+        track_id: &str,
+        format: &str,
+        flac_headers: Option<Vec<u8>>,
+        flac_seektable: Option<Vec<u8>>,
+        needs_headers: bool,
+    ) -> Self {
         DbAudioFormat {
             id: Uuid::new_v4().to_string(),
             track_id: track_id.to_string(),
             format: format.to_string(),
             flac_headers,
+            flac_seektable,
             needs_headers,
             created_at: Utc::now(),
         }
