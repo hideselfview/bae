@@ -76,11 +76,11 @@ pub fn TitleBar() -> Element {
     });
 
     rsx! {
-        // Click outside to close - render BEFORE title-bar
+        // Click outside to close - render BEFORE everything
         if show_results() {
             div {
                 class: "fixed inset-0 z-[1500]",
-                onclick: move |evt| {
+                onclick: move |_| {
                     info!("Click-outside handler fired");
                     show_results.set(false);
                 }
@@ -141,71 +141,73 @@ pub fn TitleBar() -> Element {
                             }
                         },
                     }
+                }
+            }
+        }
 
-                    // Results popover - z-2000 to be above overlay (z-1500) and title-bar (z-1000)
-                    if show_results() && !filtered_albums().is_empty() {
-                        div {
-                            class: "absolute top-full mt-2 left-0 right-0 bg-[#2d3138] border border-[#3d4148] rounded-lg shadow-lg max-h-96 overflow-y-auto",
-                            style: "z-index: 2000;",
-                            id: "search-popover",
-                            onclick: move |evt| {
-                                info!("Popover container clicked - stopping propagation");
-                                evt.stop_propagation();
-                            },
-                            for album in filtered_albums() {
-                                {
-                                    let album_id = album.id.clone();
-                                    let album_title = album.title.clone();
-                                    let album_year = album.year;
-                                    let cover_art = album.cover_art_url.clone();
-                                    let artists = album_artists().get(&album.id).cloned().unwrap_or_default();
-                                    let artist_name = if artists.is_empty() {
-                                        "Unknown Artist".to_string()
+        // Results popover - rendered OUTSIDE title-bar so z-index works properly
+        if show_results() && !filtered_albums().is_empty() {
+            div {
+                class: "fixed top-10 right-2 w-64 z-[2000]",
+                id: "search-popover",
+                onclick: move |evt| {
+                    info!("Popover container clicked - stopping propagation");
+                    evt.stop_propagation();
+                },
+                div {
+                    class: "mt-2 bg-[#2d3138] border border-[#3d4148] rounded-lg shadow-lg max-h-96 overflow-y-auto",
+                    for album in filtered_albums() {
+                        {
+                            let album_id = album.id.clone();
+                            let album_title = album.title.clone();
+                            let album_year = album.year;
+                            let cover_art = album.cover_art_url.clone();
+                            let artists = album_artists().get(&album.id).cloned().unwrap_or_default();
+                            let artist_name = if artists.is_empty() {
+                                "Unknown Artist".to_string()
+                            } else {
+                                artists.iter().map(|a| a.name.as_str()).collect::<Vec<_>>().join(", ")
+                            };
+                            rsx! {
+                                div {
+                                    key: "{album_id}",
+                                    class: "flex items-center gap-3 px-3 py-2 hover:bg-[#3d4148] border-b border-[#3d4148] last:border-b-0 cursor-pointer",
+                                    onclick: {
+                                        let album_id = album_id.clone();
+                                        let navigator = navigator();
+                                        move |evt| {
+                                            info!("Search result onclick fired for album_id: {}", album_id);
+                                            evt.stop_propagation();
+                                            info!("Stopped propagation, closing popover and clearing search");
+                                            show_results.set(false);
+                                            search_query.set(String::new());
+                                            let route = Route::AlbumDetail {
+                                                album_id: album_id.clone(),
+                                                release_id: String::new(),
+                                            };
+                                            info!("Navigating to route: {:?}", route);
+                                            navigator.push(route);
+                                            info!("Navigator.push called for album_id: {}", album_id);
+                                        }
+                                    },
+                                    if let Some(cover_url) = cover_art {
+                                        img {
+                                            src: "{cover_url}",
+                                            class: "w-10 h-10 rounded object-cover flex-shrink-0",
+                                            alt: "{album_title}",
+                                        }
                                     } else {
-                                        artists.iter().map(|a| a.name.as_str()).collect::<Vec<_>>().join(", ")
-                                    };
-                                    rsx! {
                                         div {
-                                            key: "{album_id}",
-                                            class: "flex items-center gap-3 px-3 py-2 hover:bg-[#3d4148] border-b border-[#3d4148] last:border-b-0 cursor-pointer",
-                                            onclick: {
-                                                let album_id = album_id.clone();
-                                                let navigator = navigator();
-                                                move |evt| {
-                                                    info!("Search result onclick fired for album_id: {}", album_id);
-                                                    evt.stop_propagation();
-                                                    info!("Stopped propagation, closing popover and clearing search");
-                                                    show_results.set(false);
-                                                    search_query.set(String::new());
-                                                    let route = Route::AlbumDetail {
-                                                        album_id: album_id.clone(),
-                                                        release_id: String::new(),
-                                                    };
-                                                    info!("Navigating to route: {:?}", route);
-                                                    navigator.push(route);
-                                                    info!("Navigator.push called for album_id: {}", album_id);
-                                                }
-                                            },
-                                            if let Some(cover_url) = cover_art {
-                                                img {
-                                                    src: "{cover_url}",
-                                                    class: "w-10 h-10 rounded object-cover flex-shrink-0",
-                                                    alt: "{album_title}",
-                                                }
-                                            } else {
-                                                div {
-                                                    class: "w-10 h-10 bg-gray-700 rounded flex items-center justify-center flex-shrink-0",
-                                                    div { class: "text-gray-500 text-xs", "🎵" }
-                                                }
-                                            }
-                                            div { class: "flex-1 min-w-0",
-                                                div { class: "text-white text-xs font-medium truncate", "{album_title}" }
-                                                div { class: "text-gray-400 text-xs truncate",
-                                                    "{artist_name}"
-                                                    if let Some(year) = album_year {
-                                                        span { class: "text-gray-500", " • {year}" }
-                                                    }
-                                                }
+                                            class: "w-10 h-10 bg-gray-700 rounded flex items-center justify-center flex-shrink-0",
+                                            div { class: "text-gray-500 text-xs", "🎵" }
+                                        }
+                                    }
+                                    div { class: "flex-1 min-w-0",
+                                        div { class: "text-white text-xs font-medium truncate", "{album_title}" }
+                                        div { class: "text-gray-400 text-xs truncate",
+                                            "{artist_name}"
+                                            if let Some(year) = album_year {
+                                                span { class: "text-gray-500", " • {year}" }
                                             }
                                         }
                                     }
