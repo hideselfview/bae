@@ -6,6 +6,7 @@ use tracing::error;
 use super::super::use_playback_service;
 use super::album_art::AlbumArt;
 use super::track_row::TrackRow;
+use super::utils::get_album_track_ids;
 
 /// Album detail view component
 #[component]
@@ -87,9 +88,10 @@ pub fn AlbumDetailView(
                         class: if import_progress().is_some() || is_deleting() { "opacity-50 cursor-not-allowed" } else { "" },
                         onclick: {
                             let tracks = tracks.clone();
+                            let playback_clone = playback.clone();
                             move |_| {
                                 let track_ids: Vec<String> = tracks.iter().map(|t| t.id.clone()).collect();
-                                playback.play_album(track_ids);
+                                playback_clone.play_album(track_ids);
                             }
                         },
                         if import_progress().is_some() {
@@ -97,6 +99,29 @@ pub fn AlbumDetailView(
                         } else {
                             "▶ Play Album"
                         }
+                    }
+
+                    // Add Album to Queue button
+                    button {
+                        class: "w-full mt-3 px-6 py-3 bg-gray-700 hover:bg-gray-600 text-white font-semibold rounded-lg transition-colors flex items-center justify-center gap-2",
+                        disabled: import_progress().is_some() || is_deleting(),
+                        class: if import_progress().is_some() || is_deleting() { "opacity-50 cursor-not-allowed" } else { "" },
+                        onclick: {
+                            let album_id = album.id.clone();
+                            let library_manager = library_manager.clone();
+                            let playback = playback.clone();
+                            move |_| {
+                                let album_id = album_id.clone();
+                                let library_manager = library_manager.clone();
+                                let playback = playback.clone();
+                                spawn(async move {
+                                    if let Ok(track_ids) = get_album_track_ids(&library_manager, &album_id).await {
+                                        playback.add_to_queue(track_ids);
+                                    }
+                                });
+                            }
+                        },
+                        "➕ Add Album to Queue"
                     }
 
                     // Actions dropdown menu

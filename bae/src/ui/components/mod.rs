@@ -7,6 +7,7 @@ pub mod library;
 pub mod navbar;
 pub mod now_playing_bar;
 pub mod playback_hooks;
+pub mod queue_sidebar;
 pub mod settings;
 
 pub use album_detail::AlbumDetail;
@@ -15,5 +16,5 @@ pub use import_hooks::use_track_progress;
 pub use library::Library;
 pub use navbar::Navbar;
 pub use now_playing_bar::NowPlayingBar;
-pub use playback_hooks::{use_playback_service, use_playback_state, PlaybackStateProvider};
+pub use playback_hooks::{use_playback_service, use_playback_state};
 pub use settings::Settings;

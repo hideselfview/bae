@@ -34,4 +34,8 @@ pub enum PlaybackProgress {
         requested_position: Duration,
         current_position: Duration,
     },
+    /// Queue was updated - contains current queue state
+    QueueUpdated {
+        tracks: Vec<String>,
+    },
 }

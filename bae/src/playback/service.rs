@@ -24,6 +24,13 @@ pub enum PlaybackCommand {
     Previous,
     Seek(std::time::Duration),
     SetVolume(f32),
+    // Queue management commands
+    AddToQueue(Vec<String>),                 // Add tracks to end of queue
+    AddNext(Vec<String>), // Insert tracks immediately after currently playing track
+    RemoveFromQueue(usize), // Remove track at index
+    ReorderQueue { from: usize, to: usize }, // Move track from index to index
+    ClearQueue,
+    GetQueue, // Request current queue state
 }
 
 /// Current playback state
@@ -96,6 +103,34 @@ impl PlaybackHandle {
 
     pub fn subscribe_progress(&self) -> tokio_mpsc::UnboundedReceiver<PlaybackProgress> {
         self.progress_handle.subscribe_all()
+    }
+
+    pub fn add_to_queue(&self, track_ids: Vec<String>) {
+        let _ = self.command_tx.send(PlaybackCommand::AddToQueue(track_ids));
+    }
+
+    pub fn add_next(&self, track_ids: Vec<String>) {
+        let _ = self.command_tx.send(PlaybackCommand::AddNext(track_ids));
+    }
+
+    pub fn remove_from_queue(&self, index: usize) {
+        let _ = self
+            .command_tx
+            .send(PlaybackCommand::RemoveFromQueue(index));
+    }
+
+    pub fn reorder_queue(&self, from: usize, to: usize) {
+        let _ = self
+            .command_tx
+            .send(PlaybackCommand::ReorderQueue { from, to });
+    }
+
+    pub fn clear_queue(&self) {
+        let _ = self.command_tx.send(PlaybackCommand::ClearQueue);
+    }
+
+    pub fn get_queue(&self) {
+        let _ = self.command_tx.send(PlaybackCommand::GetQueue);
     }
 }
 
@@ -230,6 +265,7 @@ impl PlaybackService {
 
                     // Clear queue
                     self.queue.clear();
+                    self.emit_queue_update();
 
                     // Fetch track to get release_id
                     if let Ok(Some(track)) = self.library_manager.get_track(&track_id).await {
@@ -266,6 +302,7 @@ impl PlaybackService {
                                     found_current = true;
                                 }
                             }
+                            self.emit_queue_update();
                         }
                     }
 
@@ -283,7 +320,10 @@ impl PlaybackService {
                         self.queue.push_back(track_id);
                     }
                     if let Some(first_track) = self.queue.pop_front() {
+                        self.emit_queue_update();
                         self.play_track(&first_track).await;
+                    } else {
+                        self.emit_queue_update();
                     }
                 }
                 PlaybackCommand::Pause => {
@@ -327,6 +367,7 @@ impl PlaybackService {
                             .unwrap_or(false)
                         {
                             self.queue.pop_front();
+                            self.emit_queue_update();
                         }
 
                         // Use preloaded decoder for gapless playback
@@ -355,6 +396,7 @@ impl PlaybackService {
                         .await;
                     } else if let Some(next_track) = self.queue.pop_front() {
                         info!("No preloaded track, playing from queue: {}", next_track);
+                        self.emit_queue_update();
                         // Save current track as previous before switching
                         if let Some(current_track) = &self.current_track {
                             self.previous_track_id = Some(current_track.id.clone());
@@ -363,6 +405,7 @@ impl PlaybackService {
                         self.play_track(&next_track).await;
                     } else {
                         info!("No next track available, stopping");
+                        self.emit_queue_update();
                         self.stop().await;
                     }
                 }
@@ -419,6 +462,7 @@ impl PlaybackService {
                                                 found_current = true;
                                             }
                                         }
+                                        self.emit_queue_update();
                                     }
                                 }
 
@@ -456,6 +500,54 @@ impl PlaybackService {
                 }
                 PlaybackCommand::SetVolume(volume) => {
                     self.audio_output.set_volume(volume);
+                }
+                PlaybackCommand::AddToQueue(track_ids) => {
+                    for track_id in track_ids {
+                        self.queue.push_back(track_id);
+                    }
+                    self.emit_queue_update();
+                }
+                PlaybackCommand::AddNext(track_ids) => {
+                    // Insert tracks immediately after current track (at front of queue)
+                    for track_id in track_ids.into_iter().rev() {
+                        self.queue.push_front(track_id);
+                    }
+                    self.emit_queue_update();
+                }
+                PlaybackCommand::RemoveFromQueue(index) => {
+                    if index < self.queue.len() {
+                        if let Some(removed_track_id) = self.queue.remove(index) {
+                            // If the removed track is currently playing, stop playback
+                            if let Some(current_track) = &self.current_track {
+                                if removed_track_id == current_track.id {
+                                    self.stop().await;
+                                }
+                            }
+                        }
+                        self.emit_queue_update();
+                    }
+                }
+                PlaybackCommand::ReorderQueue { from, to } => {
+                    if from < self.queue.len() && to < self.queue.len() && from != to {
+                        if let Some(track_id) = self.queue.remove(from) {
+                            if to > from {
+                                // Moving forward - insert at new position
+                                self.queue.insert(to - 1, track_id);
+                            } else {
+                                // Moving backward - insert at new position
+                                self.queue.insert(to, track_id);
+                            }
+                            self.emit_queue_update();
+                        }
+                    }
+                }
+                PlaybackCommand::ClearQueue => {
+                    self.queue.clear();
+                    self.emit_queue_update();
+                }
+                PlaybackCommand::GetQueue => {
+                    // Emit current queue state
+                    self.emit_queue_update();
                 }
             }
         }
@@ -1077,5 +1169,13 @@ impl PlaybackService {
                 was_paused,
             });
         }
+    }
+
+    /// Emit queue update to all subscribers
+    fn emit_queue_update(&self) {
+        let track_ids: Vec<String> = self.queue.iter().cloned().collect();
+        let _ = self
+            .progress_tx
+            .send(PlaybackProgress::QueueUpdated { tracks: track_ids });
     }
 }

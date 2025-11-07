@@ -4,6 +4,7 @@ use crate::playback::{PlaybackProgress, PlaybackState};
 use crate::ui::Route;
 use dioxus::prelude::*;
 
+use super::queue_sidebar::QueueSidebarState;
 use super::use_playback_service;
 
 #[component]
@@ -422,6 +423,9 @@ pub fn NowPlayingBar() -> Element {
                         PlaybackProgress::TrackCompleted { .. } => {
                             // Track finished - could auto-advance here if needed
                         }
+                        PlaybackProgress::QueueUpdated { .. } => {
+                            // Queue updates are handled by the queue hook, ignore here
+                        }
                     }
                 }
             });
@@ -549,6 +553,9 @@ pub fn NowPlayingBar() -> Element {
     let playback_next = playback.clone();
     let playback_seek = playback.clone();
 
+    // Get queue sidebar state from context
+    let mut queue_sidebar_open = use_context::<QueueSidebarState>();
+
     rsx! {
         div { class: "fixed bottom-0 left-0 right-0 bg-gray-800 text-white p-4 border-t border-gray-700",
             div { class: "flex items-center gap-4",
@@ -570,6 +577,15 @@ pub fn NowPlayingBar() -> Element {
                     is_paused,
                     on_seek: move |duration| playback_seek.seek(duration),
                     is_seeking,
+                }
+                // Queue toggle button
+                button {
+                    class: "px-3 py-2 bg-gray-700 rounded hover:bg-gray-600",
+                    onclick: move |_| {
+                        let current = *queue_sidebar_open.is_open.read();
+                        queue_sidebar_open.is_open.set(!current);
+                    },
+                    "☰"
                 }
             }
         }
