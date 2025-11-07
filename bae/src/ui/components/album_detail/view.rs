@@ -28,6 +28,7 @@ pub fn AlbumDetailView(
     let mut show_dropdown = use_signal(|| false);
     let mut show_release_dropdown = use_signal(|| None::<String>);
     let mut show_play_menu = use_signal(|| false);
+    let mut hover_cover = use_signal(|| false);
 
     let artist_name = if artists.is_empty() {
         "Unknown Artist".to_string()
@@ -48,12 +49,56 @@ pub fn AlbumDetailView(
             div { class: "lg:col-span-1",
                 div { class: "bg-gray-800 rounded-lg p-6",
 
-                    // Album cover
-                    div { class: "mb-6",
+                    // Album cover with hover menu
+                    div {
+                        class: "mb-6 relative",
+                        onmouseenter: move |_| hover_cover.set(true),
+                        onmouseleave: move |_| hover_cover.set(false),
                         AlbumArt {
                             title: album.title.clone(),
                             cover_url: album.cover_art_url.clone(),
                             import_progress,
+                        }
+                        
+                        // Three dot menu button - appears on hover or when dropdown is open
+                        if hover_cover() || show_dropdown() {
+                            div { class: "absolute top-2 right-2 z-10",
+                                button {
+                                    class: "w-8 h-8 bg-gray-800/40 hover:bg-gray-800/60 text-white rounded-lg flex items-center justify-center transition-colors",
+                                    disabled: import_progress().is_some() || is_deleting(),
+                                    class: if import_progress().is_some() || is_deleting() { "opacity-50 cursor-not-allowed" } else { "" },
+                                    onclick: move |evt| {
+                                        evt.stop_propagation();
+                                        if !is_deleting() && import_progress().is_none() {
+                                            show_dropdown.set(!show_dropdown());
+                                        }
+                                    },
+                                    div { class: "flex flex-col gap-1",
+                                        div { class: "w-1 h-1 bg-white rounded-full" }
+                                        div { class: "w-1 h-1 bg-white rounded-full" }
+                                        div { class: "w-1 h-1 bg-white rounded-full" }
+                                    }
+                                }
+                                
+                                // Dropdown menu
+                                if show_dropdown() {
+                                    div {
+                                        class: "absolute top-full right-0 mt-2 bg-gray-700 rounded-lg shadow-lg overflow-hidden z-20 border border-gray-600 min-w-[160px]",
+                                        button {
+                                            class: "w-full px-4 py-3 text-left text-red-400 hover:bg-gray-600 transition-colors flex items-center gap-2",
+                                            disabled: is_deleting(),
+                                            onclick: move |evt| {
+                                                evt.stop_propagation();
+                                                show_dropdown.set(false);
+                                                if !is_deleting() {
+                                                    show_delete_confirm.set(true);
+                                                }
+                                            },
+                                            "Delete Album"
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -160,39 +205,6 @@ pub fn AlbumDetailView(
                         }
                     }
 
-                    // Actions dropdown menu
-                    div { class: "relative mt-3",
-                        button {
-                            class: "w-full px-6 py-3 bg-gray-700 hover:bg-gray-600 text-white font-semibold rounded-lg transition-colors flex items-center justify-center gap-2",
-                            disabled: import_progress().is_some() || is_deleting(),
-                            class: if import_progress().is_some() || is_deleting() { "opacity-50 cursor-not-allowed" } else { "" },
-                            onclick: move |_| {
-                                if !is_deleting() && import_progress().is_none() {
-                                    show_dropdown.set(!show_dropdown());
-                                }
-                            },
-                            "⋮ More"
-                        }
-
-                        // Dropdown menu
-                        if show_dropdown() {
-                            div {
-                                class: "absolute top-full left-0 right-0 mt-2 bg-gray-700 rounded-lg shadow-lg overflow-hidden z-10 border border-gray-600",
-                                button {
-                                    class: "w-full px-4 py-3 text-left text-red-400 hover:bg-gray-600 transition-colors flex items-center gap-2",
-                                    disabled: is_deleting(),
-                                    onclick: move |evt| {
-                                        evt.stop_propagation();
-                                        show_dropdown.set(false);
-                                        if !is_deleting() {
-                                            show_delete_confirm.set(true);
-                                        }
-                                    },
-                                    "Delete Album"
-                                }
-                            }
-                        }
-                    }
 
                     // Click outside to close dropdowns
                     if show_dropdown() || show_play_menu() {
