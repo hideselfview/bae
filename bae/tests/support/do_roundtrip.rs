@@ -82,7 +82,7 @@ pub async fn do_roundtrip<F, G>(
         .await
         .expect("Failed to create cache manager");
 
-    let library_manager = LibraryManager::new(database.clone());
+    let library_manager = LibraryManager::new(database.clone(), cloud_storage.clone());
     let shared_library_manager = bae::library::SharedLibraryManager::new(library_manager.clone());
     let library_manager = Arc::new(library_manager);
 

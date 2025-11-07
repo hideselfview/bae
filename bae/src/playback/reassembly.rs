@@ -471,10 +471,10 @@ mod tests {
         std::fs::create_dir_all(&cache_dir).unwrap();
 
         let database = Database::new(db_path.to_str().unwrap()).await.unwrap();
-        let library_manager = LibraryManager::new(database);
         let encryption_service = EncryptionService::new_with_key(vec![0u8; 32]);
         let mock_storage = Arc::new(MockCloudStorage::new());
         let cloud_storage = CloudStorageManager::from_storage(mock_storage);
+        let library_manager = LibraryManager::new(database, cloud_storage.clone());
         let cache_config = CacheConfig {
             cache_dir,
             max_size_bytes: 1024 * 1024 * 100,

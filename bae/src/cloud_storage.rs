@@ -62,6 +62,7 @@ impl S3Config {
 pub trait CloudStorage: Send + Sync {
     async fn upload_chunk(&self, chunk_id: &str, data: &[u8]) -> Result<String, CloudStorageError>;
     async fn download_chunk(&self, storage_location: &str) -> Result<Vec<u8>, CloudStorageError>;
+    async fn delete_chunk(&self, storage_location: &str) -> Result<(), CloudStorageError>;
 }
 
 /// Production S3 cloud storage implementation
@@ -199,6 +200,28 @@ impl CloudStorage for S3CloudStorage {
         debug!("Successfully downloaded {} bytes", data.len());
         Ok(data)
     }
+
+    async fn delete_chunk(&self, storage_location: &str) -> Result<(), CloudStorageError> {
+        // Parse S3 location: s3://bucket/key
+        let key = storage_location
+            .strip_prefix(&format!("s3://{}/", self.bucket_name))
+            .ok_or_else(|| {
+                CloudStorageError::Download(format!("Invalid S3 location: {}", storage_location))
+            })?;
+
+        debug!("Deleting chunk from {}", storage_location);
+
+        self.client
+            .delete_object()
+            .bucket(&self.bucket_name)
+            .key(key)
+            .send()
+            .await
+            .map_err(|e| CloudStorageError::SdkError(format!("Delete object failed: {}", e)))?;
+
+        debug!("Successfully deleted chunk from {}", storage_location);
+        Ok(())
+    }
 }
 
 /// Cloud storage manager that handles chunk lifecycle
@@ -246,5 +269,10 @@ impl CloudStorageManager {
         storage_location: &str,
     ) -> Result<Vec<u8>, CloudStorageError> {
         self.storage.download_chunk(storage_location).await
+    }
+
+    /// Delete chunk data from cloud storage
+    pub async fn delete_chunk(&self, storage_location: &str) -> Result<(), CloudStorageError> {
+        self.storage.delete_chunk(storage_location).await
     }
 }

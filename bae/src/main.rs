@@ -67,8 +67,11 @@ async fn create_database(config: &config::Config) -> Database {
 }
 
 /// Initialize library manager with all dependencies
-fn create_library_manager(database: Database) -> SharedLibraryManager {
-    let library_manager = library::LibraryManager::new(database);
+fn create_library_manager(
+    database: Database,
+    cloud_storage: cloud_storage::CloudStorageManager,
+) -> SharedLibraryManager {
+    let library_manager = library::LibraryManager::new(database, cloud_storage);
 
     info!("Library manager created");
 
@@ -103,7 +106,7 @@ fn main() {
     let cache_manager = runtime_handle.block_on(create_cache_manager());
     let cloud_storage = runtime_handle.block_on(create_cloud_storage_manager(&config));
     let database = runtime_handle.block_on(create_database(&config));
-    let library_manager = create_library_manager(database.clone());
+    let library_manager = create_library_manager(database.clone(), cloud_storage.clone());
 
     let encryption_service = encryption::EncryptionService::new(&config).expect(
         "Failed to initialize encryption service. Check your encryption key configuration.",

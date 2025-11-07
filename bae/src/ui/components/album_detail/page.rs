@@ -22,6 +22,11 @@ pub fn AlbumDetail(
     let data = use_album_detail_data(album_id, maybe_release_id);
     let import_progress = use_release_progress(data.album_resource, data.selected_release_id);
 
+    let on_album_deleted = move |_| {
+        // Navigate back to library after deletion
+        navigator().push(Route::Library {});
+    };
+
     rsx! {
         PageContainer {
             BackButton {}
@@ -76,6 +81,7 @@ pub fn AlbumDetail(
                             on_release_select,
                             tracks,
                             import_progress,
+                            on_album_deleted,
                         }
                     }
                 }

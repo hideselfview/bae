@@ -46,8 +46,6 @@ async fn test_cue_flac_import() {
         .await
         .expect("Failed to create DB");
 
-    let library_manager = SharedLibraryManager::new(LibraryManager::new(database));
-
     // Setup config
     let config = Config::load();
 
@@ -64,6 +62,9 @@ async fn test_cue_flac_import() {
     let cloud_storage = CloudStorageManager::new(test_s3_config)
         .await
         .expect("Failed to create cloud storage");
+
+    let library_manager =
+        SharedLibraryManager::new(LibraryManager::new(database, cloud_storage.clone()));
 
     // Setup encryption
     let encryption_service =

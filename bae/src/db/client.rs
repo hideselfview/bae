@@ -1164,4 +1164,34 @@ impl Database {
 
         Ok(chunks)
     }
+
+    /// Delete a release by ID
+    ///
+    /// This will cascade delete all related records:
+    /// - Tracks (via FOREIGN KEY ON DELETE CASCADE)
+    /// - Files (via FOREIGN KEY ON DELETE CASCADE)
+    /// - Chunks (via FOREIGN KEY ON DELETE CASCADE)
+    /// - Track artists, audio formats, track chunk coords (via FOREIGN KEY ON DELETE CASCADE)
+    pub async fn delete_release(&self, release_id: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM releases WHERE id = ?")
+            .bind(release_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Delete an album by ID
+    ///
+    /// This will cascade delete all related records:
+    /// - Releases (via FOREIGN KEY ON DELETE CASCADE)
+    /// - Album artists (via FOREIGN KEY ON DELETE CASCADE)
+    /// - Album discogs (via FOREIGN KEY ON DELETE CASCADE)
+    /// - All tracks, files, chunks, etc. from releases (via cascading)
+    pub async fn delete_album(&self, album_id: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM albums WHERE id = ?")
+            .bind(album_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
 }

@@ -1,5 +1,7 @@
 use crate::db::{DbAlbum, DbArtist, DbRelease, DbTrack};
+use crate::library::use_library_manager;
 use dioxus::prelude::*;
+use tracing::error;
 
 use super::super::use_playback_service;
 use super::album_art::AlbumArt;
@@ -15,8 +17,13 @@ pub fn AlbumDetailView(
     on_release_select: EventHandler<String>,
     tracks: Vec<DbTrack>,
     import_progress: ReadSignal<Option<u8>>,
+    on_album_deleted: EventHandler<()>,
 ) -> Element {
     let playback = use_playback_service();
+    let library_manager = use_library_manager();
+    let mut show_delete_confirm = use_signal(|| false);
+    let mut show_release_delete_confirm = use_signal(|| None::<String>);
+    let mut is_deleting = use_signal(|| false);
 
     let artist_name = if artists.is_empty() {
         "Unknown Artist".to_string()
@@ -74,8 +81,8 @@ pub fn AlbumDetailView(
                     // Play Album button
                     button {
                         class: "w-full mt-6 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg transition-colors flex items-center justify-center gap-2",
-                        disabled: import_progress().is_some(),
-                        class: if import_progress().is_some() { "opacity-50 cursor-not-allowed" } else { "" },
+                        disabled: import_progress().is_some() || is_deleting(),
+                        class: if import_progress().is_some() || is_deleting() { "opacity-50 cursor-not-allowed" } else { "" },
                         onclick: {
                             let tracks = tracks.clone();
                             move |_| {
@@ -87,6 +94,91 @@ pub fn AlbumDetailView(
                             "Importing..."
                         } else {
                             "▶ Play Album"
+                        }
+                    }
+
+                    // Delete Album button
+                    button {
+                        class: "w-full mt-3 px-6 py-3 bg-red-600 hover:bg-red-500 text-white font-semibold rounded-lg transition-colors flex items-center justify-center gap-2",
+                        disabled: import_progress().is_some() || is_deleting(),
+                        class: if import_progress().is_some() || is_deleting() { "opacity-50 cursor-not-allowed" } else { "" },
+                        onclick: move |_| {
+                            if !is_deleting() && import_progress().is_none() {
+                                show_delete_confirm.set(true);
+                            }
+                        },
+                        if is_deleting() {
+                            "Deleting..."
+                        } else {
+                            "🗑 Delete Album"
+                        }
+                    }
+
+                    // Delete confirmation dialog
+                    if show_delete_confirm() {
+                        div {
+                            class: "fixed inset-0 bg-black/50 flex items-center justify-center z-50",
+                            onclick: move |_| {
+                                if !is_deleting() {
+                                    show_delete_confirm.set(false);
+                                }
+                            },
+                            div {
+                                class: "bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4",
+                                onclick: move |evt| evt.stop_propagation(),
+                                h2 { class: "text-xl font-bold text-white mb-4", "Delete Album?" }
+                                p { class: "text-gray-300 mb-6",
+                                    "Are you sure you want to delete \"{album.title}\"? This will delete all releases, tracks, and associated data. This action cannot be undone."
+                                }
+                                div { class: "flex gap-3 justify-end",
+                                    button {
+                                        class: "px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg",
+                                        disabled: is_deleting(),
+                                        onclick: move |_| {
+                                            if !is_deleting() {
+                                                show_delete_confirm.set(false);
+                                            }
+                                        },
+                                        "Cancel"
+                                    }
+                                    button {
+                                        class: "px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg",
+                                        disabled: is_deleting(),
+                                        onclick: {
+                                            let album_id = album.id.clone();
+                                            let library_manager = library_manager.clone();
+                                            move |_| {
+                                                if is_deleting() {
+                                                    return;
+                                                }
+                                                is_deleting.set(true);
+                                                let album_id = album_id.clone();
+                                                let library_manager = library_manager.clone();
+                                                let mut is_deleting = is_deleting;
+                                                let mut show_delete_confirm = show_delete_confirm;
+                                                spawn(async move {
+                                                    match library_manager.get().delete_album(&album_id).await {
+                                                        Ok(_) => {
+                                                            show_delete_confirm.set(false);
+                                                            is_deleting.set(false);
+                                                            on_album_deleted.call(());
+                                                        }
+                                                        Err(e) => {
+                                                            error!("Failed to delete album: {}", e);
+                                                            is_deleting.set(false);
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        if is_deleting() {
+                                            "Deleting..."
+                                        } else {
+                                            "Delete"
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -104,21 +196,115 @@ pub fn AlbumDetailView(
                                     {
                                         let is_selected = selected_release_id.as_ref() == Some(&release.id);
                                         let release_id = release.id.clone();
+                                        let release_id_for_delete = release.id.clone();
                                         rsx! {
-                                            button {
+                                            div {
                                                 key: "{release.id}",
-                                                class: if is_selected { "px-4 py-2 text-sm font-medium text-blue-400 border-b-2 border-blue-400 whitespace-nowrap" } else { "px-4 py-2 text-sm font-medium text-gray-400 hover:text-gray-300 border-b-2 border-transparent whitespace-nowrap" },
-                                                onclick: move |_| {
-                                                    on_release_select.call(release_id.clone());
-                                                },
-                                                {
-                                                    if let Some(ref name) = release.release_name {
-                                                        name.clone()
-                                                    } else if let Some(year) = release.year {
-                                                        format!("Release ({})", year)
-                                                    } else {
-                                                        "Release".to_string()
+                                                class: "flex items-center gap-2",
+                                                button {
+                                                    class: if is_selected { "px-4 py-2 text-sm font-medium text-blue-400 border-b-2 border-blue-400 whitespace-nowrap" } else { "px-4 py-2 text-sm font-medium text-gray-400 hover:text-gray-300 border-b-2 border-transparent whitespace-nowrap" },
+                                                    onclick: move |_| {
+                                                        on_release_select.call(release_id.clone());
+                                                    },
+                                                    {
+                                                        if let Some(ref name) = release.release_name {
+                                                            name.clone()
+                                                        } else if let Some(year) = release.year {
+                                                            format!("Release ({})", year)
+                                                        } else {
+                                                            "Release".to_string()
+                                                        }
                                                     }
+                                                }
+                                                button {
+                                                    class: "px-2 py-1 text-sm text-red-400 hover:text-red-300 hover:bg-red-900/20 rounded",
+                                                    disabled: is_deleting(),
+                                                    onclick: move |_| {
+                                                        if !is_deleting() {
+                                                            show_release_delete_confirm.set(Some(release_id_for_delete.clone()));
+                                                        }
+                                                    },
+                                                    "×"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Release delete confirmation dialog
+                        if let Some(release_id_to_delete) = show_release_delete_confirm() {
+                            if releases.iter().any(|r| r.id == release_id_to_delete) {
+                                div {
+                                    class: "fixed inset-0 bg-black/50 flex items-center justify-center z-50",
+                                    onclick: move |_| {
+                                        if !is_deleting() {
+                                            show_release_delete_confirm.set(None);
+                                        }
+                                    },
+                                    div {
+                                        class: "bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4",
+                                        onclick: move |evt| evt.stop_propagation(),
+                                        h2 { class: "text-xl font-bold text-white mb-4", "Delete Release?" }
+                                        p { class: "text-gray-300 mb-6",
+                                            "Are you sure you want to delete this release? This will delete all tracks and associated data for this release."
+                                            if releases.len() == 1 {
+                                                " Since this is the only release, the album will also be deleted."
+                                            } else {
+                                                ""
+                                            }
+                                        }
+                                        div { class: "flex gap-3 justify-end",
+                                            button {
+                                                class: "px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg",
+                                                disabled: is_deleting(),
+                                                onclick: move |_| {
+                                                    if !is_deleting() {
+                                                        show_release_delete_confirm.set(None);
+                                                    }
+                                                },
+                                                "Cancel"
+                                            }
+                                            button {
+                                                class: "px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg",
+                                                disabled: is_deleting(),
+                                                onclick: {
+                                                    let release_id = release_id_to_delete.clone();
+                                                    let library_manager = library_manager.clone();
+                                                    let releases_count = releases.len();
+                                                    move |_| {
+                                                        if is_deleting() {
+                                                            return;
+                                                        }
+                                                        is_deleting.set(true);
+                                                        let release_id = release_id.clone();
+                                                        let library_manager = library_manager.clone();
+                                                        spawn(async move {
+                                                            match library_manager.get().delete_release(&release_id).await {
+                                                                Ok(_) => {
+                                                                    show_release_delete_confirm.set(None);
+                                                                    is_deleting.set(false);
+                                                                    // If this was the last release, album was deleted too
+                                                                    if releases_count == 1 {
+                                                                        on_album_deleted.call(());
+                                                                    } else {
+                                                                        // Refresh the page to show updated releases
+                                                                        on_album_deleted.call(());
+                                                                    }
+                                                                }
+                                                                Err(e) => {
+                                                                    error!("Failed to delete release: {}", e);
+                                                                    is_deleting.set(false);
+                                                                }
+                                                            }
+                                                        });
+                                                    }
+                                                },
+                                                if is_deleting() {
+                                                    "Deleting..."
+                                                } else {
+                                                    "Delete"
                                                 }
                                             }
                                         }

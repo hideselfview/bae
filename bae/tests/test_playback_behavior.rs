@@ -53,7 +53,7 @@ impl PlaybackTestFixture {
         };
         let cache_manager = CacheManager::with_config(cache_config).await?;
 
-        let library_manager = LibraryManager::new(database);
+        let library_manager = LibraryManager::new(database, cloud_storage.clone());
         let shared_library_manager = SharedLibraryManager::new(library_manager.clone());
         let library_manager_arc = Arc::new(library_manager);
 

@@ -1,9 +1,10 @@
-use crate::cloud_storage::CloudStorageError;
+use crate::cloud_storage::{CloudStorageError, CloudStorageManager};
 use crate::db::{
     Database, DbAlbum, DbAlbumArtist, DbArtist, DbAudioFormat, DbChunk, DbFile, DbRelease, DbTrack,
     DbTrackArtist, DbTrackChunkCoords, ImportStatus,
 };
 use thiserror::Error;
+use tracing::warn;
 
 #[derive(Error, Debug)]
 pub enum LibraryError {
@@ -25,15 +26,20 @@ pub enum LibraryError {
 /// - Album/track/file/chunk persistence
 /// - State transitions (importing -> complete/failed)
 /// - Query methods for library browsing
+/// - Deletion with cloud storage cleanup
 #[derive(Debug, Clone)]
 pub struct LibraryManager {
     database: Database,
+    cloud_storage: CloudStorageManager,
 }
 
 impl LibraryManager {
     /// Create a new library manager
-    pub fn new(database: Database) -> Self {
-        LibraryManager { database }
+    pub fn new(database: Database, cloud_storage: CloudStorageManager) -> Self {
+        LibraryManager {
+            database,
+            cloud_storage,
+        }
     }
 
     /// Insert album, release, and tracks into database in a transaction
@@ -296,5 +302,280 @@ impl LibraryManager {
         track_id: &str,
     ) -> Result<Vec<DbArtist>, LibraryError> {
         Ok(self.database.get_artists_for_track(track_id).await?)
+    }
+
+    /// Delete a release and its associated data
+    ///
+    /// This will:
+    /// 1. Get all chunks for the release
+    /// 2. Delete chunks from cloud storage (errors are logged but don't stop deletion)
+    /// 3. Delete the release from database (cascades to tracks, files, chunks, etc.)
+    /// 4. If this was the last release for the album, also delete the album
+    pub async fn delete_release(&self, release_id: &str) -> Result<(), LibraryError> {
+        // Get album_id before deletion to check if we need to delete the album
+        let album_id = self.get_album_id_for_release(release_id).await?;
+
+        // Get all chunks for the release to delete from cloud storage
+        let chunks = self.get_chunks_for_release(release_id).await?;
+
+        // Delete chunks from cloud storage
+        for chunk in &chunks {
+            if let Err(e) = self
+                .cloud_storage
+                .delete_chunk(&chunk.storage_location)
+                .await
+            {
+                warn!(
+                    "Failed to delete chunk {} from cloud storage: {}. Continuing with database deletion.",
+                    chunk.id, e
+                );
+            }
+        }
+
+        // Delete release from database (cascades to tracks, files, chunks, etc.)
+        self.database.delete_release(release_id).await?;
+
+        // Check if this was the last release for the album
+        let remaining_releases = self.get_releases_for_album(&album_id).await?;
+        if remaining_releases.is_empty() {
+            // Delete the album as well
+            self.database.delete_album(&album_id).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Delete an album and all its associated data
+    ///
+    /// This will:
+    /// 1. Get all releases for the album
+    /// 2. For each release, get chunks and delete from cloud storage
+    /// 3. Delete the album from database (cascades to releases and all related data)
+    pub async fn delete_album(&self, album_id: &str) -> Result<(), LibraryError> {
+        // Get all releases for the album
+        let releases = self.get_releases_for_album(album_id).await?;
+
+        // For each release, get chunks and delete from cloud storage
+        for release in &releases {
+            let chunks = self.get_chunks_for_release(&release.id).await?;
+            for chunk in &chunks {
+                if let Err(e) = self
+                    .cloud_storage
+                    .delete_chunk(&chunk.storage_location)
+                    .await
+                {
+                    warn!(
+                        "Failed to delete chunk {} from cloud storage: {}. Continuing with database deletion.",
+                        chunk.id, e
+                    );
+                }
+            }
+        }
+
+        // Delete album from database (cascades to releases and all related data)
+        self.database.delete_album(album_id).await?;
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cloud_storage::CloudStorageManager;
+    use crate::db::{DbAlbum, DbChunk, DbRelease, ImportStatus};
+    use crate::test_support::MockCloudStorage;
+    use chrono::Utc;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+    use uuid::Uuid;
+
+    async fn setup_test_manager() -> (LibraryManager, TempDir, CloudStorageManager) {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("test.db");
+        let database = Database::new(db_path.to_str().unwrap()).await.unwrap();
+        let mock_storage = Arc::new(MockCloudStorage::new());
+        let cloud_storage = CloudStorageManager::from_storage(mock_storage);
+        let manager = LibraryManager::new(database, cloud_storage.clone());
+        (manager, temp_dir, cloud_storage)
+    }
+
+    fn create_test_album() -> DbAlbum {
+        DbAlbum {
+            id: Uuid::new_v4().to_string(),
+            title: "Test Album".to_string(),
+            year: Some(2024),
+            discogs_release: None,
+            bandcamp_album_id: None,
+            cover_art_url: None,
+            is_compilation: false,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    fn create_test_release(album_id: &str) -> DbRelease {
+        DbRelease {
+            id: Uuid::new_v4().to_string(),
+            album_id: album_id.to_string(),
+            release_name: None,
+            year: Some(2024),
+            discogs_release_id: None,
+            bandcamp_release_id: None,
+            import_status: ImportStatus::Complete,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    async fn create_test_chunk(
+        release_id: &str,
+        chunk_index: i32,
+        cloud_storage: &CloudStorageManager,
+    ) -> DbChunk {
+        let chunk_id = Uuid::new_v4().to_string();
+        let storage_location = cloud_storage
+            .upload_chunk_data(&chunk_id, &[0u8; 1024])
+            .await
+            .unwrap();
+        DbChunk {
+            id: chunk_id,
+            release_id: release_id.to_string(),
+            chunk_index,
+            encrypted_size: 1024,
+            storage_location,
+            last_accessed: None,
+            created_at: Utc::now(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_delete_release_with_single_release_deletes_album() {
+        let (manager, _temp_dir, _cloud_storage) = setup_test_manager().await;
+
+        // Create album and release
+        let album = create_test_album();
+        let release = create_test_release(&album.id);
+        let chunk = create_test_chunk(&release.id, 0, &manager.cloud_storage).await;
+
+        manager.database.insert_album(&album).await.unwrap();
+        manager.database.insert_release(&release).await.unwrap();
+        manager.database.insert_chunk(&chunk).await.unwrap();
+
+        // Delete release
+        manager.delete_release(&release.id).await.unwrap();
+
+        // Verify album is deleted
+        let album_result = manager.database.get_album_by_id(&album.id).await.unwrap();
+        assert!(album_result.is_none());
+
+        // Verify release is deleted
+        let releases = manager
+            .database
+            .get_releases_for_album(&album.id)
+            .await
+            .unwrap();
+        assert!(releases.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_delete_release_with_multiple_releases_preserves_album() {
+        let (manager, _temp_dir, _cloud_storage) = setup_test_manager().await;
+
+        // Create album with two releases
+        let album = create_test_album();
+        let release1 = create_test_release(&album.id);
+        let release2 = create_test_release(&album.id);
+        let chunk1 = create_test_chunk(&release1.id, 0, &manager.cloud_storage).await;
+        let chunk2 = create_test_chunk(&release2.id, 0, &manager.cloud_storage).await;
+
+        manager.database.insert_album(&album).await.unwrap();
+        manager.database.insert_release(&release1).await.unwrap();
+        manager.database.insert_release(&release2).await.unwrap();
+        manager.database.insert_chunk(&chunk1).await.unwrap();
+        manager.database.insert_chunk(&chunk2).await.unwrap();
+
+        // Delete first release
+        manager.delete_release(&release1.id).await.unwrap();
+
+        // Verify album still exists
+        let album_result = manager.database.get_album_by_id(&album.id).await.unwrap();
+        assert!(album_result.is_some());
+
+        // Verify only release2 remains
+        let releases = manager
+            .database
+            .get_releases_for_album(&album.id)
+            .await
+            .unwrap();
+        assert_eq!(releases.len(), 1);
+        assert_eq!(releases[0].id, release2.id);
+    }
+
+    #[tokio::test]
+    async fn test_delete_album_deletes_all_releases_and_chunks() {
+        let (manager, _temp_dir, cloud_storage) = setup_test_manager().await;
+
+        // Create album with two releases
+        let album = create_test_album();
+        let release1 = create_test_release(&album.id);
+        let release2 = create_test_release(&album.id);
+        let chunk1 = create_test_chunk(&release1.id, 0, &manager.cloud_storage).await;
+        let chunk2 = create_test_chunk(&release2.id, 0, &manager.cloud_storage).await;
+        let location1 = chunk1.storage_location.clone();
+        let location2 = chunk2.storage_location.clone();
+
+        manager.database.insert_album(&album).await.unwrap();
+        manager.database.insert_release(&release1).await.unwrap();
+        manager.database.insert_release(&release2).await.unwrap();
+        manager.database.insert_chunk(&chunk1).await.unwrap();
+        manager.database.insert_chunk(&chunk2).await.unwrap();
+
+        // Verify chunks exist in storage
+        assert!(cloud_storage.download_chunk(&location1).await.is_ok());
+        assert!(cloud_storage.download_chunk(&location2).await.is_ok());
+
+        // Delete album
+        manager.delete_album(&album.id).await.unwrap();
+
+        // Verify album is deleted
+        let album_result = manager.database.get_album_by_id(&album.id).await.unwrap();
+        assert!(album_result.is_none());
+
+        // Verify releases are deleted
+        let releases = manager
+            .database
+            .get_releases_for_album(&album.id)
+            .await
+            .unwrap();
+        assert!(releases.is_empty());
+
+        // Verify chunks are deleted from cloud storage
+        assert!(cloud_storage.download_chunk(&location1).await.is_err());
+        assert!(cloud_storage.download_chunk(&location2).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_delete_release_cloud_storage_cleanup() {
+        let (manager, _temp_dir, cloud_storage) = setup_test_manager().await;
+
+        // Create album and release with chunk
+        let album = create_test_album();
+        let release = create_test_release(&album.id);
+        let chunk = create_test_chunk(&release.id, 0, &manager.cloud_storage).await;
+        let location = chunk.storage_location.clone();
+
+        manager.database.insert_album(&album).await.unwrap();
+        manager.database.insert_release(&release).await.unwrap();
+        manager.database.insert_chunk(&chunk).await.unwrap();
+
+        // Verify chunk exists
+        assert!(cloud_storage.download_chunk(&location).await.is_ok());
+
+        // Delete release
+        manager.delete_release(&release.id).await.unwrap();
+
+        // Verify chunk is deleted from cloud storage
+        assert!(cloud_storage.download_chunk(&location).await.is_err());
     }
 }

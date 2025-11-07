@@ -56,4 +56,9 @@ impl CloudStorage for MockCloudStorage {
                 CloudStorageError::Download(format!("Chunk not found: {}", storage_location))
             })
     }
+
+    async fn delete_chunk(&self, storage_location: &str) -> Result<(), CloudStorageError> {
+        self.chunks.lock().unwrap().remove(storage_location);
+        Ok(())
+    }
 }
