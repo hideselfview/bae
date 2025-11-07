@@ -24,6 +24,8 @@ pub fn AlbumDetailView(
     let mut show_delete_confirm = use_signal(|| false);
     let mut show_release_delete_confirm = use_signal(|| None::<String>);
     let mut is_deleting = use_signal(|| false);
+    let mut show_dropdown = use_signal(|| false);
+    let mut show_release_dropdown = use_signal(|| None::<String>);
 
     let artist_name = if artists.is_empty() {
         "Unknown Artist".to_string()
@@ -97,20 +99,55 @@ pub fn AlbumDetailView(
                         }
                     }
 
-                    // Delete Album button
-                    button {
-                        class: "w-full mt-3 px-6 py-3 bg-red-600 hover:bg-red-500 text-white font-semibold rounded-lg transition-colors flex items-center justify-center gap-2",
-                        disabled: import_progress().is_some() || is_deleting(),
-                        class: if import_progress().is_some() || is_deleting() { "opacity-50 cursor-not-allowed" } else { "" },
-                        onclick: move |_| {
-                            if !is_deleting() && import_progress().is_none() {
-                                show_delete_confirm.set(true);
+                    // Actions dropdown menu
+                    div { class: "relative mt-3",
+                        button {
+                            class: "w-full px-6 py-3 bg-gray-700 hover:bg-gray-600 text-white font-semibold rounded-lg transition-colors flex items-center justify-center gap-2",
+                            disabled: import_progress().is_some() || is_deleting(),
+                            class: if import_progress().is_some() || is_deleting() { "opacity-50 cursor-not-allowed" } else { "" },
+                            onclick: move |_| {
+                                if !is_deleting() && import_progress().is_none() {
+                                    show_dropdown.set(!show_dropdown());
+                                }
+                            },
+                            "⋮ More"
+                        }
+
+                        // Dropdown menu
+                        if show_dropdown() {
+                            div {
+                                class: "absolute top-full left-0 right-0 mt-2 bg-gray-700 rounded-lg shadow-lg overflow-hidden z-10 border border-gray-600",
+                                button {
+                                    class: "w-full px-4 py-3 text-left text-red-400 hover:bg-gray-600 transition-colors flex items-center gap-2",
+                                    disabled: is_deleting(),
+                                    onclick: move |evt| {
+                                        evt.stop_propagation();
+                                        show_dropdown.set(false);
+                                        if !is_deleting() {
+                                            show_delete_confirm.set(true);
+                                        }
+                                    },
+                                    "Delete Album"
+                                }
                             }
-                        },
-                        if is_deleting() {
-                            "Deleting..."
-                        } else {
-                            "🗑 Delete Album"
+                        }
+                    }
+
+                    // Click outside to close dropdowns
+                    if show_dropdown() {
+                        div {
+                            class: "fixed inset-0 z-[5]",
+                            onclick: move |_| {
+                                show_dropdown.set(false);
+                            }
+                        }
+                    }
+                    if show_release_dropdown().is_some() {
+                        div {
+                            class: "fixed inset-0 z-[5]",
+                            onclick: move |_| {
+                                show_release_dropdown.set(None);
+                            }
                         }
                     }
 
@@ -200,7 +237,7 @@ pub fn AlbumDetailView(
                                         rsx! {
                                             div {
                                                 key: "{release.id}",
-                                                class: "flex items-center gap-2",
+                                                class: "flex items-center gap-2 relative",
                                                 button {
                                                     class: if is_selected { "px-4 py-2 text-sm font-medium text-blue-400 border-b-2 border-blue-400 whitespace-nowrap" } else { "px-4 py-2 text-sm font-medium text-gray-400 hover:text-gray-300 border-b-2 border-transparent whitespace-nowrap" },
                                                     onclick: move |_| {
@@ -216,15 +253,52 @@ pub fn AlbumDetailView(
                                                         }
                                                     }
                                                 }
-                                                button {
-                                                    class: "px-2 py-1 text-sm text-red-400 hover:text-red-300 hover:bg-red-900/20 rounded",
-                                                    disabled: is_deleting(),
-                                                    onclick: move |_| {
-                                                        if !is_deleting() {
-                                                            show_release_delete_confirm.set(Some(release_id_for_delete.clone()));
+                                                div { class: "relative",
+                                                    {
+                                                        let release_id_for_dropdown = release_id_for_delete.clone();
+                                                        rsx! {
+                                                            button {
+                                                                class: "px-2 py-1 text-sm text-gray-400 hover:text-gray-300 hover:bg-gray-700 rounded",
+                                                                disabled: is_deleting(),
+                                                                onclick: move |evt| {
+                                                                    evt.stop_propagation();
+                                                                    if !is_deleting() {
+                                                                        let current = show_release_dropdown();
+                                                                        if current.as_ref() == Some(&release_id_for_dropdown) {
+                                                                            show_release_dropdown.set(None);
+                                                                        } else {
+                                                                            show_release_dropdown.set(Some(release_id_for_dropdown.clone()));
+                                                                        }
+                                                                    }
+                                                                },
+                                                                "⋮"
+                                                            }
+
+                                                            // Release dropdown menu
+                                                            if show_release_dropdown().as_ref() == Some(&release_id_for_dropdown) {
+                                                                {
+                                                                    let release_id_for_delete_action = release_id_for_delete.clone();
+                                                                    rsx! {
+                                                                        div {
+                                                                            class: "absolute right-0 top-full mt-1 bg-gray-700 rounded-lg shadow-lg overflow-hidden z-10 border border-gray-600 min-w-[160px]",
+                                                                            button {
+                                                                                class: "w-full px-4 py-2 text-left text-red-400 hover:bg-gray-600 transition-colors flex items-center gap-2 text-sm",
+                                                                                disabled: is_deleting(),
+                                                                                onclick: move |evt| {
+                                                                                    evt.stop_propagation();
+                                                                                    show_release_dropdown.set(None);
+                                                                                    if !is_deleting() {
+                                                                                        show_release_delete_confirm.set(Some(release_id_for_delete_action.clone()));
+                                                                                    }
+                                                                                },
+                                                                                "Delete Release"
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
                                                         }
-                                                    },
-                                                    "×"
+                                                    }
                                                 }
                                             }
                                         }
