@@ -71,6 +71,53 @@ fn PlaybackControlsZone(
 }
 
 #[component]
+fn AlbumCoverThumbnail(
+    cover_url: ReadSignal<Option<String>>,
+    track: ReadSignal<Option<DbTrack>>,
+) -> Element {
+    let library_manager = use_library_manager();
+
+    rsx! {
+        div {
+            class: "w-10 h-10 bg-gray-700 rounded-sm flex items-center justify-center overflow-hidden flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity",
+            onclick: {
+                let library_manager = library_manager.clone();
+                let navigator = navigator();
+                move |_| {
+                    let track = track();
+                    if let Some(track) = track {
+                        let track = track.clone();
+                        let library_manager = library_manager.clone();
+                        spawn(async move {
+                            if let Ok(album_id) = library_manager
+                                .get()
+                                .get_album_id_for_release(&track.release_id)
+                                .await
+                            {
+                                navigator
+                                    .push(Route::AlbumDetail {
+                                        album_id,
+                                        release_id: track.release_id.clone(),
+                                    });
+                            }
+                        });
+                    }
+                }
+            },
+            if let Some(url) = cover_url() {
+                img {
+                    src: "{url}",
+                    alt: "Album cover",
+                    class: "w-full h-full object-cover",
+                }
+            } else {
+                div { class: "text-gray-500 text-sm", "" }
+            }
+        }
+    }
+}
+
+#[component]
 fn TrackInfoZone(
     track: ReadSignal<Option<DbTrack>>,
     artist_name: ReadSignal<String>,
@@ -204,6 +251,7 @@ pub fn NowPlayingBar() -> Element {
     let library_manager = use_library_manager();
     let mut state = use_signal(|| PlaybackState::Stopped);
     let mut current_artist = use_signal(|| "Unknown Artist".to_string());
+    let mut cover_art_url = use_signal(|| Option::<String>::None);
     let mut is_seeking = use_signal(|| false);
 
     // Subscribe to playback progress updates
@@ -453,6 +501,48 @@ pub fn NowPlayingBar() -> Element {
 
     let artist_name = use_memo(move || current_artist.read().clone());
 
+    // Fetch cover art whenever track changes
+    use_effect({
+        let library_manager = library_manager.clone();
+        move || {
+            let library_manager = library_manager.clone();
+            let track_val = track();
+            if let Some(track) = track_val {
+                let release_id = track.release_id.clone();
+                spawn(async move {
+                    match library_manager
+                        .get()
+                        .get_album_id_for_release(&release_id)
+                        .await
+                    {
+                        Ok(album_id) => {
+                            match library_manager.get().get_album_by_id(&album_id).await {
+                                Ok(Some(album)) => {
+                                    cover_art_url.set(album.cover_art_url);
+                                }
+                                Ok(None) => {
+                                    cover_art_url.set(None);
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to fetch album {}: {}", album_id, e);
+                                    cover_art_url.set(None);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("No album found for release {}: {}", release_id, e);
+                            cover_art_url.set(None);
+                        }
+                    }
+                });
+            } else {
+                cover_art_url.set(None);
+            }
+        }
+    });
+
+    let cover_url = use_memo(move || cover_art_url.read().clone());
+
     let playback_prev = playback.clone();
     let playback_pause = playback.clone();
     let playback_resume = playback.clone();
@@ -472,6 +562,7 @@ pub fn NowPlayingBar() -> Element {
                     is_loading,
                     is_stopped,
                 }
+                AlbumCoverThumbnail { cover_url, track }
                 TrackInfoZone { track, artist_name, is_loading }
                 PositionZone {
                     position,
