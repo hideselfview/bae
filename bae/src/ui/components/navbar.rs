@@ -3,29 +3,24 @@ use dioxus::prelude::*;
 
 use super::queue_sidebar::QueueSidebar;
 use super::NowPlayingBar;
+use super::TitleBar;
 
-/// Shared navbar component.
+/// Layout component that includes title bar and content
 #[component]
 pub fn Navbar() -> Element {
     rsx! {
-        div { id: "navbar", class: "bg-gray-800 text-white p-4 flex space-x-6",
-            Link {
-                to: Route::Library {},
-                class: "hover:text-blue-300 transition-colors",
-                "Library"
+        // On macOS, render custom title bar with native traffic lights
+        // On other platforms, use native OS title bar
+        {
+            #[cfg(target_os = "macos")]
+            {
+                rsx! { TitleBar {} }
             }
-            Link {
-                to: Route::ImportWorkflowManager {},
-                class: "hover:text-blue-300 transition-colors",
-                "Import"
-            }
-            Link {
-                to: Route::Settings {},
-                class: "hover:text-blue-300 transition-colors",
-                "Settings"
+            #[cfg(not(target_os = "macos"))]
+            {
+                rsx! {}
             }
         }
-
         Outlet::<Route> {}
         NowPlayingBar {}
         QueueSidebar {}

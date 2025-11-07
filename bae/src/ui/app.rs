@@ -3,6 +3,8 @@ use dioxus::prelude::*;
 
 use crate::ui::components::import::ImportWorkflowManager;
 use crate::ui::components::*;
+#[cfg(target_os = "macos")]
+use crate::ui::window_activation::setup_macos_window_activation;
 use crate::ui::AppContext;
 
 pub const FAVICON: Asset = asset!("/assets/favicon.ico");
@@ -34,10 +36,14 @@ fn make_window() -> WindowBuilder {
     WindowBuilder::new()
         .with_title("bae")
         .with_always_on_top(false)
+        .with_decorations(true)
         .with_inner_size(dioxus::desktop::LogicalSize::new(1200, 800))
 }
 
 pub fn launch_app(context: AppContext) {
+    #[cfg(target_os = "macos")]
+    setup_macos_window_activation();
+
     LaunchBuilder::desktop()
         .with_cfg(make_config())
         .with_context_provider(move || Box::new(context.clone()))

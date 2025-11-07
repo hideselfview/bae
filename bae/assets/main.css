@@ -3,7 +3,19 @@ body {
     background-color: #0f1116;
     color: #ffffff;
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    margin: 20px;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+/* Opt-in text selection for content areas */
+input,
+textarea,
+[contenteditable="true"] {
+    user-select: text;
+    -webkit-user-select: text;
 }
 
 #hero {
@@ -104,4 +116,9 @@ body {
 
 #echo>p {
     margin: 20px 0px 0px auto;
+}
+
+/* Title Bar - webkit-specific drag region */
+#title-bar {
+    -webkit-app-region: drag;
 }
