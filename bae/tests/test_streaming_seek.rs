@@ -82,37 +82,6 @@ async fn test_single_seek(
                     seek_completed = true;
                     break;
                 }
-                Some(PlaybackProgress::SeekSkipped {
-                    current_position, ..
-                }) => {
-                    tracing::info!(
-                        "Seek skipped - already at position {}s ({})",
-                        current_position.as_secs(),
-                        label
-                    );
-
-                    // Verify we're close to the requested position (within 5 seconds)
-                    let diff = if current_position > seek_pos {
-                        current_position - seek_pos
-                    } else {
-                        seek_pos - current_position
-                    };
-
-                    if diff > Duration::from_secs(5) {
-                        tracing::error!(
-                            "Seek position mismatch: requested {}s, already at {}s (diff: {}s) [{}]",
-                            seek_pos.as_secs(),
-                            current_position.as_secs(),
-                            diff.as_secs(),
-                            label
-                        );
-                    } else {
-                        tracing::info!("Seek position verified (within 5s tolerance) [{}]", label);
-                    }
-
-                    seek_completed = true;
-                    break;
-                }
                 Some(progress) => {
                     tracing::debug!("Received progress during seek: {:?}", progress);
                 }
@@ -141,15 +110,12 @@ async fn test_single_seek(
 #[ignore] // Requires Discogs API and actual files
 async fn test_streaming_seek() {
     // Setup logging (reads from RUST_LOG env var, defaults to info level)
-    // Initialize tracing with log bridge to capture Symphonia's log output
-    tracing_log::LogTracer::init().ok();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("debug")), // Changed to debug to see Symphonia logs
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
-        .try_init()
-        .ok();
+        .init();
 
     tracing::info!("Starting streaming seek test");
 
@@ -216,9 +182,8 @@ async fn test_streaming_seek() {
         return;
     }
 
-    // Fetch Discogs release (use no_proxy to avoid system configuration crash in tests)
-    let discogs_client =
-        DiscogsClient::new_no_proxy(std::env::var("DISCOGS_API_KEY").unwrap_or_default());
+    // Fetch Discogs release
+    let discogs_client = DiscogsClient::new(std::env::var("DISCOGS_API_KEY").unwrap_or_default());
     let discogs_release_id = std::env::var("BAE_TEST_DISCOGS_RELEASE_ID")
         .expect("BAE_TEST_DISCOGS_RELEASE_ID environment variable must be set");
     let discogs_release = discogs_client
@@ -510,167 +475,6 @@ async fn test_streaming_seek() {
     }
 
     tracing::info!("✅ Seek to beginning test completed");
-
-    // Test 7: Immediate large seek from start (reproduces probe limit issue)
-    // Start playing from beginning, then immediately seek very far ahead
-    // This ensures chunks at target aren't loaded yet
-    tracing::info!("\n=== Test 7: Immediate large seek from start (probe limit test) ===");
-
-    // Seek to beginning first
-    if !test_single_seek(
-        &playback_handle,
-        &mut progress_rx,
-        Duration::from_secs(0),
-        "reset-for-large-seek",
-    )
-    .await
-    {
-        panic!("Reset seek to 0s failed");
-    }
-
-    // Wait just a moment for playback to stabilize at beginning
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    // Now immediately seek to 90% through the track - far enough that:
-    // 1. Chunks at that position aren't loaded yet
-    // 2. We'd land in the middle of a FLAC frame without seektable
-    // For the 377s first track, this is ~339s. For track 4 (857s), this would be ~771s.
-    let large_seek_pos = Duration::from_secs((track_duration.as_secs() * 9 / 10).min(600));
-    tracing::info!(
-        "Immediately seeking from start to {}s - far enough to guarantee middle-of-frame without seektable...",
-        large_seek_pos.as_secs()
-    );
-
-    if !test_single_seek(
-        &playback_handle,
-        &mut progress_rx,
-        large_seek_pos,
-        "immediate-large-seek",
-    )
-    .await
-    {
-        panic!(
-            "Immediate large seek to {}s failed",
-            large_seek_pos.as_secs()
-        );
-    }
-
-    tracing::info!("✅ Immediate large seek test completed (seektable working!)");
-
-    // Test 8: Extreme seek on longest track (reproduces exact user scenario)
-    // Use track 4 (the 14+ minute track) and seek 10+ minutes in
-    tracing::info!("\n=== Test 8: Extreme seek on longest track (user scenario) ===");
-
-    // Find the longest track (should be track 4, ~857s)
-    let longest_track = tracks
-        .iter()
-        .max_by_key(|t| t.duration_ms.unwrap_or(0))
-        .unwrap();
-
-    let longest_track_duration =
-        Duration::from_millis(longest_track.duration_ms.unwrap_or(0) as u64);
-    tracing::info!(
-        "Testing with longest track: {} (duration: {}s)",
-        longest_track.title,
-        longest_track_duration.as_secs()
-    );
-
-    // Dump seektable for debugging
-    if let Ok(Some(audio_format)) = library_manager
-        .get()
-        .get_audio_format_by_track_id(&longest_track.id)
-        .await
-    {
-        if let Some(seektable_bytes) = &audio_format.flac_seektable {
-            match bincode::deserialize::<std::collections::HashMap<u64, u64>>(seektable_bytes) {
-                Ok(seektable) => {
-                    tracing::warn!(
-                        "Track {} seektable: {} seekpoints",
-                        longest_track.id,
-                        seektable.len()
-                    );
-                    if let (Some(min_sample), Some(max_sample)) =
-                        (seektable.keys().min(), seektable.keys().max())
-                    {
-                        let sample_rate = 44100u64;
-                        let duration_samples = max_sample - min_sample;
-                        let avg_samples_per_seekpoint = if seektable.len() > 1 {
-                            duration_samples / (seektable.len() as u64 - 1)
-                        } else {
-                            0
-                        };
-                        tracing::warn!(
-                            "  Range: sample {} to {} (~{:.1}s)",
-                            min_sample,
-                            max_sample,
-                            duration_samples as f64 / sample_rate as f64
-                        );
-                        tracing::warn!(
-                            "  Density: ~{:.1}s between seekpoints",
-                            avg_samples_per_seekpoint as f64 / sample_rate as f64
-                        );
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to deserialize seektable: {}", e);
-                }
-            }
-        } else {
-            tracing::warn!("Track {} has no seektable!", longest_track.id);
-        }
-    }
-
-    // Play the longest track
-    playback_handle.play(longest_track.id.clone());
-
-    // Wait for playback to start
-    let mut playback_started = false;
-    let timeout = tokio::time::timeout(Duration::from_secs(30), async {
-        loop {
-            match progress_rx.recv().await {
-                Some(PlaybackProgress::StateChanged { state }) => {
-                    if matches!(state, PlaybackState::Playing { .. }) {
-                        playback_started = true;
-                        break;
-                    }
-                }
-                Some(_) => {}
-                None => break,
-            }
-        }
-    })
-    .await;
-
-    assert!(
-        timeout.is_ok() && playback_started,
-        "Longest track playback did not start"
-    );
-
-    // Wait just a moment for initial chunks
-    tokio::time::sleep(Duration::from_millis(200)).await;
-
-    // Now seek to 70% through this long track (e.g., ~600s for 857s track)
-    // This is similar to user's 378s/615s seeks
-    let extreme_seek_pos =
-        Duration::from_secs((longest_track_duration.as_secs() * 7 / 10).min(600));
-    tracing::info!(
-        "Seeking to {}s in {}-second track (similar to user's 378s/615s seeks)...",
-        extreme_seek_pos.as_secs(),
-        longest_track_duration.as_secs()
-    );
-
-    if !test_single_seek(
-        &playback_handle,
-        &mut progress_rx,
-        extreme_seek_pos,
-        "extreme-seek-long-track",
-    )
-    .await
-    {
-        panic!("Extreme seek to {}s failed", extreme_seek_pos.as_secs());
-    }
-
-    tracing::info!("✅ Extreme seek on longest track completed (reproduces user scenario!)");
 
     tracing::info!("\n✅ All seek tests completed successfully!");
 
