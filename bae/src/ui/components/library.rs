@@ -1,6 +1,7 @@
 use crate::db::{DbAlbum, DbArtist};
 use crate::library::use_library_manager;
 use crate::ui::components::album_card::AlbumCard;
+use crate::ui::components::use_library_search;
 use crate::ui::Route;
 use dioxus::prelude::*;
 use std::collections::HashMap;
@@ -16,7 +17,7 @@ pub fn Library() -> Element {
     let mut album_artists = use_signal(HashMap::<String, Vec<DbArtist>>::new);
     let mut loading = use_signal(|| true);
     let mut error = use_signal(|| None::<String>);
-    let mut search_query = use_signal(String::new);
+    let search_query = use_library_search();
 
     // Load albums and their artists on component mount
     use_effect(move || {
@@ -83,21 +84,7 @@ pub fn Library() -> Element {
 
     rsx! {
         div { class: "container mx-auto p-6",
-            div { class: "flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6",
-                h1 { class: "text-3xl font-bold text-white mb-4 sm:mb-0", "Music Library" }
-
-                // Search bar
-                div { class: "relative",
-                    input {
-                        r#type: "text",
-                        placeholder: "Search albums or artists...",
-                        class: "w-full sm:w-80 px-4 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500",
-                        value: "{search_query()}",
-                        oninput: move |evt| search_query.set(evt.value()),
-                    }
-                    div { class: "absolute right-3 top-2.5 text-gray-400", "🔍" }
-                }
-            }
+            h1 { class: "text-3xl font-bold text-white mb-6", "Music Library" }
 
             if loading() {
                 div { class: "flex justify-center items-center py-12",
@@ -131,7 +118,10 @@ pub fn Library() -> Element {
                     }
                     button {
                         class: "bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded",
-                        onclick: move |_| search_query.set(String::new()),
+                        onclick: {
+                            let mut search_query = search_query;
+                            move |_| search_query.set(String::new())
+                        },
                         "Clear Search"
                     }
                 }

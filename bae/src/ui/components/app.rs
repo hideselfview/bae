@@ -4,6 +4,7 @@ use crate::ui::{Route, FAVICON, MAIN_CSS, TAILWIND_CSS};
 use dioxus::prelude::*;
 use tracing::debug;
 
+use super::library_search_context::LibrarySearchContextProvider;
 use super::playback_hooks::PlaybackStateProvider;
 use super::queue_sidebar::QueueSidebarState;
 
@@ -27,15 +28,17 @@ pub fn App() -> Element {
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
         PlaybackStateProvider {
             AlbumImportContextProvider {
-                div {
-                    // On macOS: pt-10 accounts for custom titlebar
-                    // On other platforms: no extra padding needed (OS handles titlebar)
-                    class: if cfg!(target_os = "macos") {
-                        "pb-24 pt-10 h-screen overflow-y-auto"
-                    } else {
-                        "pb-24 h-screen overflow-y-auto"
-                    },
-                    Router::<Route> {}
+                LibrarySearchContextProvider {
+                    div {
+                        // On macOS: pt-10 accounts for custom titlebar
+                        // On other platforms: no extra padding needed (OS handles titlebar)
+                        class: if cfg!(target_os = "macos") {
+                            "pb-24 pt-10 h-screen overflow-y-auto"
+                        } else {
+                            "pb-24 h-screen overflow-y-auto"
+                        },
+                        Router::<Route> {}
+                    }
                 }
             }
         }
