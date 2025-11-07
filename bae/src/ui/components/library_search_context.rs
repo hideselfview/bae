@@ -24,4 +24,3 @@ pub fn use_library_search() -> Signal<String> {
     let state = use_context::<LibrarySearchState>();
     state.search_query
 }
-

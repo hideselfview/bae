@@ -29,15 +29,15 @@ pub fn App() -> Element {
         PlaybackStateProvider {
             AlbumImportContextProvider {
                 LibrarySearchContextProvider {
-                    div {
-                        // On macOS: pt-10 accounts for custom titlebar
-                        // On other platforms: no extra padding needed (OS handles titlebar)
-                        class: if cfg!(target_os = "macos") {
-                            "pb-24 pt-10 h-screen overflow-y-auto"
-                        } else {
-                            "pb-24 h-screen overflow-y-auto"
-                        },
-                        Router::<Route> {}
+                div {
+                    // On macOS: pt-10 accounts for custom titlebar
+                    // On other platforms: no extra padding needed (OS handles titlebar)
+                    class: if cfg!(target_os = "macos") {
+                        "pb-24 pt-10 h-screen overflow-y-auto"
+                    } else {
+                        "pb-24 h-screen overflow-y-auto"
+                    },
+                    Router::<Route> {}
                     }
                 }
             }

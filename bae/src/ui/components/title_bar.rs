@@ -5,6 +5,7 @@ use crate::ui::Route;
 use dioxus::desktop::use_window;
 use dioxus::prelude::*;
 use std::collections::HashMap;
+use tracing::info;
 
 #[cfg(target_os = "macos")]
 use cocoa::appkit::NSApplication;
@@ -75,6 +76,17 @@ pub fn TitleBar() -> Element {
     });
 
     rsx! {
+        // Click outside to close - render BEFORE title-bar
+        if show_results() {
+            div {
+                class: "fixed inset-0 z-[1500]",
+                onclick: move |evt| {
+                    info!("Click-outside handler fired");
+                    show_results.set(false);
+                }
+            }
+        }
+
         div {
             id: "title-bar",
             class: "fixed top-0 left-0 right-0 h-10 bg-[#1e222d] flex items-center pl-20 pr-2 cursor-move z-[1000] border-b border-[#2d3138]",
@@ -108,11 +120,14 @@ pub fn TitleBar() -> Element {
             div {
                 class: "flex-1 flex justify-end items-center relative",
                 style: "-webkit-app-region: no-drag;",
-                div { class: "relative w-64",
+                div {
+                    class: "relative w-64",
+                    id: "search-container",
                     input {
                         r#type: "text",
                         placeholder: "Search...",
-                        class: "w-full h-7 px-3 pr-8 bg-[#2d3138] border border-[#3d4148] rounded text-white text-xs placeholder-gray-500 focus:outline-none focus:border-blue-500",
+                        autocomplete: "off",
+                        class: "w-full h-7 px-3 bg-[#2d3138] border border-[#3d4148] rounded text-white text-xs placeholder-gray-500 focus:outline-none focus:border-blue-500",
                         value: "{search_query()}",
                         oninput: move |evt| search_query.set(evt.value()),
                         onfocus: move |_| {
@@ -126,17 +141,23 @@ pub fn TitleBar() -> Element {
                             }
                         },
                     }
-                    div { class: "absolute right-2 top-1.5 text-gray-500 text-xs pointer-events-none",
-                        "🔍"
-                    }
 
-                    // Results popover
+                    // Results popover - z-2000 to be above overlay (z-1500) and title-bar (z-1000)
                     if show_results() && !filtered_albums().is_empty() {
                         div {
-                            class: "absolute top-full mt-2 left-0 right-0 bg-[#2d3138] border border-[#3d4148] rounded-lg shadow-lg max-h-96 overflow-y-auto z-[2000]",
+                            class: "absolute top-full mt-2 left-0 right-0 bg-[#2d3138] border border-[#3d4148] rounded-lg shadow-lg max-h-96 overflow-y-auto",
+                            style: "z-index: 2000;",
+                            id: "search-popover",
+                            onclick: move |evt| {
+                                info!("Popover container clicked - stopping propagation");
+                                evt.stop_propagation();
+                            },
                             for album in filtered_albums() {
                                 {
                                     let album_id = album.id.clone();
+                                    let album_title = album.title.clone();
+                                    let album_year = album.year;
+                                    let cover_art = album.cover_art_url.clone();
                                     let artists = album_artists().get(&album.id).cloned().unwrap_or_default();
                                     let artist_name = if artists.is_empty() {
                                         "Unknown Artist".to_string()
@@ -144,34 +165,54 @@ pub fn TitleBar() -> Element {
                                         artists.iter().map(|a| a.name.as_str()).collect::<Vec<_>>().join(", ")
                                     };
                                     rsx! {
-                                        Link {
+                                        div {
                                             key: "{album_id}",
-                                            to: Route::AlbumDetail {
-                                                album_id,
-                                                release_id: String::new(),
+                                            class: "flex items-center gap-3 px-3 py-2 hover:bg-[#3d4148] border-b border-[#3d4148] last:border-b-0 cursor-pointer",
+                                            onclick: {
+                                                let album_id = album_id.clone();
+                                                let navigator = navigator();
+                                                move |evt| {
+                                                    info!("Search result onclick fired for album_id: {}", album_id);
+                                                    evt.stop_propagation();
+                                                    info!("Stopped propagation, closing popover and clearing search");
+                                                    show_results.set(false);
+                                                    search_query.set(String::new());
+                                                    let route = Route::AlbumDetail {
+                                                        album_id: album_id.clone(),
+                                                        release_id: String::new(),
+                                                    };
+                                                    info!("Navigating to route: {:?}", route);
+                                                    navigator.push(route);
+                                                    info!("Navigator.push called for album_id: {}", album_id);
+                                                }
                                             },
-                                            class: "block px-3 py-2 hover:bg-[#3d4148] border-b border-[#3d4148] last:border-b-0",
-                                            onclick: move |_| {
-                                                show_results.set(false);
-                                            },
-                                            div { class: "text-white text-xs font-medium", "{album.title}" }
-                                            div { class: "text-gray-400 text-xs", "{artist_name}" }
+                                            if let Some(cover_url) = cover_art {
+                                                img {
+                                                    src: "{cover_url}",
+                                                    class: "w-10 h-10 rounded object-cover flex-shrink-0",
+                                                    alt: "{album_title}",
+                                                }
+                                            } else {
+                                                div {
+                                                    class: "w-10 h-10 bg-gray-700 rounded flex items-center justify-center flex-shrink-0",
+                                                    div { class: "text-gray-500 text-xs", "🎵" }
+                                                }
+                                            }
+                                            div { class: "flex-1 min-w-0",
+                                                div { class: "text-white text-xs font-medium truncate", "{album_title}" }
+                                                div { class: "text-gray-400 text-xs truncate",
+                                                    "{artist_name}"
+                                                    if let Some(year) = album_year {
+                                                        span { class: "text-gray-500", " • {year}" }
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                }
-            }
-        }
-
-        // Click outside to close
-        if show_results() {
-            div {
-                class: "fixed inset-0 z-[1500]",
-                onclick: move |_| {
-                    show_results.set(false);
                 }
             }
         }

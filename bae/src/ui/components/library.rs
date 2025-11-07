@@ -1,7 +1,6 @@
 use crate::db::{DbAlbum, DbArtist};
 use crate::library::use_library_manager;
 use crate::ui::components::album_card::AlbumCard;
-use crate::ui::components::use_library_search;
 use crate::ui::Route;
 use dioxus::prelude::*;
 use std::collections::HashMap;
@@ -13,11 +12,9 @@ pub fn Library() -> Element {
     debug!("Component rendering");
     let library_manager = use_library_manager();
     let mut albums = use_signal(Vec::<DbAlbum>::new);
-    let mut filtered_albums = use_signal(Vec::<DbAlbum>::new);
     let mut album_artists = use_signal(HashMap::<String, Vec<DbArtist>>::new);
     let mut loading = use_signal(|| true);
     let mut error = use_signal(|| None::<String>);
-    let search_query = use_library_search();
 
     // Load albums and their artists on component mount
     use_effect(move || {
@@ -41,8 +38,7 @@ pub fn Library() -> Element {
                     }
 
                     album_artists.set(artists_map);
-                    albums.set(album_list.clone());
-                    filtered_albums.set(album_list);
+                    albums.set(album_list);
                     loading.set(false);
                 }
                 Err(e) => {
@@ -51,35 +47,6 @@ pub fn Library() -> Element {
                 }
             }
         });
-    });
-
-    // Filter albums when search query changes
-    use_effect({
-        move || {
-            let query = search_query().to_lowercase();
-            if query.is_empty() {
-                filtered_albums.set(albums());
-            } else {
-                let artists_map = album_artists();
-                let filtered = albums()
-                    .into_iter()
-                    .filter(|album| {
-                        // Search in album title
-                        if album.title.to_lowercase().contains(&query) {
-                            return true;
-                        }
-                        // Search in artist names
-                        if let Some(artists) = artists_map.get(&album.id) {
-                            return artists
-                                .iter()
-                                .any(|artist| artist.name.to_lowercase().contains(&query));
-                        }
-                        false
-                    })
-                    .collect();
-                filtered_albums.set(filtered);
-            }
-        }
     });
 
     rsx! {
@@ -109,41 +76,10 @@ pub fn Library() -> Element {
                         "Import Album"
                     }
                 }
-            } else if filtered_albums().is_empty() {
-                div { class: "text-center py-12",
-                    div { class: "text-gray-400 text-6xl mb-4", "🔍" }
-                    h2 { class: "text-2xl font-bold text-gray-300 mb-2", "No albums found" }
-                    p { class: "text-gray-500 mb-4",
-                        "Try a different search term or browse all albums"
-                    }
-                    button {
-                        class: "bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded",
-                        onclick: {
-                            let mut search_query = search_query;
-                            move |_| search_query.set(String::new())
-                        },
-                        "Clear Search"
-                    }
-                }
             } else {
-                div {
-                    // Results counter
-                    if !search_query().is_empty() {
-                        div { class: "mb-4 text-gray-400 text-sm",
-                            {
-                                format!(
-                                    "Found {} album{} matching \"{}\"",
-                                    filtered_albums().len(),
-                                    if filtered_albums().len() == 1 { "" } else { "s" },
-                                    search_query(),
-                                )
-                            }
-                        }
-                    }
-                    AlbumGrid {
-                        albums: filtered_albums(),
-                        album_artists: album_artists(),
-                    }
+                AlbumGrid {
+                    albums: albums(),
+                    album_artists: album_artists(),
                 }
             }
         }
