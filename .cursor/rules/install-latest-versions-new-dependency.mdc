@@ -1,0 +1,5 @@
+---
+alwaysApply: true
+---
+When adding a dependency to the project (eg. a crate, an npm package), always look
+up the latest version first.
