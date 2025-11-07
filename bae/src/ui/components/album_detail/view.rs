@@ -27,6 +27,7 @@ pub fn AlbumDetailView(
     let mut is_deleting = use_signal(|| false);
     let mut show_dropdown = use_signal(|| false);
     let mut show_release_dropdown = use_signal(|| None::<String>);
+    let mut show_play_menu = use_signal(|| false);
 
     let artist_name = if artists.is_empty() {
         "Unknown Artist".to_string()
@@ -81,47 +82,82 @@ pub fn AlbumDetailView(
                         }
                     }
 
-                    // Play Album button
-                    button {
-                        class: "w-full mt-6 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg transition-colors flex items-center justify-center gap-2",
-                        disabled: import_progress().is_some() || is_deleting(),
-                        class: if import_progress().is_some() || is_deleting() { "opacity-50 cursor-not-allowed" } else { "" },
-                        onclick: {
-                            let tracks = tracks.clone();
-                            let playback_clone = playback.clone();
-                            move |_| {
-                                let track_ids: Vec<String> = tracks.iter().map(|t| t.id.clone()).collect();
-                                playback_clone.play_album(track_ids);
-                            }
-                        },
-                        if import_progress().is_some() {
-                            "Importing..."
-                        } else {
-                            "▶ Play Album"
-                        }
-                    }
-
-                    // Add Album to Queue button
-                    button {
-                        class: "w-full mt-3 px-6 py-3 bg-gray-700 hover:bg-gray-600 text-white font-semibold rounded-lg transition-colors flex items-center justify-center gap-2",
-                        disabled: import_progress().is_some() || is_deleting(),
-                        class: if import_progress().is_some() || is_deleting() { "opacity-50 cursor-not-allowed" } else { "" },
-                        onclick: {
-                            let album_id = album.id.clone();
-                            let library_manager = library_manager.clone();
-                            let playback = playback.clone();
-                            move |_| {
-                                let album_id = album_id.clone();
-                                let library_manager = library_manager.clone();
-                                let playback = playback.clone();
-                                spawn(async move {
-                                    if let Ok(track_ids) = get_album_track_ids(&library_manager, &album_id).await {
-                                        playback.add_to_queue(track_ids);
+                    // Play Album split button
+                    {
+                        let playback_for_play = playback.clone();
+                        let playback_for_queue = playback.clone();
+                        rsx! {
+                            div { class: "relative mt-6",
+                                div { class: "flex rounded-lg overflow-hidden",
+                                    // Main play button (left side)
+                                    button {
+                                        class: "flex-1 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold transition-colors flex items-center justify-center gap-2",
+                                        disabled: import_progress().is_some() || is_deleting(),
+                                        class: if import_progress().is_some() || is_deleting() { "opacity-50 cursor-not-allowed" } else { "" },
+                                        onclick: {
+                                            let tracks = tracks.clone();
+                                            move |_| {
+                                                let track_ids: Vec<String> = tracks.iter().map(|t| t.id.clone()).collect();
+                                                playback_for_play.play_album(track_ids);
+                                            }
+                                        },
+                                        if import_progress().is_some() {
+                                            "Importing..."
+                                        } else {
+                                            "▶ Play Album"
+                                        }
                                     }
-                                });
+                                    // Divider and dropdown trigger (right side)
+                                    div { class: "border-l border-blue-500",
+                                        button {
+                                            class: "px-3 py-3 bg-blue-600 hover:bg-blue-500 text-white transition-colors flex items-center justify-center",
+                                            disabled: import_progress().is_some() || is_deleting(),
+                                            class: if import_progress().is_some() || is_deleting() { "opacity-50 cursor-not-allowed" } else { "" },
+                                            onclick: move |evt| {
+                                                evt.stop_propagation();
+                                                if !is_deleting() && import_progress().is_none() {
+                                                    show_play_menu.set(!show_play_menu());
+                                                }
+                                            },
+                                            "▼"
+                                        }
+                                    }
+                                }
+
+                                // Play menu dropdown
+                                if show_play_menu() {
+                                    {
+                                        let album_id_for_queue = album.id.clone();
+                                        let library_manager_for_queue = library_manager.clone();
+                                        let playback_for_queue_clone = playback_for_queue.clone();
+                                        rsx! {
+                                            div {
+                                                class: "absolute top-full left-0 right-0 mt-2 bg-gray-700 rounded-lg shadow-lg overflow-hidden z-10 border border-gray-600",
+                                                button {
+                                                    class: "w-full px-4 py-3 text-left text-white hover:bg-gray-600 transition-colors flex items-center gap-2",
+                                                    disabled: import_progress().is_some() || is_deleting(),
+                                                    onclick: move |evt| {
+                                                        evt.stop_propagation();
+                                                        show_play_menu.set(false);
+                                                        if !is_deleting() && import_progress().is_none() {
+                                                            let album_id = album_id_for_queue.clone();
+                                                            let library_manager = library_manager_for_queue.clone();
+                                                            let playback = playback_for_queue_clone.clone();
+                                                            spawn(async move {
+                                                                if let Ok(track_ids) = get_album_track_ids(&library_manager, &album_id).await {
+                                                                    playback.add_to_queue(track_ids);
+                                                                }
+                                                            });
+                                                        }
+                                                    },
+                                                    "➕ Add Album to Queue"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
-                        },
-                        "➕ Add Album to Queue"
+                        }
                     }
 
                     // Actions dropdown menu
@@ -159,11 +195,12 @@ pub fn AlbumDetailView(
                     }
 
                     // Click outside to close dropdowns
-                    if show_dropdown() {
+                    if show_dropdown() || show_play_menu() {
                         div {
                             class: "fixed inset-0 z-[5]",
                             onclick: move |_| {
                                 show_dropdown.set(false);
+                                show_play_menu.set(false);
                             }
                         }
                     }

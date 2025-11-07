@@ -16,7 +16,7 @@ pub use album_detail::AlbumDetail;
 pub use app::App;
 pub use import_hooks::use_track_progress;
 pub use library::Library;
-pub use library_search_context::{use_library_search, LibrarySearchContextProvider};
+pub use library_search_context::use_library_search;
 pub use navbar::Navbar;
 pub use now_playing_bar::NowPlayingBar;
 pub use playback_hooks::{use_playback_service, use_playback_state};
