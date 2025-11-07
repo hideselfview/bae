@@ -1,5 +1,4 @@
 mod album_art;
-mod back_button;
 mod error;
 mod loading;
 mod page;
