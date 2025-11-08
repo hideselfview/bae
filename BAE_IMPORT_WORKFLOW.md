@@ -13,7 +13,7 @@ bae always imports specific releases from Discogs. When a user selects a master,
 
 ## User Experience
 
-bae provides two import paths based on what the user knows about their music data:
+bae provides three import paths based on what the user knows about their music data:
 
 **Path 1: Import via master**
 
@@ -31,7 +31,19 @@ bae provides two import paths based on what the user knows about their music dat
 - Provides music data →
 - bae imports that exact release
 
-Both paths result in importing a Discogs release. When importing via a master, bae automatically uses that master's main_release. The choice depends on whether the user knows which specific pressing their music files represent.
+**Path 3: Import from folder (folder-first)**
+
+- User clicks "Import from Folder" →
+- Selects folder containing music files →
+- bae detects metadata from audio files, CUE sheets, and folder name →
+- bae searches Discogs using detected metadata (DISCID if available, otherwise artist/album/year) →
+- Shows ranked matches with confidence scores →
+- User selects match (or auto-selected if confidence > 95%) →
+- Navigates to ImportWorkflow with selected master/release →
+- Provides music data →
+- bae imports the release
+
+All paths result in importing a Discogs release. When importing via a master, bae automatically uses that master's main_release. The folder-first path automatically identifies the album from existing metadata, making it ideal when users have organized music folders but don't know the exact Discogs release.
 
 ## Album Search
 
@@ -42,6 +54,63 @@ GET /database/search?type=master&q={query}
 ```
 
 This returns basic search results for browsing. bae displays these using the `DiscogsSearchResult` model with fields like `id`, `title`, `year`, `thumb`, and `master_id`.
+
+## Folder-First Import (Path 3)
+
+When the user selects "Import from Folder", bae automatically detects album metadata and identifies the Discogs release:
+
+### Metadata Detection
+
+bae scans the selected folder and extracts metadata from multiple sources:
+
+1. **CUE files** (highest priority):
+   - Extracts `REM DISCID` line for Discogs DISCID search
+   - Parses `REM DATE` for year information
+   - Reads `PERFORMER` and `TITLE` for artist and album
+   - Counts tracks from CUE tracklist
+
+2. **Audio file tags**:
+   - FLAC files: Reads metadata using `symphonia` crate
+   - MP3 files: Reads ID3 tags using `id3` crate
+   - Extracts artist, album, and year fields
+
+3. **Folder name** (fallback):
+   - Parses "Artist - Album" format from folder name
+   - Low confidence score (30%)
+
+Metadata is aggregated with weighted confidence scoring. DISCID presence increases confidence significantly since it's a unique identifier.
+
+### Discogs Search
+
+After detecting metadata, bae searches Discogs:
+
+1. **DISCID search** (if DISCID found in CUE):
+   ```
+   GET /database/search?discid={discid}&type=master
+   ```
+   This is highly accurate and usually returns a single exact match.
+
+2. **Metadata search** (fallback or if DISCID search fails):
+   ```
+   GET /database/search?type=master&q={artist} {album} {year}
+   ```
+   Constructs query from detected artist, album, and optional year.
+
+### Match Ranking
+
+Results are ranked by confidence score:
+
+- **DISCID match**: 100% confidence (exact match)
+- **Artist + album exact match**: 90% confidence (normalized string comparison)
+- **Artist + album contains match**: 70% confidence (substring match)
+- **Year match**: +10% confidence
+- **Year close match** (±1 year): +5% confidence
+
+Matches are sorted by confidence (highest first). If the top match has >95% confidence and no other match has >90% confidence, it's auto-selected. Otherwise, the user sees a ranked list to choose from.
+
+### Integration
+
+After the user selects (or confirms auto-selected) match, bae navigates to the standard `ImportWorkflow` with the selected master/release, where the user selects the source folder and starts the import process.
 
 ## Master Import (Path 1)
 
@@ -178,6 +247,8 @@ bae handles two album formats:
 
 **Discogs API Client:**
 - `search_masters()` → `Vec<DiscogsSearchResult>`
+- `search_by_discid()` → `Vec<DiscogsSearchResult>` (searches by DISCID)
+- `search_by_metadata()` → `Vec<DiscogsSearchResult>` (searches by artist/album/year)
 - `get_master_versions()` → `Vec<DiscogsMasterReleaseVersion>`
 - `get_master()` → `DiscogsMaster` (includes `main_release` field)
 - `get_release()` → `DiscogsRelease`
@@ -185,6 +256,8 @@ bae handles two album formats:
 **Import Module** (`src/import/`):
 - `service.rs` - `ImportService` orchestrator and `ImportHandle` public API
 - `discogs_parser.rs` - `parse_discogs_release()` converts `DiscogsRelease` into database models
+- `folder_metadata_detector.rs` - Detects metadata from folder (audio tags, CUE files, folder name)
+- `discogs_matcher.rs` - Ranks Discogs search results by confidence score
 - `pipeline/` - Stream-based pipeline with `build_pipeline()` returning `impl Stream`
 - `album_layout.rs` - Analyzes file→chunk and chunk→track mappings
 - `track_file_mapper.rs` - Validates track-to-file mapping before DB insertion
@@ -200,9 +273,11 @@ bae handles two album formats:
 - `CueFlacProcessor` - CUE sheet parsing and FLAC header extraction
 
 **UI Components:**
+- `SearchMastersPage` - Album search interface with "Import from Folder" button
 - `SearchList` - Displays `Vec<DiscogsSearchResult>`
 - `SearchItem` - Displays `DiscogsSearchResult`
 - `ReleaseList` - Displays `Vec<DiscogsMasterReleaseVersion>`
 - `ReleaseItem` - Displays `DiscogsMasterReleaseVersion`
+- `FolderDetectionPage` - Folder-first import flow (metadata detection and match selection)
 - `ImportWorkflow` - Multi-step import wizard
 - `AlbumCard` - Subscribes to progress for individual album

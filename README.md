@@ -40,6 +40,9 @@ cargo install dioxus-cli --locked
 # macOS: brew install cmake
 # Linux: apt-get install cmake (or equivalent)
 # Windows: Download from https://cmake.org/download/
+# macOS: Install libdiscid for MusicBrainz DiscID support
+# macOS: brew install libdiscid pkg-config
+# Note: .cargo/config.toml is included in the repo to configure libdiscid linking on macOS
 ```
 
 **Quick start:**
