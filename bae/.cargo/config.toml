@@ -1,0 +1,17 @@
+# Cargo configuration for automatic library path detection
+# This ensures libdiscid and other Homebrew-installed libraries are found
+
+[target.aarch64-apple-darwin]
+rustflags = [
+    "-L", "/opt/homebrew/lib",
+]
+
+[target.x86_64-apple-darwin]
+rustflags = [
+    "-L", "/opt/homebrew/lib",
+]
+
+[env]
+# Set PKG_CONFIG_PATH for macOS to find pkg-config files
+PKG_CONFIG_PATH = { value = "/opt/homebrew/lib/pkgconfig", force = false }
+

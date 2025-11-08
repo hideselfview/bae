@@ -36,7 +36,10 @@ tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "fs"] }
 hyper = { version = "1.0", features = ["full"] }
 nom = "7.1"              # Parser combinator for CUE format
-symphonia = { version = "0.5", features = ["flac"] }  # Audio processing for precise seeking
+symphonia = { version = "0.5", features = ["flac"] }  # Audio processing for precise seeking and metadata
+id3 = "1.14"            # MP3 tag reading
+musicbrainz_rs = "0.5"  # MusicBrainz API for DISCID lookup
+discid = "0.5"          # Calculate MusicBrainz DiscIDs from TOC data
 flacenc = "0.4"         # FLAC encoding for CUE/FLAC splitting
 libflac-sys = "0.3.4"    # FFI bindings to libFLAC for seektable generation
 libc = "0.2"            # C types for libflac-sys FFI
