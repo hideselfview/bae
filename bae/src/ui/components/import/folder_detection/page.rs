@@ -129,8 +129,11 @@ pub fn FolderDetectionPage() -> Element {
                                     .unwrap_or(std::cmp::Ordering::Equal)
                             });
 
+                            // Filter out candidates with confidence < 90%
+                            all_candidates.retain(|c| c.confidence >= 90.0);
+
                             info!(
-                                "📊 Total candidates after ranking: {}",
+                                "📊 Total candidates after ranking and filtering (>=90%): {}",
                                 all_candidates.len()
                             );
 
@@ -368,15 +371,10 @@ pub fn FolderDetectionPage() -> Element {
                         }
                     } else if !match_candidates.read().is_empty() {
                         // Results view (incomplete state - no import button)
-                        div { class: "space-y-4",
-                            MatchList {
-                                candidates: match_candidates.read().clone(),
-                                selected_index: selected_match_index.read().as_ref().copied(),
-                                on_select: on_match_select,
-                            }
-                            p { class: "text-sm text-gray-500 text-center",
-                                "Select a release above to continue"
-                            }
+                        MatchList {
+                            candidates: match_candidates.read().clone(),
+                            selected_index: selected_match_index.read().as_ref().copied(),
+                            on_select: on_match_select,
                         }
                     }
 

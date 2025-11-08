@@ -18,7 +18,8 @@ pub fn MatchList(
 
     rsx! {
         div { class: "bg-white rounded-lg shadow p-6",
-            h3 { class: "text-lg font-semibold text-gray-900 mb-4", "Discogs Matches" }
+            h3 { class: "text-lg font-semibold text-gray-900 mb-2", "Possible matches" }
+            p { class: "text-sm text-gray-500 mb-4", "Select a release continue" }
 
             div { class: "space-y-3",
                 for (index, candidate) in candidates.iter().enumerate() {

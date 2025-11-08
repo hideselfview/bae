@@ -43,6 +43,19 @@ impl MatchCandidate {
             MatchSource::MusicBrainz(_) => "MusicBrainz",
         }
     }
+
+    pub fn cover_art_url(&self) -> Option<String> {
+        match &self.source {
+            MatchSource::Discogs(result) => {
+                result.cover_image.clone().or_else(|| result.thumb.clone())
+            }
+            MatchSource::MusicBrainz(_) => {
+                // MusicBrainz doesn't provide cover art URLs directly
+                // Could fetch from Cover Art Archive API, but for now return None
+                None
+            }
+        }
+    }
 }
 
 /// Normalize a string for comparison (lowercase, remove punctuation)

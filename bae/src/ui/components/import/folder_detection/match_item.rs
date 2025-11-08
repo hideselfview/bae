@@ -7,14 +7,6 @@ pub fn MatchItem(
     is_selected: bool,
     on_select: EventHandler<()>,
 ) -> Element {
-    let confidence_color = if candidate.confidence >= 90.0 {
-        "bg-green-100 text-green-800"
-    } else if candidate.confidence >= 70.0 {
-        "bg-yellow-100 text-yellow-800"
-    } else {
-        "bg-gray-100 text-gray-800"
-    };
-
     let border_class = if is_selected {
         "border-blue-500 bg-blue-50"
     } else {
@@ -39,8 +31,21 @@ pub fn MatchItem(
         div {
             class: "border rounded-lg p-4 cursor-pointer hover:bg-gray-50 transition-colors {border_class}",
             onclick: move |_| on_select.call(()),
-            div { class: "flex items-start justify-between",
-                div { class: "flex-1",
+            div { class: "flex items-start gap-4",
+                // Album cover
+                div { class: "w-16 h-16 flex-shrink-0 bg-gray-200 rounded overflow-hidden",
+                    if let Some(cover_url) = candidate.cover_art_url() {
+                        img {
+                            src: "{cover_url}",
+                            alt: "Album cover",
+                            class: "w-full h-full object-cover",
+                        }
+                    } else {
+                        div { class: "w-full h-full flex items-center justify-center text-gray-400 text-2xl", "🎵" }
+                    }
+                }
+
+                div { class: "flex-1 min-w-0",
                     div { class: "flex items-center gap-2 mb-1",
                         h4 { class: "text-lg font-semibold text-gray-900",
                             "{candidate.title()}"
@@ -66,22 +71,6 @@ pub fn MatchItem(
                         if let Some(ref catalog) = catalog_text {
                             p { class: "text-xs text-gray-500", "{catalog}" }
                         }
-                    }
-
-                    if !candidate.match_reasons.is_empty() {
-                        div { class: "flex flex-wrap gap-2 mb-2",
-                            for reason in candidate.match_reasons.iter() {
-                                span { class: "text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded",
-                                    "{reason}"
-                                }
-                            }
-                        }
-                    }
-                }
-
-                div { class: "ml-4",
-                    span { class: "text-xs font-semibold px-2 py-1 rounded {confidence_color}",
-                        "{candidate.confidence:.0}%"
                     }
                 }
             }
