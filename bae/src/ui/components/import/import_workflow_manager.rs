@@ -1,5 +1,7 @@
 use super::{
-    import_workflow::ImportWorkflow, release_list::ReleaseList, search_masters::SearchMastersPage,
+    folder_detection::FolderDetectionPage, import_workflow::ImportWorkflow,
+    release_list::ReleaseList, search_masters::SearchMastersPage,
+    search_musicbrainz::SearchMusicBrainzPage,
 };
 use crate::ui::import_context::{ImportContext, ImportStep};
 use dioxus::prelude::*;
@@ -33,6 +35,16 @@ pub fn ImportWorkflowManager() -> Element {
                     master_title: master_title.clone(),
                     on_back: on_release_back,
                 }
+            }
+        }
+        ImportStep::FolderIdentification { .. } => {
+            rsx! {
+                FolderDetectionPage {}
+            }
+        }
+        ImportStep::MusicBrainzSearch { .. } => {
+            rsx! {
+                SearchMusicBrainzPage {}
             }
         }
         ImportStep::ImportWorkflow {

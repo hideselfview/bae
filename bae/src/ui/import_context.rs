@@ -1,9 +1,12 @@
 use crate::config::use_config;
 use crate::discogs::client::DiscogsSearchResult;
 use crate::discogs::{DiscogsClient, DiscogsRelease};
+use crate::import::{detect_metadata, FolderMetadata, MatchCandidate};
+use crate::musicbrainz::{lookup_by_discid, search_releases, MbRelease};
 use dioxus::core::Task;
 use dioxus::prelude::*;
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -12,6 +15,15 @@ pub enum ImportStep {
     ReleaseDetails {
         master_id: String,
         master_title: String,
+    },
+    FolderIdentification {
+        folder_path: String,
+        detected_metadata: Option<FolderMetadata>,
+        match_candidates: Vec<MatchCandidate>,
+    },
+    MusicBrainzSearch {
+        query: String,
+        // results: Vec<MbRelease>, // TODO: Store results in a signal instead
     },
     ImportWorkflow {
         master_id: String,
@@ -27,6 +39,10 @@ pub struct ImportContext {
     pub is_loading_versions: Signal<bool>,
     pub error_message: Signal<Option<String>>,
     pub navigation_stack: Signal<Vec<ImportStep>>,
+    // MusicBrainz search state
+    pub mb_search_results: Signal<Vec<MbRelease>>,
+    pub is_searching_mb: Signal<bool>,
+    pub mb_error_message: Signal<Option<String>>,
     search_task: Rc<RefCell<Option<Task>>>,
     client: DiscogsClient,
 }
@@ -40,13 +56,17 @@ impl ImportContext {
             .unwrap_or(ImportStep::SearchResults)
     }
     pub fn new(config: &crate::config::Config) -> Self {
+        use dioxus::prelude::*;
         Self {
-            search_query: use_signal(String::new),
-            search_results: use_signal(Vec::new),
-            is_searching_masters: use_signal(|| false),
-            is_loading_versions: use_signal(|| false),
-            error_message: use_signal(|| None),
-            navigation_stack: use_signal(|| vec![ImportStep::SearchResults]),
+            search_query: Signal::new(String::new()),
+            search_results: Signal::new(Vec::new()),
+            is_searching_masters: Signal::new(false),
+            is_loading_versions: Signal::new(false),
+            error_message: Signal::new(None),
+            navigation_stack: Signal::new(vec![ImportStep::SearchResults]),
+            mb_search_results: Signal::new(Vec::new()),
+            is_searching_mb: Signal::new(false),
+            mb_error_message: Signal::new(None),
             search_task: Rc::new(RefCell::new(None)),
             client: DiscogsClient::new(config.discogs_api_key.clone()),
         }
@@ -143,13 +163,186 @@ impl ImportContext {
         let mut is_loading_versions = self.is_loading_versions;
         let mut error_message = self.error_message;
         let mut navigation_stack = self.navigation_stack;
+        let mut mb_search_results = self.mb_search_results;
+        let mut is_searching_mb = self.is_searching_mb;
+        let mut mb_error_message = self.mb_error_message;
 
         search_query.set(String::new());
         search_results.set(Vec::new());
         is_searching_masters.set(false);
         is_loading_versions.set(false);
         error_message.set(None);
+        mb_search_results.set(Vec::new());
+        is_searching_mb.set(false);
+        mb_error_message.set(None);
         navigation_stack.set(vec![ImportStep::SearchResults]);
+    }
+
+    pub fn navigate_to_folder_detection(&self) {
+        let mut navigation_stack = self.navigation_stack;
+        let step = ImportStep::FolderIdentification {
+            folder_path: String::new(),
+            detected_metadata: None,
+            match_candidates: Vec::new(),
+        };
+        navigation_stack.write().push(step);
+    }
+
+    pub fn navigate_to_musicbrainz_search(&self) {
+        let mut navigation_stack = self.navigation_stack;
+        let step = ImportStep::MusicBrainzSearch {
+            query: String::new(),
+        };
+        navigation_stack.write().push(step);
+    }
+
+    pub async fn detect_folder_metadata(
+        &self,
+        folder_path: String,
+    ) -> Result<FolderMetadata, String> {
+        let path = PathBuf::from(&folder_path);
+        detect_metadata(path).map_err(|e| format!("Failed to detect metadata: {}", e))
+    }
+
+    pub async fn search_discogs_by_metadata(
+        &self,
+        metadata: &FolderMetadata,
+    ) -> Result<Vec<DiscogsSearchResult>, String> {
+        use tracing::{info, warn};
+
+        info!("🔍 Starting Discogs search with metadata:");
+        info!(
+            "   Artist: {:?}, Album: {:?}, Year: {:?}, DISCID: {:?}",
+            metadata.artist, metadata.album, metadata.year, metadata.discid
+        );
+
+        // Try DISCID search first if available
+        if let Some(ref discid) = metadata.discid {
+            info!("🎯 Attempting DISCID search: {}", discid);
+            match self.client.search_by_discid(discid).await {
+                Ok(results) if !results.is_empty() => {
+                    info!("✓ DISCID search returned {} result(s)", results.len());
+                    return Ok(results);
+                }
+                Ok(_) => {
+                    warn!("✗ DISCID search returned 0 results, falling back to text search");
+                }
+                Err(e) => {
+                    warn!("✗ DISCID search failed: {}, falling back to text search", e);
+                }
+            }
+        } else {
+            info!("No DISCID available, using text search");
+        }
+
+        // Fall back to metadata search
+        if let (Some(ref artist), Some(ref album)) = (&metadata.artist, &metadata.album) {
+            info!(
+                "🔎 Searching Discogs by text: artist='{}', album='{}', year={:?}",
+                artist, album, metadata.year
+            );
+
+            match self
+                .client
+                .search_by_metadata(artist, album, metadata.year)
+                .await
+            {
+                Ok(results) => {
+                    info!("✓ Text search returned {} result(s)", results.len());
+                    for (i, result) in results.iter().enumerate().take(5) {
+                        info!(
+                            "   {}. {} (master_id: {:?}, year: {:?})",
+                            i + 1,
+                            result.title,
+                            result.master_id,
+                            result.year
+                        );
+                    }
+                    Ok(results)
+                }
+                Err(e) => {
+                    warn!("✗ Text search failed: {}", e);
+                    Err(format!("Discogs search failed: {}", e))
+                }
+            }
+        } else {
+            warn!("✗ Insufficient metadata for search (missing artist or album)");
+            Err("Insufficient metadata for search".to_string())
+        }
+    }
+
+    pub async fn search_musicbrainz_by_metadata(
+        &self,
+        metadata: &FolderMetadata,
+    ) -> Result<Vec<MbRelease>, String> {
+        use tracing::{info, warn};
+
+        info!("🎵 Starting MusicBrainz search with metadata:");
+        info!(
+            "   Artist: {:?}, Album: {:?}, Year: {:?}, MB DiscID: {:?}",
+            metadata.artist, metadata.album, metadata.year, metadata.mb_discid
+        );
+
+        // Try MB DiscID search first if available
+        if let Some(ref mb_discid) = metadata.mb_discid {
+            info!("🎯 Attempting MusicBrainz DiscID search: {}", mb_discid);
+            match lookup_by_discid(mb_discid).await {
+                Ok((releases, _external_urls)) => {
+                    if !releases.is_empty() {
+                        info!(
+                            "✓ MusicBrainz DiscID search returned {} result(s)",
+                            releases.len()
+                        );
+                        return Ok(releases);
+                    } else {
+                        warn!("✗ MusicBrainz DiscID search returned 0 results, falling back to text search");
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "✗ MusicBrainz DiscID search failed: {}, falling back to text search",
+                        e
+                    );
+                }
+            }
+        } else {
+            info!("No MusicBrainz DiscID available, using text search");
+        }
+
+        // Fall back to metadata search
+        if let (Some(ref artist), Some(ref album)) = (&metadata.artist, &metadata.album) {
+            info!(
+                "🔎 Searching MusicBrainz by text: artist='{}', album='{}', year={:?}",
+                artist, album, metadata.year
+            );
+
+            match search_releases(artist, album, metadata.year).await {
+                Ok(releases) => {
+                    info!(
+                        "✓ MusicBrainz text search returned {} result(s)",
+                        releases.len()
+                    );
+                    for (i, release) in releases.iter().enumerate().take(5) {
+                        info!(
+                            "   {}. {} - {} (release_id: {}, release_group_id: {})",
+                            i + 1,
+                            release.artist,
+                            release.title,
+                            release.release_id,
+                            release.release_group_id
+                        );
+                    }
+                    Ok(releases)
+                }
+                Err(e) => {
+                    warn!("✗ MusicBrainz text search failed: {}", e);
+                    Err(format!("MusicBrainz search failed: {}", e))
+                }
+            }
+        } else {
+            warn!("✗ Insufficient metadata for search (missing artist or album)");
+            Err("Insufficient metadata for search".to_string())
+        }
     }
 
     pub async fn import_release(

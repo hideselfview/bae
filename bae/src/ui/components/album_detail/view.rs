@@ -59,7 +59,7 @@ pub fn AlbumDetailView(
                             cover_url: album.cover_art_url.clone(),
                             import_progress,
                         }
-                        
+
                         // Three dot menu button - appears on hover or when dropdown is open
                         if hover_cover() || show_dropdown() {
                             div { class: "absolute top-2 right-2 z-10",
@@ -79,7 +79,7 @@ pub fn AlbumDetailView(
                                         div { class: "w-1 h-1 bg-white rounded-full" }
                                     }
                                 }
-                                
+
                                 // Dropdown menu
                                 if show_dropdown() {
                                     div {
