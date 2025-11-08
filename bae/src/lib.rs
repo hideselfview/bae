@@ -16,6 +16,7 @@ pub mod discogs;
 pub mod encryption;
 pub mod import;
 pub mod library;
+pub mod musicbrainz;
 
 // Optional modules
 pub mod cue_flac;

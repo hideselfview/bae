@@ -12,6 +12,7 @@ mod encryption;
 mod import;
 mod library;
 mod media_controls;
+mod musicbrainz;
 mod playback;
 mod subsonic;
 mod test_support;

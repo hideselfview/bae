@@ -78,6 +78,21 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
+        // Album-MusicBrainz join table (one-to-one relationship)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS album_musicbrainz (
+                id TEXT PRIMARY KEY,
+                album_id TEXT NOT NULL UNIQUE,
+                musicbrainz_release_group_id TEXT NOT NULL,
+                musicbrainz_release_id TEXT NOT NULL,
+                FOREIGN KEY (album_id) REFERENCES albums (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
         // Album-Artist junction table
         sqlx::query(
             r#"
@@ -513,6 +528,23 @@ impl Database {
             .await?;
         }
 
+        // Insert MusicBrainz info if present
+        if let Some(mb_release) = &album.musicbrainz_release {
+            sqlx::query(
+                r#"
+                INSERT INTO album_musicbrainz (
+                    id, album_id, musicbrainz_release_group_id, musicbrainz_release_id
+                ) VALUES (?, ?, ?, ?)
+                "#,
+            )
+            .bind(Uuid::new_v4().to_string())
+            .bind(&album.id)
+            .bind(&mb_release.release_group_id)
+            .bind(&mb_release.release_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+
         tx.commit().await?;
         Ok(())
     }
@@ -608,6 +640,23 @@ impl Database {
             .bind(&album.id)
             .bind(&discogs_release.master_id)
             .bind(&discogs_release.release_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        // Insert MusicBrainz info if present
+        if let Some(mb_release) = &album.musicbrainz_release {
+            sqlx::query(
+                r#"
+                INSERT INTO album_musicbrainz (
+                    id, album_id, musicbrainz_release_group_id, musicbrainz_release_id
+                ) VALUES (?, ?, ?, ?)
+                "#,
+            )
+            .bind(Uuid::new_v4().to_string())
+            .bind(&album.id)
+            .bind(&mb_release.release_group_id)
+            .bind(&mb_release.release_id)
             .execute(&mut *tx)
             .await?;
         }
@@ -709,9 +758,11 @@ impl Database {
             SELECT 
                 a.id, a.title, a.year, a.bandcamp_album_id, a.cover_art_url, 
                 a.is_compilation, a.created_at, a.updated_at,
-                ad.discogs_master_id, ad.discogs_release_id
+                ad.discogs_master_id, ad.discogs_release_id,
+                amb.musicbrainz_release_group_id, amb.musicbrainz_release_id
             FROM albums a
             LEFT JOIN album_discogs ad ON a.id = ad.album_id
+            LEFT JOIN album_musicbrainz amb ON a.id = amb.album_id
             ORDER BY a.title
             "#,
         )
@@ -730,11 +781,22 @@ impl Database {
                 _ => None,
             };
 
+            let mb_release_group_id: Option<String> = row.get("musicbrainz_release_group_id");
+            let mb_release_id: Option<String> = row.get("musicbrainz_release_id");
+            let musicbrainz_release = match (mb_release_group_id, mb_release_id) {
+                (Some(rgid), Some(rid)) => Some(crate::db::models::MusicBrainzRelease {
+                    release_group_id: rgid,
+                    release_id: rid,
+                }),
+                _ => None,
+            };
+
             albums.push(DbAlbum {
                 id: row.get("id"),
                 title: row.get("title"),
                 year: row.get("year"),
                 discogs_release,
+                musicbrainz_release,
                 bandcamp_album_id: row.get("bandcamp_album_id"),
                 cover_art_url: row.get("cover_art_url"),
                 is_compilation: row.get("is_compilation"),
@@ -757,9 +819,11 @@ impl Database {
             SELECT 
                 a.id, a.title, a.year, a.bandcamp_album_id, a.cover_art_url, 
                 a.is_compilation, a.created_at, a.updated_at,
-                ad.discogs_master_id, ad.discogs_release_id
+                ad.discogs_master_id, ad.discogs_release_id,
+                amb.musicbrainz_release_group_id, amb.musicbrainz_release_id
             FROM albums a
             LEFT JOIN album_discogs ad ON a.id = ad.album_id
+            LEFT JOIN album_musicbrainz amb ON a.id = amb.album_id
             WHERE a.id = ?
             "#,
         )
@@ -778,11 +842,22 @@ impl Database {
                 _ => None,
             };
 
+            let mb_release_group_id: Option<String> = row.get("musicbrainz_release_group_id");
+            let mb_release_id: Option<String> = row.get("musicbrainz_release_id");
+            let musicbrainz_release = match (mb_release_group_id, mb_release_id) {
+                (Some(rgid), Some(rid)) => Some(crate::db::models::MusicBrainzRelease {
+                    release_group_id: rgid,
+                    release_id: rid,
+                }),
+                _ => None,
+            };
+
             DbAlbum {
                 id: row.get("id"),
                 title: row.get("title"),
                 year: row.get("year"),
                 discogs_release,
+                musicbrainz_release,
                 bandcamp_album_id: row.get("bandcamp_album_id"),
                 cover_art_url: row.get("cover_art_url"),
                 is_compilation: row.get("is_compilation"),

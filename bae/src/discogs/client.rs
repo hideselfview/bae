@@ -185,6 +185,148 @@ impl DiscogsClient {
         }
     }
 
+    /// Search for masters by DISCID
+    pub async fn search_by_discid(
+        &self,
+        discid: &str,
+    ) -> Result<Vec<DiscogsSearchResult>, DiscogsError> {
+        use tracing::{debug, info, warn};
+
+        let url = format!("{}/database/search", self.base_url);
+
+        let mut params = HashMap::new();
+        params.insert("discid", discid);
+        params.insert("type", "master");
+        params.insert("token", &self.api_key);
+
+        info!(
+            "📡 Discogs API: GET {} with discid={}, type=master",
+            url, discid
+        );
+        debug!("Request params: {:?}", params);
+
+        let response = self
+            .client
+            .get(&url)
+            .query(&params)
+            .header("User-Agent", "bae/1.0 +https://github.com/hideselfview/bae")
+            .send()
+            .await?;
+
+        let status = response.status();
+        debug!("Response status: {}", status);
+
+        if response.status().is_success() {
+            let search_response: SearchResponse = response.json().await?;
+
+            info!(
+                "✓ Discogs DISCID search returned {} total result(s)",
+                search_response.results.len()
+            );
+            let masters: Vec<_> = search_response
+                .results
+                .into_iter()
+                .filter(|r| r.result_type == "master")
+                .collect();
+
+            info!("  → {} master(s) after filtering", masters.len());
+            Ok(masters)
+        } else if response.status() == 429 {
+            warn!("✗ Discogs rate limit exceeded");
+            Err(DiscogsError::RateLimit)
+        } else if response.status() == 401 {
+            warn!("✗ Discogs invalid API key");
+            Err(DiscogsError::InvalidApiKey)
+        } else {
+            warn!("✗ Discogs API error: {}", status);
+            Err(DiscogsError::Request(
+                response.error_for_status().unwrap_err(),
+            ))
+        }
+    }
+
+    /// Search for masters by metadata (artist, album, year)
+    pub async fn search_by_metadata(
+        &self,
+        artist: &str,
+        album: &str,
+        year: Option<u32>,
+    ) -> Result<Vec<DiscogsSearchResult>, DiscogsError> {
+        use tracing::{debug, info, warn};
+
+        let url = format!("{}/database/search", self.base_url);
+
+        // Construct optimized query: "artist album" or "artist album year"
+        let query = if let Some(y) = year {
+            format!("{} {} {}", artist, album, y)
+        } else {
+            format!("{} {}", artist, album)
+        };
+
+        let mut params = HashMap::new();
+        params.insert("q", query.as_str());
+        params.insert("type", "master");
+        params.insert("token", &self.api_key);
+
+        info!(
+            "📡 Discogs API: GET {} with q='{}', type=master",
+            url, query
+        );
+        debug!(
+            "Search query breakdown: artist='{}', album='{}', year={:?}",
+            artist, album, year
+        );
+
+        let response = self
+            .client
+            .get(&url)
+            .query(&params)
+            .header("User-Agent", "bae/1.0 +https://github.com/hideselfview/bae")
+            .send()
+            .await?;
+
+        let status = response.status();
+        debug!("Response status: {}", status);
+
+        if response.status().is_success() {
+            let search_response: SearchResponse = response.json().await?;
+
+            info!(
+                "✓ Discogs text search returned {} total result(s)",
+                search_response.results.len()
+            );
+            for (i, result) in search_response.results.iter().enumerate().take(3) {
+                debug!(
+                    "  Raw result {}: {} (type: {}, master_id: {:?})",
+                    i + 1,
+                    result.title,
+                    result.result_type,
+                    result.master_id
+                );
+            }
+
+            let masters: Vec<_> = search_response
+                .results
+                .into_iter()
+                .filter(|r| r.result_type == "master")
+                .collect();
+
+            info!("  → {} master(s) after filtering", masters.len());
+            Ok(masters)
+        } else if response.status() == 429 {
+            warn!("✗ Discogs rate limit exceeded");
+            Err(DiscogsError::RateLimit)
+        } else if response.status() == 401 {
+            warn!("✗ Discogs invalid API key");
+            Err(DiscogsError::InvalidApiKey)
+        } else {
+            warn!("✗ Discogs API error: {}", status);
+            Err(DiscogsError::Request(
+                response.error_for_status().unwrap_err(),
+            ))
+        }
+    }
+
     /// Get detailed information about a master release
     pub async fn get_master(&self, master_id: &str) -> Result<DiscogsMaster, DiscogsError> {
         let url = format!("{}/masters/{}", self.base_url, master_id);

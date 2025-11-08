@@ -102,6 +102,16 @@ pub struct DiscogsMasterRelease {
     pub release_id: String,
 }
 
+/// MusicBrainz release information for an album
+///
+/// MusicBrainz has Release Groups (abstract albums) and Releases (specific versions).
+/// Similar to Discogs master_id/release_id relationship.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MusicBrainzRelease {
+    pub release_group_id: String, // Abstract album (like Discogs master)
+    pub release_id: String,       // Specific version/pressing
+}
+
 /// Album metadata - represents a logical album (the "master")
 ///
 /// A logical album can have multiple physical releases (e.g., "1973 Original", "2016 Remaster").
@@ -121,6 +131,8 @@ pub struct DbAlbum {
     pub year: Option<i32>,
     /// Discogs release information
     pub discogs_release: Option<DiscogsMasterRelease>,
+    /// MusicBrainz release information
+    pub musicbrainz_release: Option<MusicBrainzRelease>,
     /// Album ID from Bandcamp (optional, for future multi-source support)
     pub bandcamp_album_id: Option<String>,
     pub cover_art_url: Option<String>,
@@ -318,6 +330,7 @@ impl DbAlbum {
             title: title.to_string(),
             year: None,
             discogs_release: None,
+            musicbrainz_release: None,
             bandcamp_album_id: None,
             cover_art_url: None,
             is_compilation: false,
@@ -347,6 +360,7 @@ impl DbAlbum {
             title: release.title.clone(),
             year: Some(master_year as i32),
             discogs_release: Some(discogs_release),
+            musicbrainz_release: None,
             bandcamp_album_id: None,
             cover_art_url: release.thumb.clone(),
             is_compilation: false, // Will be set based on artist analysis

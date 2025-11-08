@@ -406,6 +406,7 @@ mod tests {
             title: "Test Album".to_string(),
             year: Some(2024),
             discogs_release: None,
+            musicbrainz_release: None,
             bandcamp_album_id: None,
             cover_art_url: None,
             is_compilation: false,
