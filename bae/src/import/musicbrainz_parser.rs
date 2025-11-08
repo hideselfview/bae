@@ -1,0 +1,177 @@
+use crate::db::{DbAlbum, DbAlbumArtist, DbArtist, DbRelease, DbTrack};
+use crate::musicbrainz::lookup_release_by_id;
+use uuid::Uuid;
+
+/// Result of parsing a MusicBrainz release into database entities
+pub type ParsedMbAlbum = (
+    DbAlbum,
+    DbRelease,
+    Vec<DbTrack>,
+    Vec<DbArtist>,
+    Vec<DbAlbumArtist>,
+);
+
+/// Fetch full MusicBrainz release with tracklist and parse into database models
+pub async fn fetch_and_parse_mb_release(
+    release_id: &str,
+    master_year: u32,
+) -> Result<ParsedMbAlbum, String> {
+    // Fetch full release with recordings
+    let (mb_release, _external_urls) = lookup_release_by_id(release_id)
+        .await
+        .map_err(|e| format!("Failed to fetch MusicBrainz release: {}", e))?;
+
+    // Fetch full release JSON to get tracklist
+    let url = format!("https://musicbrainz.org/ws/2/release/{}", release_id);
+    let url_with_params = format!(
+        "{}?inc=recordings+artist-credits+release-groups+labels+media",
+        url
+    );
+
+    let client = reqwest::Client::builder()
+        .user_agent("bae/1.0 +https://github.com/hideselfview/bae")
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let response = client
+        .get(&url_with_params)
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| format!("HTTP request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "MusicBrainz API returned status: {}",
+            response.status()
+        ));
+    }
+
+    let json: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+
+    parse_mb_release_from_json(&json, &mb_release, master_year)
+}
+
+/// Parse MusicBrainz release JSON into database models
+fn parse_mb_release_from_json(
+    json: &serde_json::Value,
+    mb_release: &crate::musicbrainz::MbRelease,
+    master_year: u32,
+) -> Result<ParsedMbAlbum, String> {
+    // Create album record
+    let album = DbAlbum::from_mb_release(mb_release, master_year);
+
+    // Create release record
+    let db_release = DbRelease::from_mb_release(&album.id, mb_release);
+
+    // Create artist records from artist-credit
+    let mut artists = Vec::new();
+    let mut album_artists = Vec::new();
+
+    if let Some(artist_credits) = json.get("artist-credit").and_then(|ac| ac.as_array()) {
+        for (position, credit) in artist_credits.iter().enumerate() {
+            if let Some(artist_obj) = credit.get("artist") {
+                let artist_name = artist_obj
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unknown Artist")
+                    .to_string();
+
+                let _mb_artist_id = artist_obj
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                let artist = DbArtist {
+                    id: Uuid::new_v4().to_string(),
+                    name: artist_name.clone(),
+                    sort_name: Some(artist_name.clone()),
+                    discogs_artist_id: None,
+                    bandcamp_artist_id: None,
+                    created_at: chrono::Utc::now(),
+                    updated_at: chrono::Utc::now(),
+                };
+
+                let album_artist = DbAlbumArtist {
+                    id: Uuid::new_v4().to_string(),
+                    album_id: album.id.clone(),
+                    artist_id: artist.id.clone(),
+                    position: position as i32,
+                };
+
+                artists.push(artist);
+                album_artists.push(album_artist);
+            }
+        }
+    }
+
+    // Fallback if no artists found
+    if artists.is_empty() {
+        let artist_name = mb_release.artist.clone();
+        let artist = DbArtist {
+            id: Uuid::new_v4().to_string(),
+            name: artist_name.clone(),
+            sort_name: Some(artist_name.clone()),
+            discogs_artist_id: None,
+            bandcamp_artist_id: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        let album_artist = DbAlbumArtist {
+            id: Uuid::new_v4().to_string(),
+            album_id: album.id.clone(),
+            artist_id: artist.id.clone(),
+            position: 0,
+        };
+
+        artists.push(artist);
+        album_artists.push(album_artist);
+    }
+
+    // Extract tracks from media -> tracks -> recording
+    let mut tracks = Vec::new();
+    let mut track_index = 0;
+
+    if let Some(media_array) = json.get("media").and_then(|m| m.as_array()) {
+        for medium in media_array {
+            if let Some(tracks_array) = medium.get("tracks").and_then(|t| t.as_array()) {
+                for track_json in tracks_array {
+                    if let Some(recording) = track_json.get("recording") {
+                        let title = recording
+                            .get("title")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Unknown Track")
+                            .to_string();
+
+                        let position = track_json
+                            .get("position")
+                            .and_then(|v| v.as_i64())
+                            .map(|p| p as i32);
+
+                        let track_number = position.or_else(|| Some((track_index + 1) as i32));
+
+                        let track = DbTrack {
+                            id: Uuid::new_v4().to_string(),
+                            release_id: db_release.id.clone(),
+                            title,
+                            track_number,
+                            duration_ms: None, // Will be filled in during track mapping
+                            discogs_position: position.map(|p| p.to_string()),
+                            import_status: crate::db::ImportStatus::Queued,
+                            created_at: chrono::Utc::now(),
+                        };
+
+                        tracks.push(track);
+                        track_index += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok((album, db_release, tracks, artists, album_artists))
+}

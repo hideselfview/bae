@@ -2,10 +2,14 @@ use super::{
     folder_selector::FolderSelector, match_list::MatchList, metadata_display::MetadataDisplay,
 };
 use crate::import::{
-    rank_discogs_matches, rank_mb_matches, should_auto_select, FolderMetadata, MatchCandidate,
+    rank_discogs_matches, rank_mb_matches, should_auto_select, FolderMetadata, ImportRequestParams,
+    MatchCandidate,
 };
+use crate::library::use_import_service;
 use crate::ui::import_context::ImportContext;
+use crate::ui::Route;
 use dioxus::prelude::*;
+use std::path::PathBuf;
 use std::rc::Rc;
 use tracing::info;
 
@@ -32,20 +36,39 @@ pub fn FolderDetectionPage() -> Element {
     let detected_metadata = use_signal(|| None::<FolderMetadata>);
     let match_candidates = use_signal(|| Vec::<MatchCandidate>::new());
     let selected_match_index = use_signal(|| None::<usize>);
+    let locked_in_candidate = use_signal(|| None::<MatchCandidate>);
     let is_detecting = use_signal(|| false);
     let is_searching = use_signal(|| false);
     let error_message = use_signal(|| None::<String>);
 
-    // Auto-select if we have high confidence match
+    // Auto-select and lock-in if exactly 1 MB DiscID result
     use_effect({
         let candidates = match_candidates.clone();
-        let mut selected = selected_match_index.clone();
+        let metadata = detected_metadata.clone();
+        let mut locked_in = locked_in_candidate.clone();
         move || {
             let candidates_vec = candidates.read();
+            let metadata_opt = metadata.read();
+
+            // Check if we have exactly 1 MB result from DiscID search
+            if let Some(ref meta) = metadata_opt.as_ref() {
+                if meta.mb_discid.is_some() && candidates_vec.len() == 1 {
+                    if let Some(candidate) = candidates_vec.first() {
+                        // Check if it's a MusicBrainz result
+                        if matches!(candidate.source, crate::import::MatchSource::MusicBrainz(_)) {
+                            info!("Auto-locking in single MB DiscID result");
+                            locked_in.set(Some(candidate.clone()));
+                            return;
+                        }
+                    }
+                }
+            }
+
+            // Otherwise, use normal auto-select logic for high confidence
             if !candidates_vec.is_empty() {
                 if let Some(index) = should_auto_select(&candidates_vec) {
                     info!("Auto-selecting candidate at index {}", index);
-                    selected.set(Some(index));
+                    // Don't auto-lock-in, just select
                 }
             }
         }
@@ -60,12 +83,14 @@ pub fn FolderDetectionPage() -> Element {
         let is_searching_signal = is_searching.clone();
         let mut error_message_signal = error_message.clone();
         let mut selected_match_index_signal = selected_match_index.clone();
+        let mut locked_in_signal = locked_in_candidate.clone();
 
         move |path: String| {
             folder_path_signal.set(path.clone());
             detected_metadata_signal.set(None);
             match_candidates_signal.set(Vec::new());
             selected_match_index_signal.set(None);
+            locked_in_signal.set(None);
             error_message_signal.set(None);
             is_detecting_signal.set(true);
 
@@ -198,87 +223,127 @@ pub fn FolderDetectionPage() -> Element {
     };
 
     let mut selected_match_index_signal = selected_match_index.clone();
+    let mut locked_in_signal = locked_in_candidate.clone();
+    let candidates_signal = match_candidates.clone();
+
     let on_match_select = move |index: usize| {
         selected_match_index_signal.set(Some(index));
+        // Lock in the selected candidate
+        if let Some(candidate) = candidates_signal.read().get(index) {
+            locked_in_signal.set(Some(candidate.clone()));
+        }
+    };
+
+    let on_edit = move |_| {
+        locked_in_signal.set(None);
+        selected_match_index_signal.set(None);
     };
 
     let on_confirm = {
+        let import_service = use_import_service();
+        let navigator = use_navigator();
         let import_context = import_context.clone();
-        let match_candidates_value = match_candidates.clone();
-        let selected_index = selected_match_index.clone();
+        let locked_in = locked_in_candidate.clone();
+        let folder_path_value = folder_path.clone();
+        let detected_metadata_value = detected_metadata.clone();
         let mut error_message_signal = error_message.clone();
 
         move |_| {
-            if let Some(index) = selected_index.read().as_ref() {
-                if let Some(candidate) = match_candidates_value.read().get(*index) {
-                    // Try to get Discogs master_id directly
-                    if let Some(master_id) = candidate.discogs_master_id() {
-                        info!(
-                            "Selected match: {} (master_id: {})",
-                            candidate.title(),
-                            master_id
-                        );
-                        import_context.navigate_to_import_workflow(master_id.to_string(), None);
-                    } else {
-                        // For MusicBrainz results, try to find Discogs link, but proceed with MB-only if not found
-                        match &candidate.source {
-                            crate::import::MatchSource::MusicBrainz(release) => {
-                                use crate::musicbrainz::lookup_release_by_id;
-                                let release_id = release.release_id.clone();
-                                let import_context = import_context.clone();
-                                let mut error_message_signal = error_message_signal.clone();
+            if let Some(candidate) = locked_in.read().as_ref().cloned() {
+                let folder = folder_path_value.read().clone();
+                let metadata = detected_metadata_value.read().clone();
+                let import_service = import_service.clone();
+                let navigator = navigator.clone();
+                let import_context = import_context.clone();
+                let mut error_message_signal = error_message_signal.clone();
 
-                                spawn(async move {
-                                    match lookup_release_by_id(&release_id).await {
-                                        Ok((mb_release, external_urls)) => {
-                                            // Try to extract Discogs master/release ID from URLs if available
-                                            if let Some(ref discogs_url) =
-                                                external_urls.discogs_master_url
-                                            {
-                                                if let Some(master_id) =
-                                                    extract_discogs_master_id(discogs_url)
-                                                {
-                                                    info!("Found Discogs master_id: {} from MusicBrainz release", master_id);
-                                                    import_context.navigate_to_import_workflow(
-                                                        master_id, None,
-                                                    );
-                                                    return;
-                                                }
-                                            }
-                                            if let Some(ref discogs_url) =
-                                                external_urls.discogs_release_url
-                                            {
-                                                if let Some(release_id) =
-                                                    extract_discogs_release_id(discogs_url)
-                                                {
-                                                    // For release URLs, we'd need to lookup master_id
-                                                    // For now, proceed with MusicBrainz-only import
-                                                    info!("Found Discogs release URL but proceeding with MusicBrainz-only import");
-                                                }
-                                            }
-                                            // No Discogs link found - proceed with MusicBrainz-only import
-                                            info!("Proceeding with MusicBrainz-only import for release: {} (no Discogs link found)", mb_release.release_id);
-                                            // TODO: Implement MusicBrainz-only import workflow
-                                            // For now, just log that we're proceeding without Discogs
-                                            // The import workflow will need to be updated to handle MusicBrainz-only imports
-                                            error_message_signal.set(Some("MusicBrainz-only imports are supported, but the import workflow needs to be updated to handle MusicBrainz data. Please select a release with a Discogs link for now.".to_string()));
+                spawn(async move {
+                    // Extract master_year from metadata or release date
+                    let master_year = metadata.as_ref().and_then(|m| m.year).unwrap_or(1970);
+
+                    match candidate.source.clone() {
+                        crate::import::MatchSource::Discogs(discogs_result) => {
+                            // Fetch full Discogs release
+                            let master_id = match discogs_result.master_id {
+                                Some(id) => id.to_string(),
+                                None => {
+                                    error_message_signal
+                                        .set(Some("Discogs result has no master_id".to_string()));
+                                    return;
+                                }
+                            };
+                            let release_id = discogs_result.id.to_string();
+
+                            match import_context.import_release(release_id, master_id).await {
+                                Ok(discogs_release) => {
+                                    info!(
+                                        "Starting import for Discogs release: {}",
+                                        discogs_release.title
+                                    );
+
+                                    let request = ImportRequestParams::FromFolder {
+                                        discogs_release: Some(discogs_release),
+                                        mb_release: None,
+                                        folder: PathBuf::from(folder),
+                                        master_year,
+                                    };
+
+                                    match import_service.send_request(request).await {
+                                        Ok((album_id, _release_id)) => {
+                                            info!(
+                                                "Import started, navigating to album: {}",
+                                                album_id
+                                            );
+                                            navigator.push(Route::AlbumDetail {
+                                                album_id,
+                                                release_id: String::new(),
+                                            });
                                         }
                                         Err(e) => {
                                             error_message_signal.set(Some(format!(
-                                                "Failed to lookup MusicBrainz release: {}",
+                                                "Failed to start import: {}",
                                                 e
                                             )));
                                         }
                                     }
-                                });
+                                }
+                                Err(e) => {
+                                    error_message_signal.set(Some(format!(
+                                        "Failed to fetch Discogs release: {}",
+                                        e
+                                    )));
+                                }
                             }
-                            crate::import::MatchSource::Discogs(_) => {
-                                error_message_signal
-                                    .set(Some("Selected match has no master_id".to_string()));
+                        }
+                        crate::import::MatchSource::MusicBrainz(mb_release) => {
+                            info!(
+                                "Starting import for MusicBrainz release: {}",
+                                mb_release.title
+                            );
+
+                            let request = ImportRequestParams::FromFolder {
+                                discogs_release: None,
+                                mb_release: Some(mb_release.clone()),
+                                folder: PathBuf::from(folder),
+                                master_year,
+                            };
+
+                            match import_service.send_request(request).await {
+                                Ok((album_id, _release_id)) => {
+                                    info!("Import started, navigating to album: {}", album_id);
+                                    navigator.push(Route::AlbumDetail {
+                                        album_id,
+                                        release_id: String::new(),
+                                    });
+                                }
+                                Err(e) => {
+                                    error_message_signal
+                                        .set(Some(format!("Failed to start import: {}", e)));
+                                }
                             }
                         }
                     }
-                }
+                });
             }
         }
     };
@@ -333,21 +398,71 @@ pub fn FolderDetectionPage() -> Element {
                         div { class: "bg-white rounded-lg shadow p-6 text-center",
                             p { class: "text-gray-600", "Searching Discogs and MusicBrainz..." }
                         }
+                    } else if let Some(ref locked_candidate) = locked_in_candidate.read().as_ref() {
+                        // Locked-in confirmation view
+                        div { class: "space-y-4",
+                            div { class: "bg-blue-50 border-2 border-blue-500 rounded-lg p-6",
+                                div { class: "flex items-start justify-between mb-4",
+                                    div { class: "flex-1",
+                                        h3 { class: "text-lg font-semibold text-gray-900 mb-2",
+                                            "Selected Release"
+                                        }
+                                        div { class: "text-sm text-gray-600 space-y-1",
+                                            p { class: "text-lg font-medium text-gray-900", "{locked_candidate.title()}" }
+                                            if let Some(ref year) = locked_candidate.year() {
+                                                p { "Year: {year}" }
+                                            }
+                                            {
+                                                let (format_text, country_text, label_text) = match &locked_candidate.source {
+                                                    crate::import::MatchSource::MusicBrainz(release) => (
+                                                        release.format.as_ref().map(|f| format!("Format: {}", f)),
+                                                        release.country.as_ref().map(|c| format!("Country: {}", c)),
+                                                        release.label.as_ref().map(|l| format!("Label: {}", l)),
+                                                    ),
+                                                    crate::import::MatchSource::Discogs(_) => (None, None, None),
+                                                };
+                                                rsx! {
+                                                    if let Some(ref fmt) = format_text {
+                                                        p { "{fmt}" }
+                                                    }
+                                                    if let Some(ref country) = country_text {
+                                                        p { "{country}" }
+                                                    }
+                                                    if let Some(ref label) = label_text {
+                                                        p { "{label}" }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    span { class: "text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded",
+                                        "{locked_candidate.source_name()}"
+                                    }
+                                }
+                            }
+                            div { class: "flex justify-end gap-3",
+                                button {
+                                    class: "px-6 py-2 bg-gray-600 text-white rounded hover:bg-gray-700",
+                                    onclick: on_edit,
+                                    "Edit"
+                                }
+                                button {
+                                    class: "px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700",
+                                    onclick: on_confirm,
+                                    "Import"
+                                }
+                            }
+                        }
                     } else if !match_candidates.read().is_empty() {
+                        // Results view (incomplete state - no import button)
                         div { class: "space-y-4",
                             MatchList {
                                 candidates: match_candidates.read().clone(),
                                 selected_index: selected_match_index.read().as_ref().copied(),
                                 on_select: on_match_select,
                             }
-
-                            div { class: "flex justify-end",
-                                button {
-                                    class: "px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50",
-                                    disabled: selected_match_index.read().is_none(),
-                                    onclick: on_confirm,
-                                    "Continue to Import"
-                                }
+                            p { class: "text-sm text-gray-500 text-center",
+                                "Select a release above to continue"
                             }
                         }
                     }

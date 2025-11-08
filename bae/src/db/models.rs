@@ -368,6 +368,35 @@ impl DbAlbum {
             updated_at: now,
         }
     }
+
+    pub fn from_mb_release(release: &crate::musicbrainz::MbRelease, master_year: u32) -> Self {
+        let now = Utc::now();
+
+        let musicbrainz_release = crate::db::MusicBrainzRelease {
+            release_group_id: release.release_group_id.clone(),
+            release_id: release.release_id.clone(),
+        };
+
+        // Extract year from date string if available
+        let year = release
+            .date
+            .as_ref()
+            .and_then(|d| d.split('-').next().and_then(|y| y.parse::<i32>().ok()))
+            .or(Some(master_year as i32));
+
+        DbAlbum {
+            id: Uuid::new_v4().to_string(),
+            title: release.title.clone(),
+            year,
+            discogs_release: None,
+            musicbrainz_release: Some(musicbrainz_release),
+            bandcamp_album_id: None,
+            cover_art_url: None, // MusicBrainz doesn't provide cover art URLs directly
+            is_compilation: false, // Will be set based on artist analysis
+            created_at: now,
+            updated_at: now,
+        }
+    }
 }
 
 impl DbRelease {
@@ -396,6 +425,28 @@ impl DbRelease {
             release_name: None, // Could parse from release title if needed
             year: release.year.map(|y| y as i32),
             discogs_release_id: Some(release.id.clone()),
+            bandcamp_release_id: None,
+            import_status: ImportStatus::Queued,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    pub fn from_mb_release(album_id: &str, release: &crate::musicbrainz::MbRelease) -> Self {
+        let now = Utc::now();
+
+        // Extract year from date string if available
+        let year = release
+            .date
+            .as_ref()
+            .and_then(|d| d.split('-').next().and_then(|y| y.parse::<i32>().ok()));
+
+        DbRelease {
+            id: Uuid::new_v4().to_string(),
+            album_id: album_id.to_string(),
+            release_name: None,
+            year,
+            discogs_release_id: None,
             bandcamp_release_id: None,
             import_status: ImportStatus::Queued,
             created_at: now,

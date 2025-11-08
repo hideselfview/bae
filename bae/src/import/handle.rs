@@ -5,7 +5,6 @@
 
 use crate::cue_flac::CueFlacProcessor;
 use crate::db::{DbAlbum, DbRelease};
-use crate::import::discogs_parser::parse_discogs_release;
 use crate::import::progress::ImportProgressHandle;
 use crate::import::track_to_file_mapper::map_tracks_to_files;
 use crate::import::types::{
@@ -67,17 +66,31 @@ impl ImportHandle {
     ) -> Result<(String, String), String> {
         match params {
             ImportRequestParams::FromFolder {
-                discogs_release: release,
+                discogs_release,
+                mb_release,
                 folder,
                 master_year,
             } => {
+                // Validate that at least one release is provided
+                if discogs_release.is_none() && mb_release.is_none() {
+                    return Err("Either discogs_release or mb_release must be provided".to_string());
+                }
+
                 let library_manager = self.library_manager.get();
 
                 // ========== VALIDATION (before queueing) ==========
 
-                // 1. Parse Discogs release into database models
+                // 1. Parse release into database models (Discogs or MusicBrainz)
                 let (db_album, db_release, db_tracks, artists, album_artists) =
-                    parse_discogs_release(&release, master_year)?;
+                    if let Some(ref discogs_rel) = discogs_release {
+                        use crate::import::discogs_parser::parse_discogs_release;
+                        parse_discogs_release(discogs_rel, master_year)?
+                    } else if let Some(ref mb_rel) = mb_release {
+                        use crate::import::musicbrainz_parser::fetch_and_parse_mb_release;
+                        fetch_and_parse_mb_release(&mb_rel.release_id, master_year).await?
+                    } else {
+                        return Err("No release provided".to_string());
+                    };
 
                 // 2. Discover files
                 let discovered_files = discover_folder_files(&folder)?;

@@ -20,6 +20,7 @@ mod discogs_parser;
 mod folder_metadata_detector;
 mod handle;
 mod metadata_persister;
+mod musicbrainz_parser;
 mod pipeline;
 mod progress;
 mod service;

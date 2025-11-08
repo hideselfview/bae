@@ -33,14 +33,15 @@
 //! The key insight: Both import types use identical data structures. The only difference
 //! is how we calculate the byte positions and chunk ranges for each track.
 
-use crate::{cue_flac::CueSheet, discogs::DiscogsRelease};
+use crate::{cue_flac::CueSheet, discogs::DiscogsRelease, musicbrainz::MbRelease};
 use std::{collections::HashMap, path::PathBuf};
 
 /// Request to import an album
 #[derive(Debug)]
 pub enum ImportRequestParams {
     FromFolder {
-        discogs_release: DiscogsRelease,
+        discogs_release: Option<DiscogsRelease>,
+        mb_release: Option<MbRelease>,
         folder: PathBuf,
         master_year: u32,
     },

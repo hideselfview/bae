@@ -11,25 +11,7 @@ use std::rc::Rc;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ImportStep {
-    SearchResults,
-    ReleaseDetails {
-        master_id: String,
-        master_title: String,
-    },
-    FolderIdentification {
-        folder_path: String,
-        detected_metadata: Option<FolderMetadata>,
-        match_candidates: Vec<MatchCandidate>,
-    },
-    MusicBrainzSearch {
-        query: String,
-        // results: Vec<MbRelease>, // TODO: Store results in a signal instead
-    },
-    ImportWorkflow {
-        master_id: String,
-        release_id: String,
-        master_year: u32,
-    },
+    FolderIdentification,
 }
 
 pub struct ImportContext {
@@ -53,7 +35,7 @@ impl ImportContext {
             .read()
             .last()
             .cloned()
-            .unwrap_or(ImportStep::SearchResults)
+            .unwrap_or(ImportStep::FolderIdentification)
     }
     pub fn new(config: &crate::config::Config) -> Self {
         use dioxus::prelude::*;
@@ -63,7 +45,7 @@ impl ImportContext {
             is_searching_masters: Signal::new(false),
             is_loading_versions: Signal::new(false),
             error_message: Signal::new(None),
-            navigation_stack: Signal::new(vec![ImportStep::SearchResults]),
+            navigation_stack: Signal::new(vec![ImportStep::FolderIdentification]),
             mb_search_results: Signal::new(Vec::new()),
             is_searching_mb: Signal::new(false),
             mb_error_message: Signal::new(None),
@@ -111,39 +93,6 @@ impl ImportContext {
         *self.search_task.borrow_mut() = Some(task);
     }
 
-    pub fn navigate_to_releases(&self, master_id: String, master_title: String) {
-        let mut navigation_stack = self.navigation_stack;
-        let step = ImportStep::ReleaseDetails {
-            master_id,
-            master_title,
-        };
-        navigation_stack.write().push(step);
-    }
-
-    pub fn navigate_to_import_workflow(&self, master_id: String, release_id: Option<String>) {
-        let client = self.client.clone();
-        let mut navigation_stack = self.navigation_stack;
-        let mut error_message = self.error_message;
-        spawn(async move {
-            match client.get_master(&master_id).await {
-                Ok(master) => {
-                    let master_year = master.year;
-                    let release_id = release_id.unwrap_or(master.main_release);
-                    let step = ImportStep::ImportWorkflow {
-                        master_id,
-                        release_id,
-                        master_year,
-                    };
-                    navigation_stack.write().push(step);
-                }
-                Err(e) => {
-                    let error = format!("Failed to fetch master details: {}", e);
-                    error_message.set(Some(error));
-                }
-            }
-        });
-    }
-
     pub fn navigate_back(&self) {
         let mut navigation_stack = self.navigation_stack;
         let mut stack = navigation_stack.write();
@@ -175,25 +124,7 @@ impl ImportContext {
         mb_search_results.set(Vec::new());
         is_searching_mb.set(false);
         mb_error_message.set(None);
-        navigation_stack.set(vec![ImportStep::SearchResults]);
-    }
-
-    pub fn navigate_to_folder_detection(&self) {
-        let mut navigation_stack = self.navigation_stack;
-        let step = ImportStep::FolderIdentification {
-            folder_path: String::new(),
-            detected_metadata: None,
-            match_candidates: Vec::new(),
-        };
-        navigation_stack.write().push(step);
-    }
-
-    pub fn navigate_to_musicbrainz_search(&self) {
-        let mut navigation_stack = self.navigation_stack;
-        let step = ImportStep::MusicBrainzSearch {
-            query: String::new(),
-        };
-        navigation_stack.write().push(step);
+        navigation_stack.set(vec![ImportStep::FolderIdentification]);
     }
 
     pub async fn detect_folder_metadata(
