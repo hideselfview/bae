@@ -4,6 +4,7 @@ use crate::library::{use_import_service, use_library_manager};
 use crate::ui::Route;
 use dioxus::prelude::*;
 
+use super::back_button::BackButton;
 use super::error::AlbumDetailError;
 use super::loading::AlbumDetailLoading;
 use super::utils::{get_selected_release_id_from_params, load_album_and_releases, maybe_not_empty};
@@ -28,6 +29,7 @@ pub fn AlbumDetail(
 
     rsx! {
         PageContainer {
+            BackButton {}
             match data.album_resource.value().read().as_ref() {
                 None => rsx! {
                     AlbumDetailLoading {}
