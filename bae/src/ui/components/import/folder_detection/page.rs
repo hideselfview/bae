@@ -30,6 +30,7 @@ pub fn FolderDetectionPage() -> Element {
     let is_looking_up = import_context.is_looking_up;
     let import_error_message = import_context.import_error_message;
     let duplicate_album_id = import_context.duplicate_album_id;
+    let search_query = import_context.search_query;
 
     let on_folder_select = {
         let import_context_for_detect = import_context.clone();
@@ -63,8 +64,21 @@ pub fn FolderDetectionPage() -> Element {
             let mut confirmed_candidate = import_context_for_detect.confirmed_candidate;
             let mut exact_match_candidates = import_context_for_detect.exact_match_candidates;
             let mut import_error_message = import_context_for_detect.import_error_message;
+            let mut search_query = import_context_for_detect.search_query;
 
             spawn(async move {
+                // Helper to initialize search query from metadata
+                let mut init_search_query = |metadata: &crate::import::FolderMetadata| {
+                    let mut query_parts = Vec::new();
+                    if let Some(ref artist) = metadata.artist {
+                        query_parts.push(artist.clone());
+                    }
+                    if let Some(ref album) = metadata.album {
+                        query_parts.push(album.clone());
+                    }
+                    search_query.set(query_parts.join(" "));
+                };
+
                 // Phase 2: Detect metadata
                 match import_context_for_detect
                     .detect_folder_metadata(path.clone())
@@ -85,6 +99,7 @@ pub fn FolderDetectionPage() -> Element {
                                         info!(
                                             "No exact matches found, proceeding to manual search"
                                         );
+                                        init_search_query(&metadata);
                                         import_phase.set(
                                             crate::ui::import_context::ImportPhase::ManualSearch,
                                         );
@@ -130,6 +145,7 @@ pub fn FolderDetectionPage() -> Element {
                                         e
                                     );
                                     is_looking_up.set(false);
+                                    init_search_query(&metadata);
                                     import_phase
                                         .set(crate::ui::import_context::ImportPhase::ManualSearch);
                                 }
@@ -137,6 +153,7 @@ pub fn FolderDetectionPage() -> Element {
                         } else {
                             // No MB DiscID, proceed to manual search
                             info!("No MB DiscID found, proceeding to manual search");
+                            init_search_query(&metadata);
                             import_phase.set(crate::ui::import_context::ImportPhase::ManualSearch);
                         }
                     }
@@ -317,12 +334,26 @@ pub fn FolderDetectionPage() -> Element {
         let mut confirmed_candidate = confirmed_candidate;
         let mut selected_match_index = selected_match_index;
         let mut import_phase = import_phase;
+        let mut search_query = search_query;
         move |_| {
             confirmed_candidate.set(None);
             selected_match_index.set(None);
             if !exact_match_candidates.read().is_empty() {
                 import_phase.set(crate::ui::import_context::ImportPhase::ExactLookup);
             } else {
+                // Initialize search query from detected metadata when transitioning to manual search
+                if let Some(metadata) = detected_metadata.read().as_ref() {
+                    let mut query_parts = Vec::new();
+                    if let Some(ref artist) = metadata.artist {
+                        query_parts.push(artist.clone());
+                    }
+                    if let Some(ref album) = metadata.album {
+                        query_parts.push(album.clone());
+                    }
+                    if !query_parts.is_empty() {
+                        search_query.set(query_parts.join(" "));
+                    }
+                }
                 import_phase.set(crate::ui::import_context::ImportPhase::ManualSearch);
             }
         }

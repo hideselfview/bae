@@ -13,27 +13,11 @@ pub fn ManualSearchPanel(
     selected_index: Signal<Option<usize>>,
 ) -> Element {
     let import_context = use_context::<Rc<ImportContext>>();
+    let mut search_query = import_context.search_query;
     let mut search_source = use_signal(|| SearchSource::MusicBrainz);
-    let mut search_query = use_signal(String::new);
     let mut match_candidates = use_signal(Vec::<MatchCandidate>::new);
     let mut is_searching = use_signal(|| false);
     let mut error_message = use_signal(|| None::<String>);
-
-    // Pre-fill search query from detected metadata
-    use_effect(move || {
-        if let Some(metadata) = detected_metadata.read().as_ref() {
-            let mut query_parts = Vec::new();
-            if let Some(ref artist) = metadata.artist {
-                query_parts.push(artist.clone());
-            }
-            if let Some(ref album) = metadata.album {
-                query_parts.push(album.clone());
-            }
-            if !query_parts.is_empty() {
-                search_query.set(query_parts.join(" "));
-            }
-        }
-    });
 
     let on_search_click = {
         let import_context = import_context.clone();
@@ -197,9 +181,10 @@ pub fn ManualSearchPanel(
             div { class: "flex gap-2",
                 input {
                     r#type: "text",
-                    class: "flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500",
+                    id: "manual-search-input",
+                    class: "flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 placeholder-gray-500",
                     placeholder: "Enter artist and album name...",
-                    value: "{search_query.read()}",
+                    value: "{search_query}",
                     oninput: move |e| search_query.set(e.value()),
                     onkeydown: on_search_keydown,
                 }
