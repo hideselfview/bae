@@ -365,6 +365,33 @@ pub fn FolderDetectionPage() -> Element {
         }
     };
 
+    let on_change_folder = {
+        let mut folder_path = folder_path;
+        let mut detected_metadata = detected_metadata;
+        let mut exact_match_candidates = exact_match_candidates;
+        let mut selected_match_index = selected_match_index;
+        let mut confirmed_candidate = confirmed_candidate;
+        let mut import_error_message = import_error_message;
+        let mut duplicate_album_id = duplicate_album_id;
+        let mut import_phase = import_phase;
+        let mut is_detecting = is_detecting;
+        let mut is_looking_up = is_looking_up;
+        let mut search_query = search_query;
+        move |_| {
+            folder_path.set(String::new());
+            detected_metadata.set(None);
+            exact_match_candidates.set(Vec::new());
+            selected_match_index.set(None);
+            confirmed_candidate.set(None);
+            import_error_message.set(None);
+            duplicate_album_id.set(None);
+            is_detecting.set(false);
+            is_looking_up.set(false);
+            search_query.set(String::new());
+            import_phase.set(crate::ui::import_context::ImportPhase::FolderSelection);
+        }
+    };
+
     rsx! {
         div { class: "max-w-4xl mx-auto p-6",
             div { class: "mb-6",
@@ -389,7 +416,14 @@ pub fn FolderDetectionPage() -> Element {
                     // Show selected folder
                     div { class: "bg-white rounded-lg shadow p-6",
                         div { class: "mb-6 pb-4 border-b border-gray-200",
-                            h3 { class: "text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3", "Selected Folder" }
+                            div { class: "flex items-start justify-between mb-3",
+                                h3 { class: "text-sm font-semibold text-gray-700 uppercase tracking-wide", "Selected Folder" }
+                                button {
+                                    class: "px-3 py-1 text-sm text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-md transition-colors",
+                                    onclick: on_change_folder,
+                                    "Change Folder"
+                                }
+                            }
                             div { class: "inline-block px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-full border border-gray-300 transition-colors",
                                 p {
                                     class: "text-sm text-gray-900 font-mono select-text cursor-text break-all",
