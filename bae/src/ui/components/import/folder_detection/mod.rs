@@ -1,3 +1,4 @@
+mod file_list;
 mod folder_selector;
 mod manual_search_panel;
 mod match_item;

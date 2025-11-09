@@ -686,6 +686,9 @@
   .bg-blue-600 {
     background-color: var(--color-blue-600);
   }
+  .bg-gray-50 {
+    background-color: var(--color-gray-50);
+  }
   .bg-gray-100 {
     background-color: var(--color-gray-100);
   }
@@ -1062,6 +1065,13 @@
     &:hover {
       @media (hover: hover) {
         background-color: var(--color-gray-50);
+      }
+    }
+  }
+  .hover\:bg-gray-100 {
+    &:hover {
+      @media (hover: hover) {
+        background-color: var(--color-gray-100);
       }
     }
   }

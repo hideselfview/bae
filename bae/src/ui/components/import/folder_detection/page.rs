@@ -1,5 +1,7 @@
+use super::file_list::FileInfo;
 use super::{
-    folder_selector::FolderSelector, manual_search_panel::ManualSearchPanel, match_list::MatchList,
+    file_list::FileList, folder_selector::FolderSelector, manual_search_panel::ManualSearchPanel,
+    match_list::MatchList,
 };
 use crate::import::{ImportRequestParams, MatchCandidate, MatchSource};
 use crate::library::use_import_service;
@@ -32,6 +34,9 @@ pub fn FolderDetectionPage() -> Element {
     let duplicate_album_id = import_context.duplicate_album_id;
     let search_query = import_context.search_query;
 
+    // Local signal for file list
+    let folder_files = use_signal(Vec::<FileInfo>::new);
+
     let on_folder_select = {
         let import_context_for_detect = import_context.clone();
 
@@ -55,6 +60,34 @@ pub fn FolderDetectionPage() -> Element {
             duplicate_album_id.set(None);
             import_phase.set(crate::ui::import_context::ImportPhase::MetadataDetection);
             is_detecting.set(true);
+
+            // Read files from folder
+            let folder_path_clone = path.clone();
+            let mut folder_files_for_read = folder_files;
+            spawn(async move {
+                let mut files = Vec::new();
+                if let Ok(entries) = std::fs::read_dir(&folder_path_clone) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_file() {
+                            let name = path
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("unknown")
+                                .to_string();
+                            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                            let format = path
+                                .extension()
+                                .and_then(|e| e.to_str())
+                                .unwrap_or("")
+                                .to_uppercase();
+                            files.push(FileInfo { name, size, format });
+                        }
+                    }
+                    files.sort_by(|a, b| a.name.cmp(&b.name));
+                }
+                folder_files_for_read.set(files);
+            });
 
             let import_context_for_detect = import_context_for_detect.clone();
             let mut detected_metadata = import_context_for_detect.detected_metadata;
@@ -377,6 +410,7 @@ pub fn FolderDetectionPage() -> Element {
         let mut is_detecting = is_detecting;
         let mut is_looking_up = is_looking_up;
         let mut search_query = search_query;
+        let mut folder_files = folder_files;
         move |_| {
             folder_path.set(String::new());
             detected_metadata.set(None);
@@ -388,6 +422,7 @@ pub fn FolderDetectionPage() -> Element {
             is_detecting.set(false);
             is_looking_up.set(false);
             search_query.set(String::new());
+            folder_files.set(Vec::new());
             import_phase.set(crate::ui::import_context::ImportPhase::FolderSelection);
         }
     };
@@ -435,6 +470,13 @@ pub fn FolderDetectionPage() -> Element {
                         if *is_detecting.read() {
                             div { class: "text-center py-8",
                                 p { class: "text-gray-600", "Detecting metadata..." }
+                            }
+                        } else if !folder_files.read().is_empty() {
+                            div { class: "mt-4",
+                                h4 { class: "text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3", "Files" }
+                                FileList {
+                                    files: folder_files.read().clone(),
+                                }
                             }
                         }
                     }
