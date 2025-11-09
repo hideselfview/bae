@@ -92,7 +92,10 @@ impl Config {
             .expect("BAE_S3_ACCESS_KEY must be set in .env for dev mode");
         let secret_access_key = std::env::var("BAE_S3_SECRET_KEY")
             .expect("BAE_S3_SECRET_KEY must be set in .env for dev mode");
-        let endpoint_url = std::env::var("BAE_S3_ENDPOINT").ok();
+        let endpoint_url = std::env::var("BAE_S3_ENDPOINT")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
 
         let s3_config = crate::cloud_storage::S3Config {
             bucket_name: bucket_name.clone(),

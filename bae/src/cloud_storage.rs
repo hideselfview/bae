@@ -97,8 +97,13 @@ impl S3CloudStorage {
             .credentials_provider(credentials);
 
         // Set custom endpoint if provided (for S3-compatible services)
-        if let Some(endpoint) = config.endpoint_url {
-            aws_config_builder = aws_config_builder.endpoint_url(endpoint);
+        if let Some(endpoint) = &config.endpoint_url {
+            // Normalize endpoint URL: remove trailing slashes
+            let normalized_endpoint = endpoint.trim_end_matches('/').to_string();
+            info!("Using custom S3 endpoint: {}", normalized_endpoint);
+            aws_config_builder = aws_config_builder.endpoint_url(normalized_endpoint);
+        } else {
+            info!("Using default AWS S3 endpoint");
         }
 
         let aws_config = aws_config_builder.load().await;
@@ -114,11 +119,13 @@ impl S3CloudStorage {
 
         // Create bucket if it doesn't exist (useful for dev/testing)
         if create_bucket {
+            info!("Checking if bucket '{}' exists...", bucket_name);
             match client.head_bucket().bucket(&bucket_name).send().await {
                 Ok(_) => {
                     info!("Bucket '{}' already exists", bucket_name);
                 }
-                Err(_) => {
+                Err(e) => {
+                    debug!("Bucket check failed: {:?}", e);
                     info!("Creating bucket '{}'", bucket_name);
                     client
                         .create_bucket()
@@ -126,7 +133,12 @@ impl S3CloudStorage {
                         .send()
                         .await
                         .map_err(|e| {
-                            CloudStorageError::SdkError(format!("Create bucket failed: {}", e))
+                            let error_msg = format!(
+                                "Create bucket failed: {}. Endpoint: {:?}, Bucket: {}",
+                                e, config.endpoint_url, bucket_name
+                            );
+                            error!("{}", error_msg);
+                            CloudStorageError::SdkError(error_msg)
                         })?;
                     info!("Bucket '{}' created successfully", bucket_name);
                 }
