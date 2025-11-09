@@ -166,6 +166,9 @@ fn main() {
         config: config.clone(),
         import_handle,
         playback_handle,
+        cache: cache_manager.clone(),
+        encryption_service: encryption_service.clone(),
+        cloud_storage: cloud_storage.clone(),
     };
 
     // Start Subsonic API server as async task on shared runtime

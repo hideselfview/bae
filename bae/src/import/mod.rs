@@ -28,10 +28,8 @@ mod track_to_file_mapper;
 mod types;
 
 // Public API exports
-pub use discogs_matcher::{
-    rank_discogs_matches, rank_mb_matches, should_auto_select, MatchCandidate, MatchSource,
-};
-pub use folder_metadata_detector::{calculate_mb_discid_from_cue, detect_metadata, FolderMetadata};
+pub use discogs_matcher::{rank_discogs_matches, rank_mb_matches, MatchCandidate, MatchSource};
+pub use folder_metadata_detector::{detect_metadata, FolderMetadata};
 pub use handle::ImportHandle;
 pub use service::{ImportConfig, ImportService};
 pub use types::{ImportProgress, ImportRequestParams};

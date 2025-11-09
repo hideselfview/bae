@@ -30,20 +30,6 @@ impl MatchCandidate {
         }
     }
 
-    pub fn discogs_master_id(&self) -> Option<u64> {
-        match &self.source {
-            MatchSource::Discogs(result) => result.master_id,
-            MatchSource::MusicBrainz(_) => None,
-        }
-    }
-
-    pub fn source_name(&self) -> &'static str {
-        match &self.source {
-            MatchSource::Discogs(_) => "Discogs",
-            MatchSource::MusicBrainz(_) => "MusicBrainz",
-        }
-    }
-
     pub fn cover_art_url(&self) -> Option<String> {
         match &self.source {
             MatchSource::Discogs(result) => {
@@ -170,7 +156,7 @@ pub fn rank_mb_matches(
             }
 
             // Bonus for MusicBrainz DiscID match
-            if let Some(ref mb_discid) = folder_metadata.mb_discid {
+            if folder_metadata.mb_discid.is_some() {
                 // If we have a MusicBrainz DiscID, we could check it here
                 // For now, just note that MB results are generally more reliable
                 confidence += 5.0;
@@ -316,39 +302,4 @@ pub fn rank_discogs_matches(
     }
 
     candidates
-}
-
-/// Determine if we should auto-select a match
-pub fn should_auto_select(candidates: &[MatchCandidate]) -> Option<usize> {
-    use tracing::info;
-
-    if candidates.is_empty() {
-        info!("❌ No candidates for auto-selection");
-        return None;
-    }
-
-    let best = &candidates[0];
-
-    // Auto-select if:
-    // 1. Confidence > 95%
-    // 2. Only one candidate with confidence > 90%
-    if best.confidence > 95.0 {
-        // Check if there's a second candidate with high confidence
-        if candidates.len() == 1 || (candidates.len() > 1 && candidates[1].confidence <= 90.0) {
-            info!(
-                "✨ Auto-selecting top match: '{}' (confidence: {:.1}%)",
-                best.title(),
-                best.confidence
-            );
-            return Some(0);
-        } else {
-            info!("🤔 Top match has high confidence ({:.1}%), but second match is also strong ({:.1}%) - showing list",
-                  best.confidence, candidates[1].confidence);
-        }
-    } else {
-        info!("🤔 Top match confidence ({:.1}%) below threshold (95%) - showing list for user selection",
-              best.confidence);
-    }
-
-    None
 }

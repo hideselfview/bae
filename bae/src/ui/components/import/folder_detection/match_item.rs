@@ -50,9 +50,6 @@ pub fn MatchItem(
                         h4 { class: "text-lg font-semibold text-gray-900",
                             "{candidate.title()}"
                         }
-                        span { class: "text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded",
-                            "{candidate.source_name()}"
-                        }
                     }
 
                     div { class: "text-sm text-gray-600 mb-2 space-y-1",

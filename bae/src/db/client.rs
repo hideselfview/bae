@@ -1269,4 +1269,224 @@ impl Database {
             .await?;
         Ok(())
     }
+
+    /// Find album by Discogs master_id or release_id
+    ///
+    /// Used for duplicate detection before import.
+    /// Returns the album if it exists with matching Discogs IDs.
+    pub async fn find_album_by_discogs_ids(
+        &self,
+        master_id: Option<&str>,
+        release_id: Option<&str>,
+    ) -> Result<Option<DbAlbum>, sqlx::Error> {
+        let query = if master_id.is_some() && release_id.is_some() {
+            r#"
+            SELECT 
+                a.id, a.title, a.year, a.bandcamp_album_id, a.cover_art_url, 
+                a.is_compilation, a.created_at, a.updated_at,
+                ad.discogs_master_id, ad.discogs_release_id,
+                amb.musicbrainz_release_group_id, amb.musicbrainz_release_id
+            FROM albums a
+            LEFT JOIN album_discogs ad ON a.id = ad.album_id
+            LEFT JOIN album_musicbrainz amb ON a.id = amb.album_id
+            WHERE ad.discogs_master_id = ? OR ad.discogs_release_id = ?
+            LIMIT 1
+            "#
+        } else if master_id.is_some() {
+            r#"
+            SELECT 
+                a.id, a.title, a.year, a.bandcamp_album_id, a.cover_art_url, 
+                a.is_compilation, a.created_at, a.updated_at,
+                ad.discogs_master_id, ad.discogs_release_id,
+                amb.musicbrainz_release_group_id, amb.musicbrainz_release_id
+            FROM albums a
+            LEFT JOIN album_discogs ad ON a.id = ad.album_id
+            LEFT JOIN album_musicbrainz amb ON a.id = amb.album_id
+            WHERE ad.discogs_master_id = ?
+            LIMIT 1
+            "#
+        } else if release_id.is_some() {
+            r#"
+            SELECT 
+                a.id, a.title, a.year, a.bandcamp_album_id, a.cover_art_url, 
+                a.is_compilation, a.created_at, a.updated_at,
+                ad.discogs_master_id, ad.discogs_release_id,
+                amb.musicbrainz_release_group_id, amb.musicbrainz_release_id
+            FROM albums a
+            LEFT JOIN album_discogs ad ON a.id = ad.album_id
+            LEFT JOIN album_musicbrainz amb ON a.id = amb.album_id
+            WHERE ad.discogs_release_id = ?
+            LIMIT 1
+            "#
+        } else {
+            return Ok(None);
+        };
+
+        let row = if master_id.is_some() && release_id.is_some() {
+            sqlx::query(query)
+                .bind(master_id.unwrap())
+                .bind(release_id.unwrap())
+                .fetch_optional(&self.pool)
+                .await?
+        } else if master_id.is_some() {
+            sqlx::query(query)
+                .bind(master_id.unwrap())
+                .fetch_optional(&self.pool)
+                .await?
+        } else {
+            sqlx::query(query)
+                .bind(release_id.unwrap())
+                .fetch_optional(&self.pool)
+                .await?
+        };
+
+        Ok(row.map(|row| {
+            let discogs_master_id: Option<String> = row.get("discogs_master_id");
+            let discogs_release_id: Option<String> = row.get("discogs_release_id");
+            let discogs_release = match (discogs_master_id, discogs_release_id) {
+                (Some(mid), Some(rid)) => Some(crate::db::models::DiscogsMasterRelease {
+                    master_id: mid,
+                    release_id: rid,
+                }),
+                _ => None,
+            };
+
+            let mb_release_group_id: Option<String> = row.get("musicbrainz_release_group_id");
+            let mb_release_id: Option<String> = row.get("musicbrainz_release_id");
+            let musicbrainz_release = match (mb_release_group_id, mb_release_id) {
+                (Some(rgid), Some(rid)) => Some(crate::db::models::MusicBrainzRelease {
+                    release_group_id: rgid,
+                    release_id: rid,
+                }),
+                _ => None,
+            };
+
+            DbAlbum {
+                id: row.get("id"),
+                title: row.get("title"),
+                year: row.get("year"),
+                discogs_release,
+                musicbrainz_release,
+                bandcamp_album_id: row.get("bandcamp_album_id"),
+                cover_art_url: row.get("cover_art_url"),
+                is_compilation: row.get("is_compilation"),
+                created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
+                    .unwrap()
+                    .with_timezone(&Utc),
+                updated_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("updated_at"))
+                    .unwrap()
+                    .with_timezone(&Utc),
+            }
+        }))
+    }
+
+    /// Find album by MusicBrainz release_id or release_group_id
+    ///
+    /// Used for duplicate detection before import.
+    /// Returns the album if it exists with matching MusicBrainz IDs.
+    pub async fn find_album_by_mb_ids(
+        &self,
+        release_id: Option<&str>,
+        release_group_id: Option<&str>,
+    ) -> Result<Option<DbAlbum>, sqlx::Error> {
+        let query = if release_id.is_some() && release_group_id.is_some() {
+            r#"
+            SELECT 
+                a.id, a.title, a.year, a.bandcamp_album_id, a.cover_art_url, 
+                a.is_compilation, a.created_at, a.updated_at,
+                ad.discogs_master_id, ad.discogs_release_id,
+                amb.musicbrainz_release_group_id, amb.musicbrainz_release_id
+            FROM albums a
+            LEFT JOIN album_discogs ad ON a.id = ad.album_id
+            LEFT JOIN album_musicbrainz amb ON a.id = amb.album_id
+            WHERE amb.musicbrainz_release_id = ? OR amb.musicbrainz_release_group_id = ?
+            LIMIT 1
+            "#
+        } else if release_id.is_some() {
+            r#"
+            SELECT 
+                a.id, a.title, a.year, a.bandcamp_album_id, a.cover_art_url, 
+                a.is_compilation, a.created_at, a.updated_at,
+                ad.discogs_master_id, ad.discogs_release_id,
+                amb.musicbrainz_release_group_id, amb.musicbrainz_release_id
+            FROM albums a
+            LEFT JOIN album_discogs ad ON a.id = ad.album_id
+            LEFT JOIN album_musicbrainz amb ON a.id = amb.album_id
+            WHERE amb.musicbrainz_release_id = ?
+            LIMIT 1
+            "#
+        } else if release_group_id.is_some() {
+            r#"
+            SELECT 
+                a.id, a.title, a.year, a.bandcamp_album_id, a.cover_art_url, 
+                a.is_compilation, a.created_at, a.updated_at,
+                ad.discogs_master_id, ad.discogs_release_id,
+                amb.musicbrainz_release_group_id, amb.musicbrainz_release_id
+            FROM albums a
+            LEFT JOIN album_discogs ad ON a.id = ad.album_id
+            LEFT JOIN album_musicbrainz amb ON a.id = amb.album_id
+            WHERE amb.musicbrainz_release_group_id = ?
+            LIMIT 1
+            "#
+        } else {
+            return Ok(None);
+        };
+
+        let row = if release_id.is_some() && release_group_id.is_some() {
+            sqlx::query(query)
+                .bind(release_id.unwrap())
+                .bind(release_group_id.unwrap())
+                .fetch_optional(&self.pool)
+                .await?
+        } else if release_id.is_some() {
+            sqlx::query(query)
+                .bind(release_id.unwrap())
+                .fetch_optional(&self.pool)
+                .await?
+        } else {
+            sqlx::query(query)
+                .bind(release_group_id.unwrap())
+                .fetch_optional(&self.pool)
+                .await?
+        };
+
+        Ok(row.map(|row| {
+            let discogs_master_id: Option<String> = row.get("discogs_master_id");
+            let discogs_release_id: Option<String> = row.get("discogs_release_id");
+            let discogs_release = match (discogs_master_id, discogs_release_id) {
+                (Some(mid), Some(rid)) => Some(crate::db::models::DiscogsMasterRelease {
+                    master_id: mid,
+                    release_id: rid,
+                }),
+                _ => None,
+            };
+
+            let mb_release_group_id: Option<String> = row.get("musicbrainz_release_group_id");
+            let mb_release_id: Option<String> = row.get("musicbrainz_release_id");
+            let musicbrainz_release = match (mb_release_group_id, mb_release_id) {
+                (Some(rgid), Some(rid)) => Some(crate::db::models::MusicBrainzRelease {
+                    release_group_id: rgid,
+                    release_id: rid,
+                }),
+                _ => None,
+            };
+
+            DbAlbum {
+                id: row.get("id"),
+                title: row.get("title"),
+                year: row.get("year"),
+                discogs_release,
+                musicbrainz_release,
+                bandcamp_album_id: row.get("bandcamp_album_id"),
+                cover_art_url: row.get("cover_art_url"),
+                is_compilation: row.get("is_compilation"),
+                created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
+                    .unwrap()
+                    .with_timezone(&Utc),
+                updated_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("updated_at"))
+                    .unwrap()
+                    .with_timezone(&Utc),
+            }
+        }))
+    }
 }

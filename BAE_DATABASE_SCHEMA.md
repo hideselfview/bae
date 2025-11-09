@@ -21,6 +21,7 @@ erDiagram
     artists ||--o{ album_artists : "performs on"
     albums ||--o{ album_artists : "performed by"
     albums ||--|| album_discogs : "has discogs metadata"
+    albums ||--|| album_musicbrainz : "has musicbrainz metadata"
     artists ||--o{ track_artists : "performs on"
     tracks ||--o{ track_artists : "performed by"
 
@@ -40,6 +41,13 @@ erDiagram
         string album_id FK UK
         string discogs_master_id
         string discogs_release_id
+    }
+
+    album_musicbrainz {
+        string id PK
+        string album_id FK UK
+        string musicbrainz_release_group_id
+        string musicbrainz_release_id
     }
 
     releases {
@@ -155,20 +163,30 @@ This separation allows:
 
 ### Import Flow
 
+bae uses a folder-first import flow that prioritizes exact lookups (MusicBrainz DiscID) and falls back to manual search. See [BAE_IMPORT_WORKFLOW.md](BAE_IMPORT_WORKFLOW.md) for detailed import workflow.
+
 ```mermaid
 flowchart TD
-    A[User Selects Album] --> B{Master or Release?}
-    B -->|Master| C[Fetch Master - Get main_release]
-    B -->|Release| D[Use Release ID]
-    C --> D
-    D --> E[Create Album from Release]
-    E --> F[Create Release Record]
-    F --> G[Create Tracks from Tracklist]
-    G --> H[Import Audio Files]
-    H --> I[Chunk Files]
-    I --> J[Encrypt Chunks]
-    J --> K[Upload to Cloud]
-    K --> L[Create File/Chunk/Position Records]
+    A[User Selects Folder] --> B[Detect Metadata]
+    B --> C{MB DiscID Found?}
+    C -->|Yes| D[Exact MB Lookup]
+    C -->|No| E[Manual Search]
+    D --> F{Matches Found?}
+    F -->|Single| G[Auto-Confirm]
+    F -->|Multiple| H[User Selects]
+    F -->|None| E
+    E --> I[User Searches MB/Discogs]
+    I --> J[User Selects Release]
+    G --> K[Create Album from Release]
+    H --> K
+    J --> K
+    K --> L[Create Release Record]
+    L --> M[Create Tracks from Tracklist]
+    M --> N[Import Audio Files]
+    N --> O[Chunk Files]
+    O --> P[Encrypt Chunks]
+    P --> Q[Upload to Cloud]
+    Q --> R[Create File/Chunk/Position Records]
 ```
 
 ## Table Descriptions
@@ -180,6 +198,7 @@ Logical albums (the "master" concept). One album can have multiple releases.
 **Key Fields:**
 - `is_compilation`: True for "Various Artists" albums
 - Discogs metadata is stored in the `album_discogs` join table
+- MusicBrainz metadata is stored in the `album_musicbrainz` join table
 
 ### `album_discogs`
 
@@ -192,6 +211,17 @@ One-to-one relationship table storing Discogs metadata for albums. When an album
 **Key Fields:**
 - `discogs_master_id`: The Discogs master ID
 - `discogs_release_id`: The Discogs release ID (main_release when importing from a master)
+
+### `album_musicbrainz`
+
+One-to-one relationship table storing MusicBrainz metadata for albums. When an album is imported from MusicBrainz, both the release_group_id (abstract album) and release_id (specific version) are stored together.
+
+**Unique Constraints:**
+- `album_id` - one album can have one MusicBrainz record
+
+**Key Fields:**
+- `musicbrainz_release_group_id`: The MusicBrainz release group ID (abstract album, similar to Discogs master)
+- `musicbrainz_release_id`: The MusicBrainz release ID (specific version/pressing)
 
 ### `releases`
 
@@ -363,6 +393,7 @@ The schema is designed for future extensibility:
 | Table | Constraint | Purpose |
 |-------|-----------|---------|
 | `album_discogs` | `UNIQUE(album_id)` | One Discogs record per album |
+| `album_musicbrainz` | `UNIQUE(album_id)` | One MusicBrainz record per album |
 | `releases` | `UNIQUE(album_id, discogs_release_id)` | Prevent duplicate release imports |
 | `releases` | `UNIQUE(album_id, bandcamp_release_id)` | Prevent duplicate Bandcamp imports |
 | `album_artists` | `UNIQUE(album_id, artist_id)` | One artist appears once per album |

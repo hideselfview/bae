@@ -1,8 +1,10 @@
-use super::{folder_selector::FolderSelector, match_list::MatchList};
-use crate::import::{
-    rank_discogs_matches, rank_mb_matches, should_auto_select, FolderMetadata, ImportRequestParams,
+use super::{
+    folder_selector::FolderSelector, manual_search_panel::ManualSearchPanel, match_list::MatchList,
 };
+use crate::import::{ImportRequestParams, MatchCandidate, MatchSource};
 use crate::library::use_import_service;
+use crate::library::use_library_manager;
+use crate::musicbrainz::lookup_by_discid;
 use crate::ui::import_context::ImportContext;
 use crate::ui::Route;
 use dioxus::prelude::*;
@@ -13,209 +15,235 @@ use tracing::info;
 #[component]
 pub fn FolderDetectionPage() -> Element {
     let import_context = use_context::<Rc<ImportContext>>();
-    let mut folder_path = use_signal(String::new);
-    let mut detected_metadata = use_signal(|| None::<FolderMetadata>);
-    let mut match_candidates = use_signal(Vec::<crate::import::MatchCandidate>::new);
-    let mut selected_match_index = use_signal(|| None::<usize>);
-    let mut locked_in_candidate = use_signal(|| None::<crate::import::MatchCandidate>);
-    let mut is_detecting = use_signal(|| false);
-    let mut is_searching = use_signal(|| false);
-    let mut error_message = use_signal(|| None::<String>);
+    let library_manager = use_library_manager();
+    let import_service = use_import_service();
+    let navigator = use_navigator();
 
-    // Auto-select and lock-in if exactly 1 MB DiscID result
-    use_effect(move || {
-        let candidates_vec = match_candidates.read();
-        let metadata_opt = detected_metadata.read();
-
-        // Check if we have exactly 1 MB result from DiscID search
-        if let Some(meta) = metadata_opt.as_ref() {
-            if meta.mb_discid.is_some() && candidates_vec.len() == 1 {
-                if let Some(candidate) = candidates_vec.first() {
-                    // Check if it's a MusicBrainz result
-                    if matches!(candidate.source, crate::import::MatchSource::MusicBrainz(_)) {
-                        info!("Auto-locking in single MB DiscID result");
-                        locked_in_candidate.set(Some(candidate.clone()));
-                        return;
-                    }
-                }
-            }
-        }
-
-        // Otherwise, use normal auto-select logic for high confidence
-        if !candidates_vec.is_empty() {
-            if let Some(index) = should_auto_select(&candidates_vec) {
-                info!("Auto-selecting candidate at index {}", index);
-                // Don't auto-lock-in, just select
-            }
-        }
-    });
+    // Copy signals out of Rc (signals are Copy)
+    let folder_path = import_context.folder_path;
+    let detected_metadata = import_context.detected_metadata;
+    let import_phase = import_context.import_phase;
+    let exact_match_candidates = import_context.exact_match_candidates;
+    let selected_match_index = import_context.selected_match_index;
+    let confirmed_candidate = import_context.confirmed_candidate;
+    let is_detecting = import_context.is_detecting;
+    let is_looking_up = import_context.is_looking_up;
+    let import_error_message = import_context.import_error_message;
+    let duplicate_album_id = import_context.duplicate_album_id;
 
     let on_folder_select = {
-        let import_context_for_select = import_context.clone();
+        let import_context_for_detect = import_context.clone();
+
+        let mut folder_path = folder_path;
+        let mut detected_metadata = detected_metadata;
+        let mut exact_match_candidates = exact_match_candidates;
+        let mut selected_match_index = selected_match_index;
+        let mut confirmed_candidate = confirmed_candidate;
+        let mut import_error_message = import_error_message;
+        let mut duplicate_album_id = duplicate_album_id;
+        let mut import_phase = import_phase;
+        let mut is_detecting = is_detecting;
+
         move |path: String| {
-            let import_context = import_context_for_select.clone();
             folder_path.set(path.clone());
             detected_metadata.set(None);
-            match_candidates.set(Vec::new());
+            exact_match_candidates.set(Vec::new());
             selected_match_index.set(None);
-            locked_in_candidate.set(None);
-            error_message.set(None);
+            confirmed_candidate.set(None);
+            import_error_message.set(None);
+            duplicate_album_id.set(None);
+            import_phase.set(crate::ui::import_context::ImportPhase::MetadataDetection);
             is_detecting.set(true);
 
+            let import_context_for_detect = import_context_for_detect.clone();
+            let mut detected_metadata = import_context_for_detect.detected_metadata;
+            let mut is_detecting = import_context_for_detect.is_detecting;
+            let mut is_looking_up = import_context_for_detect.is_looking_up;
+            let mut import_phase = import_context_for_detect.import_phase;
+            let mut confirmed_candidate = import_context_for_detect.confirmed_candidate;
+            let mut exact_match_candidates = import_context_for_detect.exact_match_candidates;
+            let mut import_error_message = import_context_for_detect.import_error_message;
+
             spawn(async move {
-                // Step 1: Detect metadata
-                match import_context.detect_folder_metadata(path.clone()).await {
+                // Phase 2: Detect metadata
+                match import_context_for_detect
+                    .detect_folder_metadata(path.clone())
+                    .await
+                {
                     Ok(metadata) => {
                         detected_metadata.set(Some(metadata.clone()));
                         is_detecting.set(false);
 
-                        // Step 2: Search both Discogs and MusicBrainz in parallel
-                        is_searching.set(true);
+                        // Phase 3: Exact lookup if MB DiscID available
+                        if let Some(ref mb_discid) = metadata.mb_discid {
+                            is_looking_up.set(true);
+                            info!("🎵 Found MB DiscID: {}, performing exact lookup", mb_discid);
 
-                        let import_context = import_context.clone();
-                        spawn(async move {
-                            use tracing::{info, warn};
-
-                            // Search both sources in parallel
-                            info!("🔍 Starting parallel search: Discogs + MusicBrainz");
-                            let (discogs_result, mb_result) = tokio::join!(
-                                import_context.search_discogs_by_metadata(&metadata),
-                                import_context.search_musicbrainz_by_metadata(&metadata)
-                            );
-
-                            let mut all_candidates = Vec::new();
-                            let mut search_errors = Vec::new();
-
-                            // Process Discogs results
-                            match discogs_result {
-                                Ok(results) => {
-                                    info!("✓ Discogs returned {} result(s)", results.len());
-                                    let ranked = rank_discogs_matches(&metadata, results);
-                                    info!("✓ Ranked {} Discogs candidate(s)", ranked.len());
-                                    all_candidates.extend(ranked);
-                                }
-                                Err(e) => {
-                                    warn!("✗ Discogs search failed: {}", e);
-                                    search_errors.push(format!("Discogs: {}", e));
-                                    // Don't fail the whole import if Discogs fails
-                                }
-                            }
-
-                            // Process MusicBrainz results
-                            match mb_result {
-                                Ok(results) => {
-                                    info!("✓ MusicBrainz returned {} result(s)", results.len());
-                                    if results.is_empty() {
-                                        warn!("⚠ MusicBrainz search returned 0 results");
-                                        search_errors
-                                            .push("MusicBrainz: No results found".to_string());
+                            match lookup_by_discid(mb_discid).await {
+                                Ok((releases, _external_urls)) => {
+                                    if releases.is_empty() {
+                                        info!(
+                                            "No exact matches found, proceeding to manual search"
+                                        );
+                                        import_phase.set(
+                                            crate::ui::import_context::ImportPhase::ManualSearch,
+                                        );
+                                    } else if releases.len() == 1 {
+                                        // Single exact match - auto-proceed to confirmation
+                                        info!("✅ Single exact match found, auto-proceeding");
+                                        let mb_release = releases[0].clone();
+                                        let candidate = MatchCandidate {
+                                            source: MatchSource::MusicBrainz(mb_release),
+                                            confidence: 100.0,
+                                            match_reasons: vec!["Exact DiscID match".to_string()],
+                                        };
+                                        confirmed_candidate.set(Some(candidate));
+                                        import_phase.set(
+                                            crate::ui::import_context::ImportPhase::Confirmation,
+                                        );
                                     } else {
-                                        let ranked = rank_mb_matches(&metadata, results);
-                                        info!("✓ Ranked {} MusicBrainz candidate(s)", ranked.len());
-                                        all_candidates.extend(ranked);
+                                        // Multiple exact matches - show for selection
+                                        info!(
+                                            "Found {} exact matches, showing for selection",
+                                            releases.len()
+                                        );
+                                        let candidates: Vec<MatchCandidate> = releases
+                                            .into_iter()
+                                            .map(|mb_release| MatchCandidate {
+                                                source: MatchSource::MusicBrainz(mb_release),
+                                                confidence: 100.0,
+                                                match_reasons: vec![
+                                                    "Exact DiscID match".to_string()
+                                                ],
+                                            })
+                                            .collect();
+                                        exact_match_candidates.set(candidates);
+                                        import_phase.set(
+                                            crate::ui::import_context::ImportPhase::ExactLookup,
+                                        );
                                     }
+                                    is_looking_up.set(false);
                                 }
                                 Err(e) => {
-                                    warn!("✗ MusicBrainz search failed: {}", e);
-                                    search_errors.push(format!("MusicBrainz: {}", e));
-                                    // Don't fail the whole import if MusicBrainz fails
+                                    info!(
+                                        "MB DiscID lookup failed: {}, proceeding to manual search",
+                                        e
+                                    );
+                                    is_looking_up.set(false);
+                                    import_phase
+                                        .set(crate::ui::import_context::ImportPhase::ManualSearch);
                                 }
                             }
-
-                            // Sort all candidates by confidence (highest first)
-                            all_candidates.sort_by(|a, b| {
-                                b.confidence
-                                    .partial_cmp(&a.confidence)
-                                    .unwrap_or(std::cmp::Ordering::Equal)
-                            });
-
-                            // Filter out candidates with confidence < 90%
-                            all_candidates.retain(|c| c.confidence >= 90.0);
-
-                            info!(
-                                "📊 Total candidates after ranking and filtering (>=90%): {}",
-                                all_candidates.len()
-                            );
-
-                            // Set error message if we have errors but no candidates
-                            if all_candidates.is_empty() && !search_errors.is_empty() {
-                                let error_msg = format!(
-                                    "Search completed but no matches found. {}",
-                                    search_errors.join("; ")
-                                );
-                                warn!("{}", error_msg);
-                                error_message.set(Some(error_msg));
-                            } else if !search_errors.is_empty() {
-                                // Some searches failed but we have results
-                                let error_msg = format!(
-                                    "Some searches had issues: {}",
-                                    search_errors.join("; ")
-                                );
-                                warn!("{}", error_msg);
-                                error_message.set(Some(error_msg));
-                            }
-
-                            if all_candidates.is_empty() {
-                                warn!("⚠ No candidates found after processing all search results");
-                            } else {
-                                info!(
-                                    "✅ Setting {} candidate(s) for display",
-                                    all_candidates.len()
-                                );
-                            }
-
-                            match_candidates.set(all_candidates);
-                            is_searching.set(false);
-                            info!("✓ Search completed, is_searching set to false");
-                        });
+                        } else {
+                            // No MB DiscID, proceed to manual search
+                            info!("No MB DiscID found, proceeding to manual search");
+                            import_phase.set(crate::ui::import_context::ImportPhase::ManualSearch);
+                        }
                     }
                     Err(e) => {
-                        error_message.set(Some(e));
+                        import_error_message.set(Some(e));
                         is_detecting.set(false);
+                        import_phase.set(crate::ui::import_context::ImportPhase::FolderSelection);
                     }
                 }
             });
         }
     };
 
-    let on_match_select = move |index: usize| {
-        selected_match_index.set(Some(index));
-        // Lock in the selected candidate
-        if let Some(candidate) = match_candidates.read().get(index) {
-            locked_in_candidate.set(Some(candidate.clone()));
+    let on_exact_match_select = {
+        let mut selected_match_index = selected_match_index;
+        let mut confirmed_candidate = confirmed_candidate;
+        let mut import_phase = import_phase;
+        move |index: usize| {
+            selected_match_index.set(Some(index));
+            if let Some(candidate) = exact_match_candidates.read().get(index) {
+                confirmed_candidate.set(Some(candidate.clone()));
+                import_phase.set(crate::ui::import_context::ImportPhase::Confirmation);
+            }
         }
     };
 
-    let on_edit = move |_| {
-        locked_in_candidate.set(None);
-        selected_match_index.set(None);
+    let on_manual_match_select = {
+        let mut selected_match_index = selected_match_index;
+        move |index: usize| {
+            selected_match_index.set(Some(index));
+        }
     };
 
-    let on_confirm = move |_| {
-        if let Some(candidate) = locked_in_candidate.read().as_ref().cloned() {
+    let on_confirm_from_manual = {
+        let import_context_for_reset = import_context.clone();
+        let library_manager = library_manager.clone();
+        let import_service = import_service.clone();
+        move |candidate: MatchCandidate| {
             let folder = folder_path.read().clone();
             let metadata = detected_metadata.read().clone();
-            let import_service = use_import_service();
-            let navigator = use_navigator();
-            let import_context = import_context.clone();
+            let import_service = import_service.clone();
+            let mut duplicate_album_id = duplicate_album_id;
+            let mut import_error_message = import_error_message;
+            let import_context_for_reset = import_context_for_reset.clone();
+            let library_manager = library_manager.clone();
+
             spawn(async move {
+                // Check for duplicates before importing
+                match &candidate.source {
+                    MatchSource::Discogs(discogs_result) => {
+                        let master_id = discogs_result.master_id.map(|id| id.to_string());
+                        let release_id = Some(discogs_result.id.to_string());
+
+                        if let Ok(Some(duplicate)) = library_manager
+                            .get()
+                            .find_duplicate_by_discogs(master_id.as_deref(), release_id.as_deref())
+                            .await
+                        {
+                            duplicate_album_id.set(Some(duplicate.id));
+                            import_error_message.set(Some(format!(
+                                "This release already exists in your library: {}",
+                                duplicate.title
+                            )));
+                            return;
+                        }
+                    }
+                    MatchSource::MusicBrainz(mb_release) => {
+                        let release_id = Some(mb_release.release_id.clone());
+                        let release_group_id = Some(mb_release.release_group_id.clone());
+
+                        if let Ok(Some(duplicate)) = library_manager
+                            .get()
+                            .find_duplicate_by_musicbrainz(
+                                release_id.as_deref(),
+                                release_group_id.as_deref(),
+                            )
+                            .await
+                        {
+                            duplicate_album_id.set(Some(duplicate.id));
+                            import_error_message.set(Some(format!(
+                                "This release already exists in your library: {}",
+                                duplicate.title
+                            )));
+                            return;
+                        }
+                    }
+                }
+
                 // Extract master_year from metadata or release date
                 let master_year = metadata.as_ref().and_then(|m| m.year).unwrap_or(1970);
 
                 match candidate.source.clone() {
-                    crate::import::MatchSource::Discogs(discogs_result) => {
-                        // Fetch full Discogs release
+                    MatchSource::Discogs(discogs_result) => {
                         let master_id = match discogs_result.master_id {
                             Some(id) => id.to_string(),
                             None => {
-                                error_message
+                                import_error_message
                                     .set(Some("Discogs result has no master_id".to_string()));
                                 return;
                             }
                         };
                         let release_id = discogs_result.id.to_string();
 
-                        match import_context.import_release(release_id, master_id).await {
+                        match import_context_for_reset
+                            .import_release(release_id, master_id)
+                            .await
+                        {
                             Ok(discogs_release) => {
                                 info!(
                                     "Starting import for Discogs release: {}",
@@ -232,24 +260,26 @@ pub fn FolderDetectionPage() -> Element {
                                 match import_service.send_request(request).await {
                                     Ok((album_id, _release_id)) => {
                                         info!("Import started, navigating to album: {}", album_id);
+                                        // Reset import state before navigating
+                                        import_context_for_reset.reset();
                                         navigator.push(Route::AlbumDetail {
                                             album_id,
                                             release_id: String::new(),
                                         });
                                     }
                                     Err(e) => {
-                                        error_message
+                                        import_error_message
                                             .set(Some(format!("Failed to start import: {}", e)));
                                     }
                                 }
                             }
                             Err(e) => {
-                                error_message
+                                import_error_message
                                     .set(Some(format!("Failed to fetch Discogs release: {}", e)));
                             }
                         }
                     }
-                    crate::import::MatchSource::MusicBrainz(mb_release) => {
+                    MatchSource::MusicBrainz(mb_release) => {
                         info!(
                             "Starting import for MusicBrainz release: {}",
                             mb_release.title
@@ -265,18 +295,42 @@ pub fn FolderDetectionPage() -> Element {
                         match import_service.send_request(request).await {
                             Ok((album_id, _release_id)) => {
                                 info!("Import started, navigating to album: {}", album_id);
+                                // Reset import state before navigating
+                                import_context_for_reset.reset();
                                 navigator.push(Route::AlbumDetail {
                                     album_id,
                                     release_id: String::new(),
                                 });
                             }
                             Err(e) => {
-                                error_message.set(Some(format!("Failed to start import: {}", e)));
+                                import_error_message
+                                    .set(Some(format!("Failed to start import: {}", e)));
                             }
                         }
                     }
                 }
             });
+        }
+    };
+
+    let on_edit = {
+        let mut confirmed_candidate = confirmed_candidate;
+        let mut selected_match_index = selected_match_index;
+        let mut import_phase = import_phase;
+        move |_| {
+            confirmed_candidate.set(None);
+            selected_match_index.set(None);
+            if !exact_match_candidates.read().is_empty() {
+                import_phase.set(crate::ui::import_context::ImportPhase::ExactLookup);
+            } else {
+                import_phase.set(crate::ui::import_context::ImportPhase::ManualSearch);
+            }
+        }
+    };
+
+    let on_confirm = move |_| {
+        if let Some(candidate) = confirmed_candidate.read().as_ref().cloned() {
+            on_confirm_from_manual(candidate);
         }
     };
 
@@ -286,17 +340,22 @@ pub fn FolderDetectionPage() -> Element {
                 h1 { class: "text-2xl font-bold text-white", "Import" }
             }
 
-            if folder_path.read().is_empty() {
+            // Phase 1: Folder Selection
+            if *import_phase.read() == crate::ui::import_context::ImportPhase::FolderSelection {
                 div { class: "bg-white rounded-lg shadow p-6",
-                        FolderSelector {
+                    FolderSelector {
                         on_select: on_folder_select,
-                        on_error: move |e: String| {
-                            error_message.set(Some(e));
+                        on_error: {
+                            let mut import_error_message = import_error_message;
+                            move |e: String| {
+                                import_error_message.set(Some(e));
+                            }
                         }
                     }
                 }
             } else {
                 div { class: "space-y-6",
+                    // Show selected folder
                     div { class: "bg-white rounded-lg shadow p-6",
                         div { class: "mb-6 pb-4 border-b border-gray-200",
                             h3 { class: "text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2", "Selected Folder" }
@@ -310,77 +369,127 @@ pub fn FolderDetectionPage() -> Element {
                         }
                     }
 
-                    if *is_searching.read() {
-                        div { class: "bg-white rounded-lg shadow p-6 text-center",
-                            p { class: "text-gray-600", "Searching Discogs and MusicBrainz..." }
+                    // Phase 2: Metadata Detection (handled in on_folder_select)
+
+                    // Phase 3: Exact Lookup
+                    if *import_phase.read() == crate::ui::import_context::ImportPhase::ExactLookup {
+                        if *is_looking_up.read() {
+                            div { class: "bg-white rounded-lg shadow p-6 text-center",
+                                p { class: "text-gray-600", "Looking up release by DiscID..." }
+                            }
+                        } else if !exact_match_candidates.read().is_empty() {
+                            div { class: "bg-white rounded-lg shadow p-6",
+                                h3 { class: "text-lg font-semibold text-gray-900 mb-4", "Multiple Exact Matches Found" }
+                                p { class: "text-sm text-gray-600 mb-4", "Select the correct release:" }
+                                MatchList {
+                                    candidates: exact_match_candidates.read().clone(),
+                                    selected_index: selected_match_index.read().as_ref().copied(),
+                                    on_select: on_exact_match_select,
+                                }
+                            }
                         }
-                    } else if let Some(locked_candidate) = locked_in_candidate.read().as_ref() {
-                        // Locked-in confirmation view
-                        div { class: "space-y-4",
-                            div { class: "bg-blue-50 border-2 border-blue-500 rounded-lg p-6",
-                                div { class: "flex items-start justify-between mb-4",
-                                    div { class: "flex-1",
-                                        h3 { class: "text-lg font-semibold text-gray-900 mb-2",
-                                            "Selected Release"
-                                        }
-                                        div { class: "text-sm text-gray-600 space-y-1",
-                                            p { class: "text-lg font-medium text-gray-900", "{locked_candidate.title()}" }
-                                            if let Some(ref year) = locked_candidate.year() {
-                                                p { "Year: {year}" }
+                    }
+
+                    // Phase 4: Manual Search
+                    if *import_phase.read() == crate::ui::import_context::ImportPhase::ManualSearch {
+                        ManualSearchPanel {
+                            detected_metadata: detected_metadata,
+                            on_match_select: on_manual_match_select,
+                            on_confirm: {
+                                let mut confirmed_candidate = confirmed_candidate;
+                                let mut import_phase = import_phase;
+                                move |candidate: MatchCandidate| {
+                                    confirmed_candidate.set(Some(candidate.clone()));
+                                    import_phase.set(crate::ui::import_context::ImportPhase::Confirmation);
+                                }
+                            },
+                            selected_index: selected_match_index,
+                        }
+                    }
+
+                    // Phase 5: Confirmation
+                    if *import_phase.read() == crate::ui::import_context::ImportPhase::Confirmation {
+                        if let Some(candidate) = confirmed_candidate.read().as_ref() {
+                            div { class: "space-y-4",
+                                div { class: "bg-blue-50 border-2 border-blue-500 rounded-lg p-6",
+                                    div { class: "flex items-start justify-between mb-4",
+                                        div { class: "flex-1",
+                                            h3 { class: "text-lg font-semibold text-gray-900 mb-2",
+                                                "Selected Release"
                                             }
-                                            {
-                                                let (format_text, country_text, label_text) = match &locked_candidate.source {
-                                                    crate::import::MatchSource::MusicBrainz(release) => (
-                                                        release.format.as_ref().map(|f| format!("Format: {}", f)),
-                                                        release.country.as_ref().map(|c| format!("Country: {}", c)),
-                                                        release.label.as_ref().map(|l| format!("Label: {}", l)),
-                                                    ),
-                                                    crate::import::MatchSource::Discogs(_) => (None, None, None),
-                                                };
-                                                rsx! {
-                                                    if let Some(ref fmt) = format_text {
-                                                        p { "{fmt}" }
-                                                    }
-                                                    if let Some(ref country) = country_text {
-                                                        p { "{country}" }
-                                                    }
-                                                    if let Some(ref label) = label_text {
-                                                        p { "{label}" }
+                                            div { class: "text-sm text-gray-600 space-y-1",
+                                                p { class: "text-lg font-medium text-gray-900", "{candidate.title()}" }
+                                                if let Some(ref year) = candidate.year() {
+                                                    p { "Year: {year}" }
+                                                }
+                                                {
+                                                    let (format_text, country_text, label_text) = match &candidate.source {
+                                                        MatchSource::MusicBrainz(release) => (
+                                                            release.format.as_ref().map(|f| format!("Format: {}", f)),
+                                                            release.country.as_ref().map(|c| format!("Country: {}", c)),
+                                                            release.label.as_ref().map(|l| format!("Label: {}", l)),
+                                                        ),
+                                                        MatchSource::Discogs(_) => (None, None, None),
+                                                    };
+                                                    rsx! {
+                                                        if let Some(ref fmt) = format_text {
+                                                            p { "{fmt}" }
+                                                        }
+                                                        if let Some(ref country) = country_text {
+                                                            p { "{country}" }
+                                                        }
+                                                        if let Some(ref label) = label_text {
+                                                            p { "{label}" }
+                                                        }
                                                     }
                                                 }
                                             }
                                         }
                                     }
-                                    span { class: "text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded",
-                                        "{locked_candidate.source_name()}"
+                                }
+                                div { class: "flex justify-end gap-3",
+                                    button {
+                                        class: "px-6 py-2 bg-gray-600 text-white rounded hover:bg-gray-700",
+                                        onclick: on_edit,
+                                        "Edit"
+                                    }
+                                    button {
+                                        class: "px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700",
+                                        onclick: on_confirm,
+                                        "Import"
                                     }
                                 }
                             }
-                            div { class: "flex justify-end gap-3",
-                                button {
-                                    class: "px-6 py-2 bg-gray-600 text-white rounded hover:bg-gray-700",
-                                    onclick: on_edit,
-                                    "Edit"
-                                }
-                                button {
-                                    class: "px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700",
-                                    onclick: on_confirm,
-                                    "Import"
-                                }
-                            }
-                        }
-                    } else if !match_candidates.read().is_empty() {
-                        // Results view (incomplete state - no import button)
-                        MatchList {
-                            candidates: match_candidates.read().clone(),
-                            selected_index: selected_match_index.read().as_ref().copied(),
-                            on_select: on_match_select,
                         }
                     }
 
-                    if let Some(ref error) = error_message.read().as_ref() {
+                    // Error messages
+                    if let Some(ref error) = import_error_message.read().as_ref() {
                         div { class: "bg-red-50 border border-red-200 rounded-lg p-4",
                             p { class: "text-sm text-red-700", "Error: {error}" }
+                            {
+                                let dup_id_opt = duplicate_album_id.read().clone();
+                                if let Some(dup_id) = dup_id_opt {
+                                    let dup_id_clone = dup_id.clone();
+                                    rsx! {
+                                        div { class: "mt-2",
+                                            a {
+                                                href: "#",
+                                                class: "text-sm text-blue-600 hover:underline",
+                                                onclick: move |_| {
+                                                    navigator.push(Route::AlbumDetail {
+                                                        album_id: dup_id_clone.clone(),
+                                                        release_id: String::new(),
+                                                    });
+                                                },
+                                                "View existing album"
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    rsx! { div {} }
+                                }
+                            }
                         }
                     }
                 }

@@ -20,7 +20,18 @@ On first launch, configure S3 storage and Discogs API key. The system detects ex
 
 ### Import
 
-Search Discogs for your album, select the specific release (or master if you just know the album title), then point to your source folder. bae scans the folder, matches files to the Discogs tracklist, chunks and encrypts everything, then uploads to S3. The local SQLite database syncs to S3 after each import.
+bae uses a folder-first import flow that prioritizes exact lookups:
+
+1. **Select folder** - Point bae to a folder containing one release's audio files
+2. **Metadata detection** - bae extracts metadata from CUE files, audio tags, and folder names
+3. **Exact lookup** - If a MusicBrainz DiscID is found (from CUE files), bae performs an exact lookup:
+   - Single match → auto-proceeds to confirmation
+   - Multiple matches → user selects desired release
+   - No match → proceeds to manual search
+4. **Manual search** (if needed) - User chooses between MusicBrainz or Discogs search, selects release
+5. **Confirmation** - bae checks for duplicates, then starts import
+
+bae scans the folder, matches files to the tracklist, chunks and encrypts everything, then uploads to S3. The local SQLite database syncs to S3 after each import. See [BAE_IMPORT_WORKFLOW.md](BAE_IMPORT_WORKFLOW.md) for details.
 
 ### Streaming
 

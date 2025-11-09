@@ -1,12 +1,15 @@
 use crate::db::{DbAlbum, DbArtist, DbRelease, DbTrack};
 use crate::library::use_library_manager;
+use crate::AppContext;
 use dioxus::prelude::*;
+use rfd::AsyncFileDialog;
 use tracing::error;
 
 use super::super::use_playback_service;
 use super::album_art::AlbumArt;
 use super::track_row::TrackRow;
 use super::utils::get_album_track_ids;
+use super::ViewFilesModal;
 
 /// Album detail view component
 #[component]
@@ -22,6 +25,7 @@ pub fn AlbumDetailView(
 ) -> Element {
     let playback = use_playback_service();
     let library_manager = use_library_manager();
+    let app_context = use_context::<AppContext>();
     let mut show_delete_confirm = use_signal(|| false);
     let mut show_release_delete_confirm = use_signal(|| None::<String>);
     let mut is_deleting = use_signal(|| false);
@@ -29,6 +33,9 @@ pub fn AlbumDetailView(
     let mut show_release_dropdown = use_signal(|| None::<String>);
     let mut show_play_menu = use_signal(|| false);
     let mut hover_cover = use_signal(|| false);
+    let mut show_view_files_modal = use_signal(|| None::<String>);
+    let is_exporting = use_signal(|| false);
+    let mut export_error = use_signal(|| None::<String>);
 
     let artist_name = if artists.is_empty() {
         "Unknown Artist".to_string()
@@ -82,19 +89,107 @@ pub fn AlbumDetailView(
 
                                 // Dropdown menu
                                 if show_dropdown() {
-                                    div {
-                                        class: "absolute top-full right-0 mt-2 bg-gray-700 rounded-lg shadow-lg overflow-hidden z-20 border border-gray-600 min-w-[160px]",
-                                        button {
-                                            class: "w-full px-4 py-3 text-left text-red-400 hover:bg-gray-600 transition-colors flex items-center gap-2",
-                                            disabled: is_deleting(),
-                                            onclick: move |evt| {
-                                                evt.stop_propagation();
-                                                show_dropdown.set(false);
-                                                if !is_deleting() {
-                                                    show_delete_confirm.set(true);
+                                    {
+                                        let release_id_for_view_files = releases.first().map(|r| r.id.clone());
+                                        let release_id_for_export = releases.first().map(|r| r.id.clone());
+                                        rsx! {
+                                            div {
+                                                class: "absolute top-full right-0 mt-2 bg-gray-700 rounded-lg shadow-lg overflow-hidden z-20 border border-gray-600 min-w-[160px]",
+                                                // Show release actions if there's only one release
+                                                if releases.len() == 1 {
+                                                    if let Some(release_id) = release_id_for_view_files {
+                                                        button {
+                                                            class: "w-full px-4 py-3 text-left text-white hover:bg-gray-600 transition-colors flex items-center gap-2",
+                                                            disabled: is_deleting() || is_exporting(),
+                                                            onclick: move |evt| {
+                                                                evt.stop_propagation();
+                                                                show_dropdown.set(false);
+                                                                if !is_deleting() && !is_exporting() {
+                                                                    show_view_files_modal.set(Some(release_id.clone()));
+                                                                }
+                                                            },
+                                                            "View Files"
+                                                        }
+                                                    }
+                                                    if let Some(release_id) = release_id_for_export {
+                                                        button {
+                                                            class: "w-full px-4 py-3 text-left text-white hover:bg-gray-600 transition-colors flex items-center gap-2",
+                                                            disabled: is_deleting() || is_exporting(),
+                                                            onclick: {
+                                                                let release_id_for_export_clone = release_id.clone();
+                                                                let library_manager_clone = library_manager.clone();
+                                                                let cloud_storage_clone = app_context.cloud_storage.clone();
+                                                                let cache_clone = app_context.cache.clone();
+                                                                let encryption_service_clone = app_context.encryption_service.clone();
+                                                                let chunk_size_bytes = app_context.config.chunk_size_bytes;
+                                                                let mut is_exporting_clone = is_exporting;
+                                                                let mut export_error_clone = export_error;
+                                                                move |evt| {
+                                                                    evt.stop_propagation();
+                                                                    show_dropdown.set(false);
+                                                                    if !is_deleting() && !is_exporting() {
+                                                                        let release_id = release_id_for_export_clone.clone();
+                                                                        let library_manager_clone = library_manager_clone.clone();
+                                                                        let cloud_storage_clone = cloud_storage_clone.clone();
+                                                                        let cache_clone = cache_clone.clone();
+                                                                        let encryption_service_clone = encryption_service_clone.clone();
+                                                                        let chunk_size_bytes = chunk_size_bytes;
+                                                                        spawn(async move {
+                                                                            is_exporting_clone.set(true);
+                                                                            export_error_clone.set(None);
+
+                                                                            if let Some(folder_handle) = AsyncFileDialog::new()
+                                                                                .set_title("Select Export Directory")
+                                                                                .pick_folder()
+                                                                                .await
+                                                                            {
+                                                                                let target_dir = folder_handle.path().to_path_buf();
+
+                                                                                match library_manager_clone.get().export_release(
+                                                                                    &release_id,
+                                                                                    &target_dir,
+                                                                                    &cloud_storage_clone,
+                                                                                    &cache_clone,
+                                                                                    &encryption_service_clone,
+                                                                                    chunk_size_bytes,
+                                                                                ).await {
+                                                                                    Ok(_) => {
+                                                                                        is_exporting_clone.set(false);
+                                                                                    }
+                                                                                    Err(e) => {
+                                                                                        error!("Failed to export release: {}", e);
+                                                                                        export_error_clone.set(Some(format!("Export failed: {}", e)));
+                                                                                        is_exporting_clone.set(false);
+                                                                                    }
+                                                                                }
+                                                                            } else {
+                                                                                is_exporting_clone.set(false);
+                                                                            }
+                                                                        });
+                                                                    }
+                                                                }
+                                                            },
+                                                            if is_exporting() {
+                                                                "Exporting..."
+                                                            } else {
+                                                                "Export"
+                                                            }
+                                                        }
+                                                    }
                                                 }
-                                            },
-                                            "Delete Album"
+                                                button {
+                                                    class: "w-full px-4 py-3 text-left text-red-400 hover:bg-gray-600 transition-colors flex items-center gap-2",
+                                                    disabled: is_deleting(),
+                                                    onclick: move |evt| {
+                                                        evt.stop_propagation();
+                                                        show_dropdown.set(false);
+                                                        if !is_deleting() {
+                                                            show_delete_confirm.set(true);
+                                                        }
+                                                    },
+                                                    "Delete Album"
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -299,7 +394,7 @@ pub fn AlbumDetailView(
             div { class: "lg:col-span-2",
                 div { class: "bg-gray-800 rounded-lg p-6",
 
-                    // Release tabs (if multiple releases exist)
+                    // Release tabs and menu (show menu even for single release)
                     if releases.len() > 1 {
                         div { class: "mb-6 border-b border-gray-700",
                             div { class: "flex gap-2 overflow-x-auto",
@@ -352,16 +447,93 @@ pub fn AlbumDetailView(
                                                             if show_release_dropdown().as_ref() == Some(&release_id_for_dropdown) {
                                                                 {
                                                                     let release_id_for_delete_action = release_id_for_delete.clone();
+                                                                    let release_id_for_export = release_id_for_delete.clone();
+                                                                    let release_id_for_view_files = release_id_for_delete.clone();
                                                                     rsx! {
                                                                         div {
                                                                             class: "absolute right-0 top-full mt-1 bg-gray-700 rounded-lg shadow-lg overflow-hidden z-10 border border-gray-600 min-w-[160px]",
                                                                             button {
-                                                                                class: "w-full px-4 py-2 text-left text-red-400 hover:bg-gray-600 transition-colors flex items-center gap-2 text-sm",
-                                                                                disabled: is_deleting(),
+                                                                                class: "w-full px-4 py-2 text-left text-white hover:bg-gray-600 transition-colors flex items-center gap-2 text-sm",
+                                                                                disabled: is_deleting() || is_exporting(),
                                                                                 onclick: move |evt| {
                                                                                     evt.stop_propagation();
                                                                                     show_release_dropdown.set(None);
-                                                                                    if !is_deleting() {
+                                                                                    if !is_deleting() && !is_exporting() {
+                                                                                        show_view_files_modal.set(Some(release_id_for_view_files.clone()));
+                                                                                    }
+                                                                                },
+                                                                                "View Files"
+                                                                            }
+                                                                            button {
+                                                                                class: "w-full px-4 py-2 text-left text-white hover:bg-gray-600 transition-colors flex items-center gap-2 text-sm",
+                                                                                disabled: is_deleting() || is_exporting(),
+                                                                                onclick: {
+                                                                                    let release_id_for_export_clone = release_id_for_export.clone();
+                                                                                    let library_manager_clone = library_manager.clone();
+                                                                                    let cloud_storage_clone = app_context.cloud_storage.clone();
+                                                                                    let cache_clone = app_context.cache.clone();
+                                                                                    let encryption_service_clone = app_context.encryption_service.clone();
+                                                                                    let chunk_size_bytes = app_context.config.chunk_size_bytes;
+                                                                                    let mut is_exporting_clone = is_exporting;
+                                                                                    let mut export_error_clone = export_error;
+                                                                                    move |evt| {
+                                                                                        evt.stop_propagation();
+                                                                                        show_release_dropdown.set(None);
+                                                                                        if !is_deleting() && !is_exporting() {
+                                                                                            let release_id = release_id_for_export_clone.clone();
+                                                                                            let library_manager_clone = library_manager_clone.clone();
+                                                                                            let cloud_storage_clone = cloud_storage_clone.clone();
+                                                                                            let cache_clone = cache_clone.clone();
+                                                                                            let encryption_service_clone = encryption_service_clone.clone();
+                                                                                            let chunk_size_bytes = chunk_size_bytes;
+                                                                                            spawn(async move {
+                                                                                                is_exporting_clone.set(true);
+                                                                                                export_error_clone.set(None);
+
+                                                                                                if let Some(folder_handle) = AsyncFileDialog::new()
+                                                                                                    .set_title("Select Export Directory")
+                                                                                                    .pick_folder()
+                                                                                                    .await
+                                                                                                {
+                                                                                                    let target_dir = folder_handle.path().to_path_buf();
+
+                                                                                                    match library_manager_clone.get().export_release(
+                                                                                                        &release_id,
+                                                                                                        &target_dir,
+                                                                                                        &cloud_storage_clone,
+                                                                                                        &cache_clone,
+                                                                                                        &encryption_service_clone,
+                                                                                                        chunk_size_bytes,
+                                                                                                    ).await {
+                                                                                                        Ok(_) => {
+                                                                                                            is_exporting_clone.set(false);
+                                                                                                        }
+                                                                                                        Err(e) => {
+                                                                                                            error!("Failed to export release: {}", e);
+                                                                                                            export_error_clone.set(Some(format!("Export failed: {}", e)));
+                                                                                                            is_exporting_clone.set(false);
+                                                                                                        }
+                                                                                                    }
+                                                                                                } else {
+                                                                                                    is_exporting_clone.set(false);
+                                                                                                }
+                                                                                            });
+                                                                                        }
+                                                                                    }
+                                                                                },
+                                                                                if is_exporting() {
+                                                                                    "Exporting..."
+                                                                                } else {
+                                                                                    "Export"
+                                                                                }
+                                                                            }
+                                                                            button {
+                                                                                class: "w-full px-4 py-2 text-left text-red-400 hover:bg-gray-600 transition-colors flex items-center gap-2 text-sm",
+                                                                                disabled: is_deleting() || is_exporting(),
+                                                                                onclick: move |evt| {
+                                                                                    evt.stop_propagation();
+                                                                                    show_release_dropdown.set(None);
+                                                                                    if !is_deleting() && !is_exporting() {
                                                                                         show_release_delete_confirm.set(Some(release_id_for_delete_action.clone()));
                                                                                     }
                                                                                 },
@@ -380,80 +552,82 @@ pub fn AlbumDetailView(
                                 }
                             }
                         }
+                    }
 
-                        // Release delete confirmation dialog
-                        if let Some(release_id_to_delete) = show_release_delete_confirm() {
-                            if releases.iter().any(|r| r.id == release_id_to_delete) {
+                    h2 { class: "text-xl font-bold text-white mb-4", "Tracklist" }
+
+                    // Release delete confirmation dialog
+                    if let Some(release_id_to_delete) = show_release_delete_confirm() {
+                        if releases.iter().any(|r| r.id == release_id_to_delete) {
+                            div {
+                                class: "fixed inset-0 bg-black/50 flex items-center justify-center z-50",
+                                onclick: move |_| {
+                                    if !is_deleting() {
+                                        show_release_delete_confirm.set(None);
+                                    }
+                                },
                                 div {
-                                    class: "fixed inset-0 bg-black/50 flex items-center justify-center z-50",
-                                    onclick: move |_| {
-                                        if !is_deleting() {
-                                            show_release_delete_confirm.set(None);
+                                    class: "bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4",
+                                    onclick: move |evt| evt.stop_propagation(),
+                                    h2 { class: "text-xl font-bold text-white mb-4", "Delete Release?" }
+                                    p { class: "text-gray-300 mb-6",
+                                        "Are you sure you want to delete this release? This will delete all tracks and associated data for this release."
+                                        if releases.len() == 1 {
+                                            " Since this is the only release, the album will also be deleted."
+                                        } else {
+                                            ""
                                         }
-                                    },
-                                    div {
-                                        class: "bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4",
-                                        onclick: move |evt| evt.stop_propagation(),
-                                        h2 { class: "text-xl font-bold text-white mb-4", "Delete Release?" }
-                                        p { class: "text-gray-300 mb-6",
-                                            "Are you sure you want to delete this release? This will delete all tracks and associated data for this release."
-                                            if releases.len() == 1 {
-                                                " Since this is the only release, the album will also be deleted."
-                                            } else {
-                                                ""
-                                            }
+                                    }
+                                    div { class: "flex gap-3 justify-end",
+                                        button {
+                                            class: "px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg",
+                                            disabled: is_deleting(),
+                                            onclick: move |_| {
+                                                if !is_deleting() {
+                                                    show_release_delete_confirm.set(None);
+                                                }
+                                            },
+                                            "Cancel"
                                         }
-                                        div { class: "flex gap-3 justify-end",
-                                            button {
-                                                class: "px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg",
-                                                disabled: is_deleting(),
-                                                onclick: move |_| {
-                                                    if !is_deleting() {
-                                                        show_release_delete_confirm.set(None);
+                                        button {
+                                            class: "px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg",
+                                            disabled: is_deleting(),
+                                            onclick: {
+                                                let release_id = release_id_to_delete.clone();
+                                                let library_manager = library_manager.clone();
+                                                let releases_count = releases.len();
+                                                move |_| {
+                                                    if is_deleting() {
+                                                        return;
                                                     }
-                                                },
-                                                "Cancel"
-                                            }
-                                            button {
-                                                class: "px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg",
-                                                disabled: is_deleting(),
-                                                onclick: {
-                                                    let release_id = release_id_to_delete.clone();
+                                                    is_deleting.set(true);
+                                                    let release_id = release_id.clone();
                                                     let library_manager = library_manager.clone();
-                                                    let releases_count = releases.len();
-                                                    move |_| {
-                                                        if is_deleting() {
-                                                            return;
-                                                        }
-                                                        is_deleting.set(true);
-                                                        let release_id = release_id.clone();
-                                                        let library_manager = library_manager.clone();
-                                                        spawn(async move {
-                                                            match library_manager.get().delete_release(&release_id).await {
-                                                                Ok(_) => {
-                                                                    show_release_delete_confirm.set(None);
-                                                                    is_deleting.set(false);
-                                                                    // If this was the last release, album was deleted too
-                                                                    if releases_count == 1 {
-                                                                        on_album_deleted.call(());
-                                                                    } else {
-                                                                        // Refresh the page to show updated releases
-                                                                        on_album_deleted.call(());
-                                                                    }
-                                                                }
-                                                                Err(e) => {
-                                                                    error!("Failed to delete release: {}", e);
-                                                                    is_deleting.set(false);
+                                                    spawn(async move {
+                                                        match library_manager.get().delete_release(&release_id).await {
+                                                            Ok(_) => {
+                                                                show_release_delete_confirm.set(None);
+                                                                is_deleting.set(false);
+                                                                // If this was the last release, album was deleted too
+                                                                if releases_count == 1 {
+                                                                    on_album_deleted.call(());
+                                                                } else {
+                                                                    // Refresh the page to show updated releases
+                                                                    on_album_deleted.call(());
                                                                 }
                                                             }
-                                                        });
-                                                    }
-                                                },
-                                                if is_deleting() {
-                                                    "Deleting..."
-                                                } else {
-                                                    "Delete"
+                                                            Err(e) => {
+                                                                error!("Failed to delete release: {}", e);
+                                                                is_deleting.set(false);
+                                                            }
+                                                        }
+                                                    });
                                                 }
+                                            },
+                                            if is_deleting() {
+                                                "Deleting..."
+                                            } else {
+                                                "Delete"
                                             }
                                         }
                                     }
@@ -461,8 +635,6 @@ pub fn AlbumDetailView(
                             }
                         }
                     }
-
-                    h2 { class: "text-xl font-bold text-white mb-4", "Tracklist" }
 
                     if tracks.is_empty() {
                         div { class: "text-center py-8 text-gray-400",
@@ -477,6 +649,32 @@ pub fn AlbumDetailView(
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        // View Files Modal
+        if let Some(release_id) = show_view_files_modal() {
+            ViewFilesModal {
+                release_id: release_id.clone(),
+                on_close: move |_| {
+                    show_view_files_modal.set(None);
+                },
+            }
+        }
+
+        // Export Error Display
+        if let Some(ref error) = export_error() {
+            div {
+                class: "fixed bottom-4 right-4 bg-red-600 text-white px-6 py-4 rounded-lg shadow-lg z-50 max-w-md",
+                div {
+                    class: "flex items-center justify-between gap-4",
+                    span { {error.clone()} }
+                    button {
+                        class: "text-white hover:text-gray-200",
+                        onclick: move |_| export_error.set(None),
+                        "✕"
                     }
                 }
             }

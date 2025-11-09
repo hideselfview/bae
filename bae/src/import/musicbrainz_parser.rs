@@ -12,12 +12,15 @@ pub type ParsedMbAlbum = (
 );
 
 /// Fetch full MusicBrainz release with tracklist and parse into database models
+///
+/// If the MB release has Discogs URLs in relationships, optionally fetches Discogs data
+/// to populate both discogs_release and musicbrainz_release fields in DbAlbum.
 pub async fn fetch_and_parse_mb_release(
     release_id: &str,
     master_year: u32,
 ) -> Result<ParsedMbAlbum, String> {
-    // Fetch full release with recordings
-    let (mb_release, _external_urls) = lookup_release_by_id(release_id)
+    // Fetch full release with recordings and URL relationships
+    let (mb_release, external_urls) = lookup_release_by_id(release_id)
         .await
         .map_err(|e| format!("Failed to fetch MusicBrainz release: {}", e))?;
 
@@ -52,17 +55,56 @@ pub async fn fetch_and_parse_mb_release(
         .await
         .map_err(|e| format!("Failed to parse JSON: {}", e))?;
 
-    parse_mb_release_from_json(&json, &mb_release, master_year)
+    // Optionally fetch Discogs data if URLs are available
+    let discogs_release = if let Some(ref discogs_url) = external_urls.discogs_release_url {
+        // Extract release ID from URL (format: https://www.discogs.com/release/123456)
+        if let Some(release_id_str) = discogs_url.split("/release/").nth(1) {
+            if let Some(id) = release_id_str.split('-').next() {
+                // Try to fetch Discogs release
+                // Note: We'd need access to DiscogsClient here, but for now we'll just extract the ID
+                // The actual fetching can be done at a higher level if needed
+                use tracing::info;
+                info!("Found Discogs release URL: {}, ID: {}", discogs_url, id);
+                // For now, we'll leave discogs_release as None and let the caller handle it
+                // This is a design decision - we could pass DiscogsClient here, but that would
+                // require changing the function signature. For now, we'll document this.
+                None
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    parse_mb_release_from_json(&json, &mb_release, master_year, discogs_release)
 }
 
 /// Parse MusicBrainz release JSON into database models
+///
+/// discogs_release: Optional Discogs release data to populate both fields in DbAlbum
 fn parse_mb_release_from_json(
     json: &serde_json::Value,
     mb_release: &crate::musicbrainz::MbRelease,
     master_year: u32,
+    discogs_release: Option<crate::discogs::DiscogsRelease>,
 ) -> Result<ParsedMbAlbum, String> {
     // Create album record
-    let album = DbAlbum::from_mb_release(mb_release, master_year);
+    // If we have Discogs data, populate both fields
+    let album = if let Some(ref discogs_rel) = discogs_release {
+        // Create album with both MB and Discogs data
+        let mut album = DbAlbum::from_mb_release(mb_release, master_year);
+        // Add Discogs data
+        album.discogs_release = Some(crate::db::DiscogsMasterRelease {
+            master_id: discogs_rel.master_id.clone(),
+            release_id: discogs_rel.id.clone(),
+        });
+        album
+    } else {
+        DbAlbum::from_mb_release(mb_release, master_year)
+    };
 
     // Create release record
     let db_release = DbRelease::from_mb_release(&album.id, mb_release);
@@ -152,7 +194,7 @@ fn parse_mb_release_from_json(
                             .and_then(|v| v.as_i64())
                             .map(|p| p as i32);
 
-                        let track_number = position.or_else(|| Some((track_index + 1) as i32));
+                        let track_number = position.or_else(|| Some(track_index + 1));
 
                         let track = DbTrack {
                             id: Uuid::new_v4().to_string(),

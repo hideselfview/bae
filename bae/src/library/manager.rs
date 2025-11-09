@@ -1,8 +1,12 @@
+use crate::cache::CacheManager;
 use crate::cloud_storage::{CloudStorageError, CloudStorageManager};
 use crate::db::{
     Database, DbAlbum, DbAlbumArtist, DbArtist, DbAudioFormat, DbChunk, DbFile, DbRelease, DbTrack,
     DbTrackArtist, DbTrackChunkCoords, ImportStatus,
 };
+use crate::encryption::EncryptionService;
+use crate::library::export::ExportService;
+use std::path::Path;
 use thiserror::Error;
 use tracing::warn;
 
@@ -376,6 +380,88 @@ impl LibraryManager {
         self.database.delete_album(album_id).await?;
 
         Ok(())
+    }
+
+    /// Export all files for a release to a directory
+    ///
+    /// Reconstructs files sequentially from chunks in the order they were imported.
+    /// Files are written with their original filenames to the target directory.
+    pub async fn export_release(
+        &self,
+        release_id: &str,
+        target_dir: &Path,
+        cloud_storage: &CloudStorageManager,
+        cache: &CacheManager,
+        encryption_service: &EncryptionService,
+        chunk_size_bytes: usize,
+    ) -> Result<(), LibraryError> {
+        ExportService::export_release(
+            release_id,
+            target_dir,
+            self,
+            cloud_storage,
+            cache,
+            encryption_service,
+            chunk_size_bytes,
+        )
+        .await
+        .map_err(LibraryError::Import)
+    }
+
+    /// Export a single track as a FLAC file
+    ///
+    /// For one-file-per-track: extracts the original file.
+    /// For CUE/FLAC: extracts and re-encodes as a standalone FLAC.
+    pub async fn export_track(
+        &self,
+        track_id: &str,
+        output_path: &Path,
+        cloud_storage: &CloudStorageManager,
+        cache: &CacheManager,
+        encryption_service: &EncryptionService,
+        chunk_size_bytes: usize,
+    ) -> Result<(), LibraryError> {
+        ExportService::export_track(
+            track_id,
+            output_path,
+            self,
+            cloud_storage,
+            cache,
+            encryption_service,
+            chunk_size_bytes,
+        )
+        .await
+        .map_err(LibraryError::Import)
+    }
+
+    /// Check if an album already exists by Discogs IDs
+    ///
+    /// Used for duplicate detection before import.
+    /// Returns the existing album if found, None otherwise.
+    pub async fn find_duplicate_by_discogs(
+        &self,
+        master_id: Option<&str>,
+        release_id: Option<&str>,
+    ) -> Result<Option<DbAlbum>, LibraryError> {
+        Ok(self
+            .database
+            .find_album_by_discogs_ids(master_id, release_id)
+            .await?)
+    }
+
+    /// Check if an album already exists by MusicBrainz IDs
+    ///
+    /// Used for duplicate detection before import.
+    /// Returns the existing album if found, None otherwise.
+    pub async fn find_duplicate_by_musicbrainz(
+        &self,
+        release_id: Option<&str>,
+        release_group_id: Option<&str>,
+    ) -> Result<Option<DbAlbum>, LibraryError> {
+        Ok(self
+            .database
+            .find_album_by_mb_ids(release_id, release_group_id)
+            .await?)
     }
 }
 

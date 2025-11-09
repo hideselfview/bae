@@ -3,15 +3,22 @@ use crate::discogs::client::DiscogsSearchResult;
 use crate::discogs::{DiscogsClient, DiscogsRelease};
 use crate::import::{detect_metadata, FolderMetadata, MatchCandidate};
 use crate::musicbrainz::{lookup_by_discid, search_releases, MbRelease};
-use dioxus::core::Task;
 use dioxus::prelude::*;
-use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ImportStep {
     FolderIdentification,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ImportPhase {
+    FolderSelection,
+    MetadataDetection,
+    ExactLookup,
+    ManualSearch,
+    Confirmation,
 }
 
 pub struct ImportContext {
@@ -25,18 +32,21 @@ pub struct ImportContext {
     pub mb_search_results: Signal<Vec<MbRelease>>,
     pub is_searching_mb: Signal<bool>,
     pub mb_error_message: Signal<Option<String>>,
-    search_task: Rc<RefCell<Option<Task>>>,
+    // Folder detection import state (persists across navigation)
+    pub folder_path: Signal<String>,
+    pub detected_metadata: Signal<Option<FolderMetadata>>,
+    pub import_phase: Signal<ImportPhase>,
+    pub exact_match_candidates: Signal<Vec<MatchCandidate>>,
+    pub selected_match_index: Signal<Option<usize>>,
+    pub confirmed_candidate: Signal<Option<MatchCandidate>>,
+    pub is_detecting: Signal<bool>,
+    pub is_looking_up: Signal<bool>,
+    pub import_error_message: Signal<Option<String>>,
+    pub duplicate_album_id: Signal<Option<String>>,
     client: DiscogsClient,
 }
 
 impl ImportContext {
-    pub fn current_step(&self) -> ImportStep {
-        self.navigation_stack
-            .read()
-            .last()
-            .cloned()
-            .unwrap_or(ImportStep::FolderIdentification)
-    }
     pub fn new(config: &crate::config::Config) -> Self {
         use dioxus::prelude::*;
         Self {
@@ -49,60 +59,19 @@ impl ImportContext {
             mb_search_results: Signal::new(Vec::new()),
             is_searching_mb: Signal::new(false),
             mb_error_message: Signal::new(None),
-            search_task: Rc::new(RefCell::new(None)),
+            // Folder detection import state
+            folder_path: Signal::new(String::new()),
+            detected_metadata: Signal::new(None),
+            import_phase: Signal::new(ImportPhase::FolderSelection),
+            exact_match_candidates: Signal::new(Vec::new()),
+            selected_match_index: Signal::new(None),
+            confirmed_candidate: Signal::new(None),
+            is_detecting: Signal::new(false),
+            is_looking_up: Signal::new(false),
+            import_error_message: Signal::new(None),
+            duplicate_album_id: Signal::new(None),
             client: DiscogsClient::new(config.discogs_api_key.clone()),
         }
-    }
-
-    pub fn search_albums(&self, query: String) {
-        let mut search_results = self.search_results;
-
-        if query.trim().is_empty() {
-            search_results.set(Vec::new());
-            return;
-        }
-
-        // Cancel previous search if still running
-        if let Some(old_task) = self.search_task.borrow_mut().take() {
-            old_task.cancel();
-        }
-
-        // Copy signals to avoid borrowing conflicts (Signal implements Copy)
-        let mut is_searching = self.is_searching_masters;
-        let mut error_message = self.error_message;
-
-        is_searching.set(true);
-        error_message.set(None);
-
-        let client = self.client.clone();
-
-        let task = spawn(async move {
-            match client.search_masters(&query, "").await {
-                Ok(results) => {
-                    search_results.set(results);
-                }
-                Err(e) => {
-                    error_message.set(Some(format!("Search failed: {}", e)));
-                }
-            }
-
-            is_searching.set(false);
-        });
-
-        // Store the new task
-        *self.search_task.borrow_mut() = Some(task);
-    }
-
-    pub fn navigate_back(&self) {
-        let mut navigation_stack = self.navigation_stack;
-        let mut stack = navigation_stack.write();
-        if stack.len() > 1 {
-            stack.pop();
-        }
-    }
-
-    pub fn client(&self) -> DiscogsClient {
-        self.client.clone()
     }
 
     pub fn reset(&self) {
@@ -125,6 +94,29 @@ impl ImportContext {
         is_searching_mb.set(false);
         mb_error_message.set(None);
         navigation_stack.set(vec![ImportStep::FolderIdentification]);
+
+        // Also reset folder detection import state
+        let mut folder_path = self.folder_path;
+        let mut detected_metadata = self.detected_metadata;
+        let mut import_phase = self.import_phase;
+        let mut exact_match_candidates = self.exact_match_candidates;
+        let mut selected_match_index = self.selected_match_index;
+        let mut confirmed_candidate = self.confirmed_candidate;
+        let mut is_detecting = self.is_detecting;
+        let mut is_looking_up = self.is_looking_up;
+        let mut import_error_message = self.import_error_message;
+        let mut duplicate_album_id = self.duplicate_album_id;
+
+        folder_path.set(String::new());
+        detected_metadata.set(None);
+        import_phase.set(ImportPhase::FolderSelection);
+        exact_match_candidates.set(Vec::new());
+        selected_match_index.set(None);
+        confirmed_candidate.set(None);
+        is_detecting.set(false);
+        is_looking_up.set(false);
+        import_error_message.set(None);
+        duplicate_album_id.set(None);
     }
 
     pub async fn detect_folder_metadata(

@@ -1,12 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-/// Sort order for release date
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum SortOrder {
-    Ascending,
-    Descending,
-}
-
 /// Artist credit from Discogs
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DiscogsArtist {
@@ -74,11 +67,4 @@ pub struct PaginationInfo {
     pub pages: u32,
     pub per_page: u32,
     pub items: u32,
-}
-
-/// Result of fetching master release versions with pagination
-#[derive(Debug, Clone, PartialEq)]
-pub struct MasterVersionsResult {
-    pub versions: Vec<DiscogsMasterReleaseVersion>,
-    pub pagination: PaginationInfo,
 }

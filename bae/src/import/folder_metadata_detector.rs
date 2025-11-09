@@ -45,7 +45,7 @@ fn extract_year_from_cue(content: &str) -> Option<u32> {
             // Try to parse year (could be "2000" or "2000 / 2004")
             if let Some(year_str) = date_str.split('/').next() {
                 if let Ok(year) = year_str.trim().parse::<u32>() {
-                    if year >= 1900 && year <= 2100 {
+                    if (1900..=2100).contains(&year) {
                         return Some(year);
                     }
                 }
@@ -164,7 +164,7 @@ pub fn calculate_mb_discid_from_cue(
     let cue_content = fs::read_to_string(cue_path)?;
 
     // Extract track offsets
-    let mut track_offsets = extract_track_offsets_from_cue(&cue_content)?;
+    let track_offsets = extract_track_offsets_from_cue(&cue_content)?;
     info!("📊 Found {} track(s) in CUE file", track_offsets.len());
 
     // Get FLAC duration
@@ -205,10 +205,10 @@ pub fn calculate_mb_discid_from_cue(
     // - offsets[0] = lead-out (total sectors)
     // - offsets[1..] = track offsets
     let disc = discid::DiscId::put(first_track, &offsets).map_err(|e| {
-        MetadataDetectionError::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("Failed to calculate DiscID: {}", e),
-        ))
+        MetadataDetectionError::Io(std::io::Error::other(format!(
+            "Failed to calculate DiscID: {}",
+            e
+        )))
     })?;
 
     let mb_discid_str = disc.id();
@@ -250,7 +250,7 @@ fn read_mp3_metadata(path: &Path) -> (Option<String>, Option<String>, Option<u32
                             if let Some(text) = frame.content().text() {
                                 if let Some(year_str) = text.split('-').next() {
                                     if let Ok(y) = year_str.parse::<u32>() {
-                                        if y >= 1900 && y <= 2100 {
+                                        if (1900..=2100).contains(&y) {
                                             year = Some(y);
                                         }
                                     }
@@ -263,7 +263,7 @@ fn read_mp3_metadata(path: &Path) -> (Option<String>, Option<String>, Option<u32
                         if year.is_none() {
                             if let Some(text) = frame.content().text() {
                                 if let Ok(y) = text.parse::<u32>() {
-                                    if y >= 1900 && y <= 2100 {
+                                    if (1900..=2100).contains(&y) {
                                         year = Some(y);
                                     }
                                 }

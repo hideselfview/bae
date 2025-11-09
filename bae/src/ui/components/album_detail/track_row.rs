@@ -1,7 +1,10 @@
 use crate::db::{DbArtist, DbTrack};
 use crate::library::use_library_manager;
 use crate::playback::{PlaybackProgress, PlaybackState};
+use crate::AppContext;
 use dioxus::prelude::*;
+use rfd::AsyncFileDialog;
+use tracing::error;
 
 use super::super::import_hooks::TrackImportState;
 use super::super::use_track_progress;
@@ -17,9 +20,11 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
     let library_manager = use_library_manager();
     let playback = use_playback_service();
     let playback_state = use_playback_state();
+    let app_context = use_context::<AppContext>();
     let mut track_artists = use_signal(Vec::<DbArtist>::new);
     let track_progress = use_track_progress(track_id.clone(), track.import_status);
     let mut show_menu = use_signal(|| false);
+    let is_exporting = use_signal(|| false);
     // let track_progress = use_signal(|| TrackImportState::Importing { percent: 12 });
 
     // Track playback state for this track
@@ -104,8 +109,9 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
     // Load artists for this track (for compilations/features)
     use_effect({
         let track_id_for_artists = track_id.clone();
+        let library_manager_clone = library_manager.clone();
         move || {
-            let library_manager = library_manager.clone();
+            let library_manager = library_manager_clone.clone();
             let track_id_for_artists = track_id_for_artists.clone();
             spawn(async move {
                 if let Ok(artists) = library_manager
@@ -269,6 +275,68 @@ pub fn TrackRow(track: DbTrack, release_id: String) -> Element {
                         if show_menu() {
                             div {
                                 class: "absolute right-0 top-full mt-1 bg-gray-800 border border-gray-700 rounded shadow-lg z-10 min-w-32",
+                                button {
+                                    class: "w-full text-left px-3 py-2 text-sm hover:bg-gray-700",
+                                    disabled: is_exporting(),
+                                    onclick: {
+                                        let track_id_clone = track_id.clone();
+                                        let library_manager_clone = library_manager.clone();
+                                        let cloud_storage_clone = app_context.cloud_storage.clone();
+                                        let cache_clone = app_context.cache.clone();
+                                        let encryption_service_clone = app_context.encryption_service.clone();
+                                        let chunk_size_bytes = app_context.config.chunk_size_bytes;
+                                        let mut is_exporting_clone = is_exporting;
+                                        let mut show_menu_clone = show_menu;
+                                        move |_| {
+                                            show_menu_clone.set(false);
+                                            if !is_exporting_clone() {
+                                                let track_id = track_id_clone.clone();
+                                                let library_manager_clone = library_manager_clone.clone();
+                                                let cloud_storage_clone = cloud_storage_clone.clone();
+                                                let cache_clone = cache_clone.clone();
+                                                let encryption_service_clone = encryption_service_clone.clone();
+                                                let chunk_size_bytes = chunk_size_bytes;
+                                                spawn(async move {
+                                                    is_exporting_clone.set(true);
+
+                                                    if let Some(file_handle) = AsyncFileDialog::new()
+                                                        .set_title("Export Track")
+                                                        .set_file_name(format!("{}.flac", track_id))
+                                                        .add_filter("FLAC", &["flac"])
+                                                        .save_file()
+                                                        .await
+                                                    {
+                                                        let output_path = file_handle.path().to_path_buf();
+
+                                                        match library_manager_clone.get().export_track(
+                                                            &track_id,
+                                                            &output_path,
+                                                            &cloud_storage_clone,
+                                                            &cache_clone,
+                                                            &encryption_service_clone,
+                                                            chunk_size_bytes,
+                                                        ).await {
+                                                            Ok(_) => {
+                                                                is_exporting_clone.set(false);
+                                                            }
+                                                            Err(e) => {
+                                                                error!("Failed to export track: {}", e);
+                                                                is_exporting_clone.set(false);
+                                                            }
+                                                        }
+                                                    } else {
+                                                        is_exporting_clone.set(false);
+                                                    }
+                                                });
+                                            }
+                                        }
+                                    },
+                                    if is_exporting() {
+                                        "Exporting..."
+                                    } else {
+                                        "Export File"
+                                    }
+                                }
                                 button {
                                     class: "w-full text-left px-3 py-2 text-sm hover:bg-gray-700",
                                     onclick: {
