@@ -389,8 +389,13 @@ pub fn FolderDetectionPage() -> Element {
                     // Show selected folder
                     div { class: "bg-white rounded-lg shadow p-6",
                         div { class: "mb-6 pb-4 border-b border-gray-200",
-                            h3 { class: "text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2", "Selected Folder" }
-                            p { class: "text-sm text-gray-900 font-mono break-all", "{folder_path.read()}" }
+                            h3 { class: "text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3", "Selected Folder" }
+                            div { class: "inline-block px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-full border border-gray-300 transition-colors",
+                                p {
+                                    class: "text-sm text-gray-900 font-mono select-text cursor-text break-all",
+                                    "{folder_path.read()}"
+                                }
+                            }
                         }
 
                         if *is_detecting.read() {
