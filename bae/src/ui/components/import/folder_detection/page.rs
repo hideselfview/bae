@@ -33,9 +33,7 @@ pub fn FolderDetectionPage() -> Element {
     let import_error_message = import_context.import_error_message;
     let duplicate_album_id = import_context.duplicate_album_id;
     let search_query = import_context.search_query;
-
-    // Local signal for file list
-    let folder_files = use_signal(Vec::<FileInfo>::new);
+    let folder_files = import_context.folder_files;
 
     let on_folder_select = {
         let import_context_for_detect = import_context.clone();
@@ -63,7 +61,8 @@ pub fn FolderDetectionPage() -> Element {
 
             // Read files from folder
             let folder_path_clone = path.clone();
-            let mut folder_files_for_read = folder_files;
+            let import_context_for_files = import_context_for_detect.clone();
+            let mut folder_files_for_read = import_context_for_files.folder_files;
             spawn(async move {
                 let mut files = Vec::new();
                 if let Ok(entries) = std::fs::read_dir(&folder_path_clone) {
@@ -399,31 +398,9 @@ pub fn FolderDetectionPage() -> Element {
     };
 
     let on_change_folder = {
-        let mut folder_path = folder_path;
-        let mut detected_metadata = detected_metadata;
-        let mut exact_match_candidates = exact_match_candidates;
-        let mut selected_match_index = selected_match_index;
-        let mut confirmed_candidate = confirmed_candidate;
-        let mut import_error_message = import_error_message;
-        let mut duplicate_album_id = duplicate_album_id;
-        let mut import_phase = import_phase;
-        let mut is_detecting = is_detecting;
-        let mut is_looking_up = is_looking_up;
-        let mut search_query = search_query;
-        let mut folder_files = folder_files;
+        let import_context = import_context.clone();
         move |_| {
-            folder_path.set(String::new());
-            detected_metadata.set(None);
-            exact_match_candidates.set(Vec::new());
-            selected_match_index.set(None);
-            confirmed_candidate.set(None);
-            import_error_message.set(None);
-            duplicate_album_id.set(None);
-            is_detecting.set(false);
-            is_looking_up.set(false);
-            search_query.set(String::new());
-            folder_files.set(Vec::new());
-            import_phase.set(crate::ui::import_context::ImportPhase::FolderSelection);
+            import_context.reset();
         }
     };
 

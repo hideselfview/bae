@@ -7,4 +7,5 @@ mod metadata_display;
 mod page;
 mod source_selector;
 
+pub use file_list::FileInfo;
 pub use page::FolderDetectionPage;

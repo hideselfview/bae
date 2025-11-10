@@ -3,6 +3,7 @@ use crate::discogs::client::DiscogsSearchResult;
 use crate::discogs::{DiscogsClient, DiscogsRelease};
 use crate::import::{detect_metadata, FolderMetadata, MatchCandidate};
 use crate::musicbrainz::{lookup_by_discid, search_releases, MbRelease};
+use crate::ui::components::import::FileInfo;
 use dioxus::prelude::*;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -43,6 +44,7 @@ pub struct ImportContext {
     pub is_looking_up: Signal<bool>,
     pub import_error_message: Signal<Option<String>>,
     pub duplicate_album_id: Signal<Option<String>>,
+    pub folder_files: Signal<Vec<FileInfo>>,
     client: DiscogsClient,
 }
 
@@ -70,6 +72,7 @@ impl ImportContext {
             is_looking_up: Signal::new(false),
             import_error_message: Signal::new(None),
             duplicate_album_id: Signal::new(None),
+            folder_files: Signal::new(Vec::new()),
             client: DiscogsClient::new(config.discogs_api_key.clone()),
         }
     }
@@ -106,6 +109,7 @@ impl ImportContext {
         let mut is_looking_up = self.is_looking_up;
         let mut import_error_message = self.import_error_message;
         let mut duplicate_album_id = self.duplicate_album_id;
+        let mut folder_files = self.folder_files;
 
         folder_path.set(String::new());
         detected_metadata.set(None);
@@ -117,6 +121,7 @@ impl ImportContext {
         is_looking_up.set(false);
         import_error_message.set(None);
         duplicate_album_id.set(None);
+        folder_files.set(Vec::new());
     }
 
     pub async fn detect_folder_metadata(

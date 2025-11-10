@@ -202,7 +202,7 @@ pub fn ManualSearchPanel(
 
             if let Some(ref error) = error_message.read().as_ref() {
                 div { class: "bg-red-50 border border-red-200 rounded-lg p-4",
-                    p { class: "text-sm text-red-700", "Error: {error}" }
+                    p { class: "text-sm text-red-700 select-text", "Error: {error}" }
                 }
             }
 
