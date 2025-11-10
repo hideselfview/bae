@@ -1,0 +1,13 @@
+diff --git a/src/data_transfer.rs b/src/data_transfer.rs
+index 0000000..1111111 100644
+--- a/src/data_transfer.rs
++++ b/src/data_transfer.rs
+@@ -101,7 +101,8 @@ mod ser {
+     #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+     pub struct SerializedDataTransferItem {
+         pub kind: String,
+-        pub type_: String,
++        #[serde(rename = "type")]
++        pub type_: String,
+         pub data: String,
+     }

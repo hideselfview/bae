@@ -433,7 +433,7 @@ pub fn FolderDetectionPage() -> Element {
                                 button {
                                     class: "px-3 py-1 text-sm text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-md transition-colors",
                                     onclick: on_change_folder,
-                                    "Change Folder"
+                                    "Clear"
                                 }
                             }
                             div { class: "inline-block px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-full border border-gray-300 transition-colors",

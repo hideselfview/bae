@@ -29,7 +29,12 @@ pub enum Route {
 }
 
 pub fn make_config() -> DioxusConfig {
-    DioxusConfig::default().with_window(make_window())
+    DioxusConfig::default()
+        .with_window(make_window())
+        // Enable native file drop handler (false = don't disable) to get full file paths
+        // On macOS/Linux: Native handler captures paths and merges them with HTML drag events
+        // On Windows: Native handler captures paths and uses WindowsDragDrop events to bridge to HTML drag events
+        .with_disable_drag_drop_handler(false)
 }
 
 fn make_window() -> WindowBuilder {
