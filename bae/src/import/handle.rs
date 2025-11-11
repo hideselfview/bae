@@ -4,11 +4,11 @@
 // Provides the public API for interacting with the import service.
 
 use crate::cue_flac::CueFlacProcessor;
-use crate::db::{DbAlbum, DbRelease, Database};
+use crate::db::{Database, DbAlbum, DbRelease};
 use crate::import::progress::ImportProgressHandle;
 use crate::import::track_to_file_mapper::map_tracks_to_files;
 use crate::import::types::{
-    CueFlacMetadata, DiscoveredFile, ImportProgress, ImportRequestParams, TrackFile, TorrentSource,
+    CueFlacMetadata, DiscoveredFile, ImportProgress, ImportRequestParams, TorrentSource, TrackFile,
 };
 use crate::library::SharedLibraryManager;
 use crate::playback::symphonia_decoder::TrackDecoder;
@@ -228,18 +228,14 @@ impl ImportHandle {
 
                 // Add torrent to client
                 let torrent_handle = match &torrent_source {
-                    TorrentSource::File(path) => {
-                        torrent_client
-                            .add_torrent_file(path)
-                            .await
-                            .map_err(|e| format!("Failed to add torrent file: {}", e))?
-                    }
-                    TorrentSource::MagnetLink(magnet) => {
-                        torrent_client
-                            .add_magnet_link(magnet)
-                            .await
-                            .map_err(|e| format!("Failed to add magnet link: {}", e))?
-                    }
+                    TorrentSource::File(path) => torrent_client
+                        .add_torrent_file(path)
+                        .await
+                        .map_err(|e| format!("Failed to add torrent file: {}", e))?,
+                    TorrentSource::MagnetLink(magnet) => torrent_client
+                        .add_magnet_link(magnet)
+                        .await
+                        .map_err(|e| format!("Failed to add magnet link: {}", e))?,
                 };
 
                 // Wait for metadata to be available (for magnet links)
@@ -281,7 +277,10 @@ impl ImportHandle {
                     .map_err(|e| format!("Failed to prioritize metadata files: {}", e))?;
 
                 if !metadata_files.is_empty() {
-                    info!("Waiting for {} metadata files to download...", metadata_files.len());
+                    info!(
+                        "Waiting for {} metadata files to download...",
+                        metadata_files.len()
+                    );
                     selective_downloader
                         .wait_for_metadata_files(&torrent_handle, &metadata_files)
                         .await

@@ -26,7 +26,12 @@ pub struct PieceMapping {
 
 impl TorrentPieceMapper {
     /// Create a new piece mapper
-    pub fn new(piece_length: usize, chunk_size: usize, total_pieces: usize, total_size: usize) -> Self {
+    pub fn new(
+        piece_length: usize,
+        chunk_size: usize,
+        total_pieces: usize,
+        total_size: usize,
+    ) -> Self {
         TorrentPieceMapper {
             piece_length,
             chunk_size,
@@ -111,4 +116,3 @@ impl TorrentPieceMapper {
             .collect()
     }
 }
-
