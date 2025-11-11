@@ -2,6 +2,8 @@ use std::path::Path;
 use std::process::Command;
 
 fn main() {
+    // Compile C++ custom storage backend
+    compile_cpp_storage();
     // Run tailwindcss to generate CSS (using locally installed version)
     let output = Command::new("npx")
         .arg("tailwindcss")
@@ -136,4 +138,41 @@ fn apply_patch_file(target_dir: &Path, patch_file: &Path) {
             }
         }
     }
+}
+
+fn compile_cpp_storage() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let cpp_dir = Path::new(manifest_dir).join("cpp");
+
+    if !cpp_dir.exists() {
+        println!("cargo:warning=CPP directory not found, skipping C++ compilation");
+        return;
+    }
+
+    let header = cpp_dir.join("bae_storage.h");
+    let source = cpp_dir.join("bae_storage.cpp");
+    let helpers_header = cpp_dir.join("bae_storage_helpers.h");
+    let helpers_source = cpp_dir.join("bae_storage_helpers.cpp");
+
+    if !header.exists() || !source.exists() || !helpers_header.exists() || !helpers_source.exists()
+    {
+        println!("cargo:warning=Custom storage C++ files not found, skipping compilation");
+        return;
+    }
+
+    // Use cc crate to compile C++ code
+    // Note: This requires libtorrent development headers to be installed
+    cc::Build::new()
+        .cpp(true)
+        .file(&source)
+        .file(&helpers_source)
+        .include(&cpp_dir)
+        .include("/opt/homebrew/include") // macOS Homebrew
+        .include("/usr/local/include") // Standard Unix
+        .flag("-std=c++17")
+        .compile("bae_storage");
+
+    println!("cargo:rustc-link-lib=torrent-rasterbar");
+    println!("cargo:rustc-link-search=native=/opt/homebrew/lib"); // macOS Homebrew
+    println!("cargo:rustc-link-search=native=/usr/local/lib"); // Standard Unix
 }

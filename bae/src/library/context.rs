@@ -26,6 +26,11 @@ impl SharedLibraryManager {
     pub fn get(&self) -> &LibraryManager {
         &self.inner
     }
+
+    /// Get a reference to the database
+    pub fn database(&self) -> &crate::db::Database {
+        self.inner.database()
+    }
 }
 
 /// Hook to access the shared library manager from components

@@ -1,11 +1,9 @@
 use crate::cache::CacheManager;
 use crate::db::{Database, DbTorrent, DbTorrentPieceMapping};
 use crate::encryption::EncryptionService;
-use crate::torrent::client::{TorrentClient, TorrentHandle};
-use crate::torrent::piece_mapper::TorrentPieceMapper;
-use std::collections::HashMap;
+use crate::torrent::client::TorrentClient;
 use thiserror::Error;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info};
 
 #[derive(Error, Debug)]
 pub enum SeederError {

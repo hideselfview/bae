@@ -824,6 +824,7 @@ dependencies = [
  "aws-sdk-s3",
  "axum",
  "bincode",
+ "cc",
  "chrono",
  "cocoa 0.25.0",
  "cpal",

@@ -18,6 +18,7 @@
 // - MetadataPersister: Saves file/chunk metadata to DB
 // - ProgressService: Broadcasts real-time progress updates to UI subscribers
 
+use crate::cache::CacheManager;
 use crate::cloud_storage::CloudStorageManager;
 use crate::encryption::EncryptionService;
 use crate::import::album_chunk_layout::AlbumChunkLayout;
@@ -27,6 +28,7 @@ use crate::import::pipeline;
 use crate::import::progress::ImportProgressTracker;
 use crate::import::types::ImportProgress;
 use crate::library::SharedLibraryManager;
+use crate::torrent::{BaeStorage, TorrentClient, TorrentPieceMapper};
 use futures::stream::StreamExt;
 use tokio::sync::mpsc;
 use tracing::{error, info};
@@ -58,6 +60,8 @@ pub struct ImportService {
     cloud_storage: CloudStorageManager,
     /// Shared manager for library database operations
     library_manager: SharedLibraryManager,
+    /// Cache manager for chunk storage
+    cache_manager: CacheManager,
 }
 
 impl ImportService {
@@ -72,12 +76,14 @@ impl ImportService {
         library_manager: SharedLibraryManager,
         encryption_service: EncryptionService,
         cloud_storage: CloudStorageManager,
+        cache_manager: CacheManager,
     ) -> ImportHandle {
         let (requests_tx, requests_rx) = mpsc::unbounded_channel();
         let (progress_tx, progress_rx) = mpsc::unbounded_channel();
 
-        // Clone library_manager for the thread
+        // Clone library_manager and cache_manager for the thread
         let library_manager_for_worker = library_manager.clone();
+        let cache_manager_for_worker = cache_manager.clone();
 
         // Spawn the service task on a dedicated thread (TorrentClient isn't Send-safe due to FFI)
         // This follows the same pattern as PlaybackService for handling non-Send types
@@ -93,6 +99,7 @@ impl ImportService {
                     library_manager: library_manager_for_worker,
                     encryption_service,
                     cloud_storage,
+                    cache_manager: cache_manager_for_worker,
                 };
 
                 service.run_import_worker().await;
@@ -214,14 +221,13 @@ impl ImportService {
                 use crate::torrent::{TorrentClient, TorrentPieceMapper};
                 use tokio::runtime::Handle;
 
-                // Create torrent handle in a separate block to ensure torrent_client is dropped
-                // before any awaits that might capture it
-                let torrent_handle = {
+                // Create torrent client and handle, then register storage
+                let (torrent_client, torrent_handle) = {
                     let runtime_handle = Handle::current();
                     let torrent_client = TorrentClient::new(runtime_handle)
                         .map_err(|e| format!("Failed to create torrent client: {}", e))?;
 
-                    match torrent_source {
+                    let torrent_handle = match torrent_source {
                         crate::import::types::TorrentSource::File(path) => torrent_client
                             .add_torrent_file(&path)
                             .await
@@ -230,15 +236,48 @@ impl ImportService {
                             .add_magnet_link(&magnet)
                             .await
                             .map_err(|e| format!("Failed to add magnet link: {}", e))?,
-                    }
-                    // torrent_client is dropped here at the end of the block
-                };
+                    };
 
-                // Wait for metadata if needed
-                torrent_handle
-                    .wait_for_metadata()
-                    .await
-                    .map_err(|e| format!("Failed to wait for metadata: {}", e))?;
+                    // Wait for metadata if needed
+                    torrent_handle
+                        .wait_for_metadata()
+                        .await
+                        .map_err(|e| format!("Failed to wait for metadata: {}", e))?;
+
+                    // Get storage_index and register storage
+                    let storage_index = torrent_handle
+                        .storage_index()
+                        .await
+                        .map_err(|e| format!("Failed to get storage index: {}", e))?;
+
+                    // Create piece mapper for BaeStorage
+                    let piece_mapper = TorrentPieceMapper::new(
+                        torrent_meta.piece_length as usize,
+                        self.config.chunk_size_bytes,
+                        torrent_meta.num_pieces as usize,
+                        torrent_meta.total_size_bytes as usize,
+                    );
+
+                    // Create BaeStorage instance
+                    let bae_storage = BaeStorage::new(
+                        self.cache_manager.clone(),
+                        self.library_manager.database().clone(),
+                        piece_mapper,
+                        torrent_meta.info_hash.clone(),
+                        db_release.id.clone(),
+                    );
+
+                    // Register storage with torrent client
+                    torrent_client
+                        .register_storage(
+                            storage_index,
+                            torrent_meta.info_hash.clone(),
+                            bae_storage,
+                        )
+                        .await;
+
+                    (torrent_client, torrent_handle)
+                };
 
                 // Torrent import: use torrent producer
                 // Note: We can't spawn a task with TorrentHandle as it's not Send.

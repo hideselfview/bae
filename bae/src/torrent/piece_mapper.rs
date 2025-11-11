@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 /// Maps torrent pieces to bae chunks
 pub struct TorrentPieceMapper {
     piece_length: usize,

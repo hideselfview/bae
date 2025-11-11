@@ -1,4 +1,4 @@
-use crate::torrent::client::{FilePriority, TorrentClient, TorrentFile, TorrentHandle};
+use crate::torrent::client::{FilePriority, TorrentClient, TorrentHandle};
 use std::path::PathBuf;
 use thiserror::Error;
 use tracing::{debug, info};

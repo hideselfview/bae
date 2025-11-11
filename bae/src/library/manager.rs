@@ -46,6 +46,11 @@ impl LibraryManager {
         }
     }
 
+    /// Get a reference to the database
+    pub fn database(&self) -> &Database {
+        &self.database
+    }
+
     /// Insert album, release, and tracks into database in a transaction
     pub async fn insert_album_with_release_and_tracks(
         &self,

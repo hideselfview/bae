@@ -4,7 +4,7 @@
 // Provides the public API for interacting with the import service.
 
 use crate::cue_flac::CueFlacProcessor;
-use crate::db::{Database, DbAlbum, DbRelease};
+use crate::db::{DbAlbum, DbRelease};
 use crate::import::progress::ImportProgressHandle;
 use crate::import::track_to_file_mapper::map_tracks_to_files;
 use crate::import::types::{
@@ -12,7 +12,7 @@ use crate::import::types::{
 };
 use crate::library::SharedLibraryManager;
 use crate::playback::symphonia_decoder::TrackDecoder;
-use crate::torrent::{SelectiveDownloader, TorrentClient, TorrentHandle};
+use crate::torrent::{SelectiveDownloader, TorrentClient};
 use std::path::Path;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
