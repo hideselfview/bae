@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use thiserror::Error;
@@ -54,6 +54,8 @@ pub struct CacheManager {
     entries: Arc<RwLock<HashMap<String, CacheEntry>>>,
     /// Current cache size in bytes
     current_size: Arc<RwLock<u64>>,
+    /// Chunk IDs that are pinned (excluded from LRU eviction)
+    pinned_chunks: Arc<RwLock<HashSet<String>>>,
 }
 
 impl CacheManager {
@@ -71,6 +73,7 @@ impl CacheManager {
             config,
             entries: Arc::new(RwLock::new(HashMap::new())),
             current_size: Arc::new(RwLock::new(0)),
+            pinned_chunks: Arc::new(RwLock::new(HashSet::new())),
         };
 
         // Load existing cache entries from disk
@@ -221,11 +224,16 @@ impl CacheManager {
         entries: &mut HashMap<String, CacheEntry>,
         current_size: &mut u64,
     ) -> Result<(), CacheError> {
-        // Find the chunk with the oldest last_accessed time
+        let pinned = self.pinned_chunks.read().await;
+
+        // Find the chunk with the oldest last_accessed time, excluding pinned chunks
         let lru_chunk_id = entries
             .iter()
+            .filter(|(id, _)| !pinned.contains(*id))
             .min_by_key(|(_, entry)| entry.last_accessed)
             .map(|(id, _)| id.clone());
+
+        drop(pinned);
 
         if let Some(chunk_id) = lru_chunk_id {
             if let Some(entry) = entries.remove(&chunk_id) {
@@ -244,5 +252,37 @@ impl CacheManager {
         }
 
         Ok(())
+    }
+
+    /// Pin a chunk to prevent it from being evicted by LRU
+    pub async fn pin_chunk(&self, chunk_id: &str) {
+        let mut pinned = self.pinned_chunks.write().await;
+        pinned.insert(chunk_id.to_string());
+        debug!("Pinned chunk {}", chunk_id);
+    }
+
+    /// Unpin a chunk, allowing it to be evicted again
+    pub async fn unpin_chunk(&self, chunk_id: &str) {
+        let mut pinned = self.pinned_chunks.write().await;
+        pinned.remove(chunk_id);
+        debug!("Unpinned chunk {}", chunk_id);
+    }
+
+    /// Pin multiple chunks at once
+    pub async fn pin_chunks(&self, chunk_ids: &[String]) {
+        let mut pinned = self.pinned_chunks.write().await;
+        for chunk_id in chunk_ids {
+            pinned.insert(chunk_id.clone());
+        }
+        debug!("Pinned {} chunks", chunk_ids.len());
+    }
+
+    /// Unpin multiple chunks at once
+    pub async fn unpin_chunks(&self, chunk_ids: &[String]) {
+        let mut pinned = self.pinned_chunks.write().await;
+        for chunk_id in chunk_ids {
+            pinned.remove(chunk_id);
+        }
+        debug!("Unpinned {} chunks", chunk_ids.len());
     }
 }

@@ -582,3 +582,77 @@ impl DbTrackChunkCoords {
         }
     }
 }
+
+/// Torrent import metadata for a release
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbTorrent {
+    pub id: String,
+    pub release_id: String,
+    pub info_hash: String,
+    pub magnet_link: Option<String>,
+    pub torrent_name: String,
+    pub total_size_bytes: i64,
+    pub piece_length: i32,
+    pub num_pieces: i32,
+    pub is_seeding: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Maps torrent pieces to bae chunks
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbTorrentPieceMapping {
+    pub id: String,
+    pub torrent_id: String,
+    pub piece_index: i32,
+    pub chunk_ids: String, // JSON array of chunk IDs
+    pub start_byte_in_first_chunk: i64,
+    pub end_byte_in_last_chunk: i64,
+}
+
+impl DbTorrent {
+    pub fn new(
+        release_id: &str,
+        info_hash: &str,
+        magnet_link: Option<String>,
+        torrent_name: &str,
+        total_size_bytes: i64,
+        piece_length: i32,
+        num_pieces: i32,
+    ) -> Self {
+        DbTorrent {
+            id: Uuid::new_v4().to_string(),
+            release_id: release_id.to_string(),
+            info_hash: info_hash.to_string(),
+            magnet_link,
+            torrent_name: torrent_name.to_string(),
+            total_size_bytes,
+            piece_length,
+            num_pieces,
+            is_seeding: false,
+            created_at: Utc::now(),
+        }
+    }
+}
+
+impl DbTorrentPieceMapping {
+    pub fn new(
+        torrent_id: &str,
+        piece_index: i32,
+        chunk_ids: Vec<String>,
+        start_byte_in_first_chunk: i64,
+        end_byte_in_last_chunk: i64,
+    ) -> Result<Self, serde_json::Error> {
+        Ok(DbTorrentPieceMapping {
+            id: Uuid::new_v4().to_string(),
+            torrent_id: torrent_id.to_string(),
+            piece_index,
+            chunk_ids: serde_json::to_string(&chunk_ids)?,
+            start_byte_in_first_chunk,
+            end_byte_in_last_chunk,
+        })
+    }
+
+    pub fn chunk_ids(&self) -> Result<Vec<String>, serde_json::Error> {
+        serde_json::from_str(&self.chunk_ids)
+    }
+}

@@ -2,7 +2,7 @@ use crate::cache::CacheManager;
 use crate::cloud_storage::{CloudStorageError, CloudStorageManager};
 use crate::db::{
     Database, DbAlbum, DbAlbumArtist, DbArtist, DbAudioFormat, DbChunk, DbFile, DbRelease, DbTrack,
-    DbTrackArtist, DbTrackChunkCoords, ImportStatus,
+    DbTrackArtist, DbTrackChunkCoords, DbTorrent, ImportStatus,
 };
 use crate::encryption::EncryptionService;
 use crate::library::export::ExportService;
@@ -135,6 +135,12 @@ impl LibraryManager {
         coords: &DbTrackChunkCoords,
     ) -> Result<(), LibraryError> {
         self.database.insert_track_chunk_coords(coords).await?;
+        Ok(())
+    }
+
+    /// Insert torrent metadata
+    pub async fn insert_torrent(&self, torrent: &DbTorrent) -> Result<(), LibraryError> {
+        self.database.insert_torrent(torrent).await?;
         Ok(())
     }
 

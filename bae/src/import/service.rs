@@ -128,6 +128,7 @@ impl ImportService {
             tracks_to_files,
             discovered_files,
             cue_flac_metadata,
+            torrent_metadata,
         } = request;
 
         // Mark release as importing now that pipeline is starting

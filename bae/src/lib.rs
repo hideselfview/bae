@@ -17,6 +17,7 @@ pub mod encryption;
 pub mod import;
 pub mod library;
 pub mod musicbrainz;
+pub mod torrent;
 
 // Optional modules
 pub mod cue_flac;

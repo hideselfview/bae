@@ -298,6 +298,59 @@ impl Database {
             .execute(&self.pool)
             .await?;
 
+        // Torrents table (torrent import metadata)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS torrents (
+                id TEXT PRIMARY KEY,
+                release_id TEXT NOT NULL,
+                info_hash TEXT NOT NULL UNIQUE,
+                magnet_link TEXT,
+                torrent_name TEXT NOT NULL,
+                total_size_bytes INTEGER NOT NULL,
+                piece_length INTEGER NOT NULL,
+                num_pieces INTEGER NOT NULL,
+                is_seeding BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (release_id) REFERENCES releases (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Torrent piece mappings table (maps torrent pieces to bae chunks)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS torrent_piece_mappings (
+                id TEXT PRIMARY KEY,
+                torrent_id TEXT NOT NULL,
+                piece_index INTEGER NOT NULL,
+                chunk_ids TEXT NOT NULL,
+                start_byte_in_first_chunk INTEGER NOT NULL,
+                end_byte_in_last_chunk INTEGER NOT NULL,
+                FOREIGN KEY (torrent_id) REFERENCES torrents (id) ON DELETE CASCADE,
+                UNIQUE(torrent_id, piece_index)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_torrents_release_id ON torrents (release_id)")
+            .execute(&self.pool)
+            .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_torrents_info_hash ON torrents (info_hash)")
+            .execute(&self.pool)
+            .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_torrent_piece_mappings_torrent_id ON torrent_piece_mappings (torrent_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_audio_formats_track_id ON audio_formats (track_id)",
         )
@@ -1488,5 +1541,146 @@ impl Database {
                     .with_timezone(&Utc),
             }
         }))
+    }
+
+    /// Insert a torrent record
+    pub async fn insert_torrent(&self, torrent: &DbTorrent) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO torrents (
+                id, release_id, info_hash, magnet_link, torrent_name,
+                total_size_bytes, piece_length, num_pieces, is_seeding, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&torrent.id)
+        .bind(&torrent.release_id)
+        .bind(&torrent.info_hash)
+        .bind(&torrent.magnet_link)
+        .bind(&torrent.torrent_name)
+        .bind(torrent.total_size_bytes)
+        .bind(torrent.piece_length)
+        .bind(torrent.num_pieces)
+        .bind(torrent.is_seeding)
+        .bind(torrent.created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Get torrent by release ID
+    pub async fn get_torrent_by_release(&self, release_id: &str) -> Result<Option<DbTorrent>, sqlx::Error> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, release_id, info_hash, magnet_link, torrent_name,
+                   total_size_bytes, piece_length, num_pieces, is_seeding, created_at
+            FROM torrents
+            WHERE release_id = ?
+            LIMIT 1
+            "#,
+        )
+        .bind(release_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|row| DbTorrent {
+            id: row.get("id"),
+            release_id: row.get("release_id"),
+            info_hash: row.get("info_hash"),
+            magnet_link: row.get("magnet_link"),
+            torrent_name: row.get("torrent_name"),
+            total_size_bytes: row.get("total_size_bytes"),
+            piece_length: row.get("piece_length"),
+            num_pieces: row.get("num_pieces"),
+            is_seeding: row.get("is_seeding"),
+            created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
+                .unwrap()
+                .with_timezone(&Utc),
+        }))
+    }
+
+    /// Insert a torrent piece mapping
+    pub async fn insert_torrent_piece_mapping(&self, mapping: &DbTorrentPieceMapping) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO torrent_piece_mappings (
+                id, torrent_id, piece_index, chunk_ids,
+                start_byte_in_first_chunk, end_byte_in_last_chunk
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&mapping.id)
+        .bind(&mapping.torrent_id)
+        .bind(mapping.piece_index)
+        .bind(&mapping.chunk_ids)
+        .bind(mapping.start_byte_in_first_chunk)
+        .bind(mapping.end_byte_in_last_chunk)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Get piece mappings for a torrent
+    pub async fn get_torrent_piece_mappings(&self, torrent_id: &str) -> Result<Vec<DbTorrentPieceMapping>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, torrent_id, piece_index, chunk_ids,
+                   start_byte_in_first_chunk, end_byte_in_last_chunk
+            FROM torrent_piece_mappings
+            WHERE torrent_id = ?
+            ORDER BY piece_index
+            "#,
+        )
+        .bind(torrent_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| DbTorrentPieceMapping {
+                id: row.get("id"),
+                torrent_id: row.get("torrent_id"),
+                piece_index: row.get("piece_index"),
+                chunk_ids: row.get("chunk_ids"),
+                start_byte_in_first_chunk: row.get("start_byte_in_first_chunk"),
+                end_byte_in_last_chunk: row.get("end_byte_in_last_chunk"),
+            })
+            .collect())
+    }
+
+    /// Get a specific piece mapping
+    pub async fn get_torrent_piece_mapping(&self, torrent_id: &str, piece_index: i32) -> Result<Option<DbTorrentPieceMapping>, sqlx::Error> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, torrent_id, piece_index, chunk_ids,
+                   start_byte_in_first_chunk, end_byte_in_last_chunk
+            FROM torrent_piece_mappings
+            WHERE torrent_id = ? AND piece_index = ?
+            LIMIT 1
+            "#,
+        )
+        .bind(torrent_id)
+        .bind(piece_index)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(|row| DbTorrentPieceMapping {
+            id: row.get("id"),
+            torrent_id: row.get("torrent_id"),
+            piece_index: row.get("piece_index"),
+            chunk_ids: row.get("chunk_ids"),
+            start_byte_in_first_chunk: row.get("start_byte_in_first_chunk"),
+            end_byte_in_last_chunk: row.get("end_byte_in_last_chunk"),
+        }))
+    }
+
+    /// Update torrent seeding status
+    pub async fn update_torrent_seeding(&self, torrent_id: &str, is_seeding: bool) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE torrents SET is_seeding = ? WHERE id = ?")
+            .bind(is_seeding)
+            .bind(torrent_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 }

@@ -7,6 +7,8 @@ use crate::import::{ImportRequestParams, MatchCandidate, MatchSource};
 use crate::library::use_import_service;
 use crate::library::use_library_manager;
 use crate::musicbrainz::lookup_by_discid;
+use crate::ui::components::import::import_source_selector::{ImportSource, ImportSourceSelector};
+use crate::ui::components::import::torrent_input::TorrentInput;
 use crate::ui::import_context::ImportContext;
 use crate::ui::Route;
 use dioxus::prelude::*;
@@ -30,10 +32,34 @@ pub fn FolderDetectionPage() -> Element {
     let confirmed_candidate = import_context.confirmed_candidate;
     let is_detecting = import_context.is_detecting;
     let is_looking_up = import_context.is_looking_up;
-    let import_error_message = import_context.import_error_message;
+    let mut import_error_message = import_context.import_error_message;
     let duplicate_album_id = import_context.duplicate_album_id;
     let search_query = import_context.search_query;
     let folder_files = import_context.folder_files;
+    let mut selected_source = use_signal(|| ImportSource::Folder);
+
+    let on_source_select = {
+        let import_context = import_context.clone();
+        move |source: ImportSource| {
+            selected_source.set(source);
+            // Reset import context when switching sources
+            import_context.reset();
+        }
+    };
+
+    let on_torrent_file_select = move |path: PathBuf| {
+        // TODO: Handle torrent file selection
+        info!("Torrent file selected: {:?}", path);
+    };
+
+    let on_magnet_link = move |magnet: String| {
+        // TODO: Handle magnet link
+        info!("Magnet link: {}", magnet);
+    };
+
+    let on_torrent_error = move |error: String| {
+        import_error_message.set(Some(error));
+    };
 
     let on_folder_select = {
         let import_context_for_detect = import_context.clone();
@@ -410,16 +436,32 @@ pub fn FolderDetectionPage() -> Element {
                 h1 { class: "text-2xl font-bold text-white", "Import" }
             }
 
-            // Phase 1: Folder Selection
+            // Source selector
+            div { class: "bg-white rounded-lg shadow p-6 mb-6",
+                ImportSourceSelector {
+                    selected_source,
+                    on_source_select,
+                }
+            }
+
+            // Phase 1: Source Selection (Folder or Torrent)
             if *import_phase.read() == crate::ui::import_context::ImportPhase::FolderSelection {
                 div { class: "bg-white rounded-lg shadow p-6",
-                    FolderSelector {
-                        on_select: on_folder_select,
-                        on_error: {
-                            let mut import_error_message = import_error_message;
-                            move |e: String| {
-                                import_error_message.set(Some(e));
+                    if *selected_source.read() == ImportSource::Folder {
+                        FolderSelector {
+                            on_select: on_folder_select,
+                            on_error: {
+                                let mut import_error_message = import_error_message;
+                                move |e: String| {
+                                    import_error_message.set(Some(e));
+                                }
                             }
+                        }
+                    } else {
+                        TorrentInput {
+                            on_file_select: on_torrent_file_select,
+                            on_magnet_link: on_magnet_link,
+                            on_error: on_torrent_error,
                         }
                     }
                 }

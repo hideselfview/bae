@@ -45,6 +45,19 @@ pub enum ImportRequestParams {
         folder: PathBuf,
         master_year: u32,
     },
+    FromTorrent {
+        torrent_source: TorrentSource,
+        discogs_release: Option<DiscogsRelease>,
+        mb_release: Option<MbRelease>,
+        master_year: u32,
+    },
+}
+
+/// Source for torrent import
+#[derive(Debug, Clone)]
+pub enum TorrentSource {
+    File(PathBuf),
+    MagnetLink(String),
 }
 
 /// Progress updates during import

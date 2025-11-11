@@ -1,17 +1,11 @@
-# Cargo configuration for automatic library path detection
-# This ensures libdiscid and other Homebrew-installed libraries are found
-
-[target.aarch64-apple-darwin]
-rustflags = [
-    "-L", "/opt/homebrew/lib",
-]
-
-[target.x86_64-apple-darwin]
-rustflags = [
-    "-L", "/opt/homebrew/lib",
-]
+# Cargo configuration for libtorrent-sys on macOS
+# This ensures pkg-config can find libtorrent-rasterbar installed via Homebrew
+# and that Boost headers are available for libtorrent compilation
 
 [env]
-# Set PKG_CONFIG_PATH for macOS to find pkg-config files
-PKG_CONFIG_PATH = { value = "/opt/homebrew/lib/pkgconfig", force = false }
-
+# Set PKG_CONFIG_PATH so libtorrent-sys can find libtorrent-rasterbar.pc
+PKG_CONFIG_PATH = "/opt/homebrew/lib/pkgconfig"
+# Set LIBRARY_PATH for linking
+LIBRARY_PATH = "/opt/homebrew/lib"
+# Set CXXFLAGS to include Boost and libtorrent headers
+CXXFLAGS = "-I/opt/homebrew/Cellar/boost/1.89.0/include -I/opt/homebrew/Cellar/libtorrent-rasterbar/2.0.11_3/include"
