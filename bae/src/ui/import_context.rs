@@ -3,6 +3,7 @@ use crate::discogs::client::DiscogsSearchResult;
 use crate::discogs::{DiscogsClient, DiscogsRelease};
 use crate::import::{detect_metadata, FolderMetadata, MatchCandidate};
 use crate::musicbrainz::{lookup_by_discid, search_releases, MbRelease};
+use crate::torrent::client::TorrentClient;
 use crate::ui::components::import::FileInfo;
 use dioxus::prelude::*;
 use std::path::PathBuf;
@@ -46,6 +47,9 @@ pub struct ImportContext {
     pub duplicate_album_id: Signal<Option<String>>,
     pub folder_files: Signal<Vec<FileInfo>>,
     client: DiscogsClient,
+    /// Shared torrent client with default storage for metadata detection
+    /// Sessions are heavy, so we create one and reuse it for all metadata detection operations
+    torrent_client_default: TorrentClient,
 }
 
 impl ImportContext {
@@ -74,7 +78,17 @@ impl ImportContext {
             duplicate_album_id: Signal::new(None),
             folder_files: Signal::new(Vec::new()),
             client: DiscogsClient::new(config.discogs_api_key.clone()),
+            torrent_client_default: {
+                use tokio::runtime::Handle;
+                let runtime_handle = Handle::current();
+                TorrentClient::new_with_default_storage(runtime_handle)
+                    .expect("Failed to create torrent client for metadata detection")
+            },
         }
+    }
+
+    pub fn torrent_client_default(&self) -> TorrentClient {
+        self.torrent_client_default.clone()
     }
 
     pub fn reset(&self) {

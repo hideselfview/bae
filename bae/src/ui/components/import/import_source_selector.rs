@@ -24,7 +24,7 @@ pub fn ImportSourceSelector(
                         selected_source.set(ImportSource::Folder);
                         on_source_select.call(ImportSource::Folder);
                     },
-                    "Import from Folder"
+                    "Folder"
                 }
                 button {
                     class: if *selected_source.read() == ImportSource::Torrent {
@@ -36,7 +36,7 @@ pub fn ImportSourceSelector(
                         selected_source.set(ImportSource::Torrent);
                         on_source_select.call(ImportSource::Torrent);
                     },
-                    "Import from Torrent"
+                    "Torrent"
                 }
             }
         }

@@ -36,8 +36,8 @@ pub fn FolderDetectionPage() -> Element {
     let search_query = import_context.search_query;
     let folder_files = import_context.folder_files;
     let mut selected_source = use_signal(|| ImportSource::Folder);
-    let mut torrent_source = use_signal(|| None::<crate::import::TorrentSource>);
-    let mut seed_after_download = use_signal(|| true);
+    let torrent_source = use_signal(|| None::<crate::import::TorrentSource>);
+    let seed_after_download = use_signal(|| true);
 
     let on_source_select = {
         let import_context = import_context.clone();
@@ -51,6 +51,7 @@ pub fn FolderDetectionPage() -> Element {
     };
 
     let on_torrent_file_select = {
+        let import_context_for_metadata = import_context.clone();
         let mut folder_path = folder_path;
         let mut detected_metadata = detected_metadata;
         let mut exact_match_candidates = exact_match_candidates;
@@ -60,9 +61,17 @@ pub fn FolderDetectionPage() -> Element {
         let mut duplicate_album_id = duplicate_album_id;
         let mut import_phase = import_phase;
         let mut is_detecting = is_detecting;
-        let mut search_query = search_query;
         let mut torrent_source_signal = torrent_source;
         let mut seed_after_download_signal = seed_after_download;
+
+        // Extract signals for metadata detection before the closure
+        let mut detected_metadata_for_async = import_context_for_metadata.detected_metadata;
+        let mut is_looking_up_for_async = import_context_for_metadata.is_looking_up;
+        let mut exact_match_candidates_for_async =
+            import_context_for_metadata.exact_match_candidates;
+        let mut confirmed_candidate_for_async = import_context_for_metadata.confirmed_candidate;
+        let mut import_phase_for_async = import_context_for_metadata.import_phase;
+        let mut search_query_for_async = import_context_for_metadata.search_query;
 
         move |(path, seed_flag): (PathBuf, bool)| {
             // Store torrent source and seed flag
@@ -80,31 +89,19 @@ pub fn FolderDetectionPage() -> Element {
             import_phase.set(crate::ui::import_context::ImportPhase::MetadataDetection);
             is_detecting.set(true);
 
+            // Clone everything needed for spawn (to keep closure FnMut)
             let mut is_detecting = is_detecting;
             let mut import_phase = import_phase;
             let mut import_error_message = import_error_message;
             let mut search_query = search_query;
             let mut folder_files = folder_files;
+            let import_context_for_async = import_context_for_metadata.clone();
+            let client_for_torrent = import_context_for_metadata.torrent_client_default();
+            let path = path.clone();
 
             spawn(async move {
-                use crate::torrent::TorrentClient;
-                use tokio::runtime::Handle;
-
-                // Create torrent client
-                let runtime_handle = Handle::current();
-                let torrent_client = match TorrentClient::new(runtime_handle) {
-                    Ok(client) => client,
-                    Err(e) => {
-                        import_error_message
-                            .set(Some(format!("Failed to create torrent client: {}", e)));
-                        is_detecting.set(false);
-                        import_phase.set(crate::ui::import_context::ImportPhase::FolderSelection);
-                        return;
-                    }
-                };
-
-                // Add torrent file
-                let torrent_handle = match torrent_client.add_torrent_file(&path).await {
+                // Add torrent file using shared client
+                let torrent_handle = match client_for_torrent.add_torrent_file(&path).await {
                     Ok(handle) => handle,
                     Err(e) => {
                         import_error_message
@@ -180,9 +177,140 @@ pub fn FolderDetectionPage() -> Element {
                     folder_files.read().len()
                 );
 
-                // Initialize search query with torrent name
+                // Try to detect metadata from CUE/log files in background
+                let path_for_metadata = path.clone();
+                let torrent_name_for_metadata = torrent_name.clone();
+                let mut is_detecting_for_async = is_detecting;
+                let client_for_metadata = import_context_for_async.torrent_client_default();
+
+                // Set detecting state to show UI feedback
+                is_detecting_for_async.set(true);
+
+                spawn(async move {
+                    use crate::musicbrainz::lookup_by_discid;
+                    use crate::torrent::detect_metadata_from_torrent_file;
+
+                    // Try to detect metadata from CUE/log files using shared client
+                    let result =
+                        detect_metadata_from_torrent_file(&path_for_metadata, &client_for_metadata)
+                            .await;
+
+                    // Check if detection was cancelled before processing results
+                    if !*is_detecting_for_async.read() {
+                        info!("Metadata detection was cancelled, ignoring results");
+                        return;
+                    }
+
+                    match result {
+                        Ok(Some(metadata)) => {
+                            info!("Detected metadata from torrent: {:?}", metadata);
+                            detected_metadata_for_async.set(Some(metadata.clone()));
+                            is_detecting_for_async.set(false);
+
+                            // Helper to initialize search query from metadata
+                            let mut init_search_query =
+                                |metadata: &crate::import::FolderMetadata| {
+                                    let mut query_parts = Vec::new();
+                                    if let Some(ref artist) = metadata.artist {
+                                        query_parts.push(artist.clone());
+                                    }
+                                    if let Some(ref album) = metadata.album {
+                                        query_parts.push(album.clone());
+                                    }
+                                    search_query_for_async.set(query_parts.join(" "));
+                                };
+
+                            // Try exact lookup if MB DiscID available
+                            if let Some(ref mb_discid) = metadata.mb_discid {
+                                is_looking_up_for_async.set(true);
+                                info!("🎵 Found MB DiscID: {}, performing exact lookup", mb_discid);
+
+                                match lookup_by_discid(mb_discid).await {
+                                    Ok((releases, _external_urls)) => {
+                                        if releases.is_empty() {
+                                            info!("No exact matches found, proceeding to manual search");
+                                            init_search_query(&metadata);
+                                            import_phase_for_async.set(
+                                                crate::ui::import_context::ImportPhase::ManualSearch,
+                                            );
+                                        } else if releases.len() == 1 {
+                                            // Single exact match - auto-proceed to confirmation
+                                            info!("✅ Single exact match found, auto-proceeding");
+                                            let mb_release = releases[0].clone();
+                                            let candidate = crate::import::MatchCandidate {
+                                                source: crate::import::MatchSource::MusicBrainz(
+                                                    mb_release,
+                                                ),
+                                                confidence: 100.0,
+                                                match_reasons: vec![
+                                                    "Exact DiscID match".to_string()
+                                                ],
+                                            };
+                                            confirmed_candidate_for_async.set(Some(candidate));
+                                            import_phase_for_async.set(
+                                                crate::ui::import_context::ImportPhase::Confirmation,
+                                            );
+                                        } else {
+                                            // Multiple exact matches - show for selection
+                                            info!(
+                                                "Found {} exact matches, showing for selection",
+                                                releases.len()
+                                            );
+                                            let candidates: Vec<crate::import::MatchCandidate> = releases
+                                                .into_iter()
+                                                .map(|mb_release| crate::import::MatchCandidate {
+                                                    source: crate::import::MatchSource::MusicBrainz(mb_release),
+                                                    confidence: 100.0,
+                                                    match_reasons: vec!["Exact DiscID match".to_string()],
+                                                })
+                                                .collect();
+                                            exact_match_candidates_for_async.set(candidates);
+                                            import_phase_for_async.set(
+                                                crate::ui::import_context::ImportPhase::ExactLookup,
+                                            );
+                                        }
+                                        is_looking_up_for_async.set(false);
+                                    }
+                                    Err(e) => {
+                                        info!("MB DiscID lookup failed: {}, proceeding to manual search", e);
+                                        is_looking_up_for_async.set(false);
+                                        init_search_query(&metadata);
+                                        import_phase_for_async.set(
+                                            crate::ui::import_context::ImportPhase::ManualSearch,
+                                        );
+                                    }
+                                }
+                            } else {
+                                // No MB DiscID, proceed to manual search with detected metadata
+                                info!("No MB DiscID found, proceeding to manual search");
+                                init_search_query(&metadata);
+                                import_phase_for_async
+                                    .set(crate::ui::import_context::ImportPhase::ManualSearch);
+                            }
+                        }
+                        Ok(None) => {
+                            // No CUE/log files or detection failed, proceed with torrent name
+                            info!(
+                                "No metadata detected from torrent, using torrent name for search"
+                            );
+                            is_detecting_for_async.set(false);
+                            search_query_for_async.set(torrent_name_for_metadata.clone());
+                            import_phase_for_async
+                                .set(crate::ui::import_context::ImportPhase::ManualSearch);
+                        }
+                        Err(e) => {
+                            warn!("Failed to detect metadata from torrent: {}", e);
+                            // Fall back to torrent name
+                            is_detecting_for_async.set(false);
+                            search_query_for_async.set(torrent_name_for_metadata.clone());
+                            import_phase_for_async
+                                .set(crate::ui::import_context::ImportPhase::ManualSearch);
+                        }
+                    }
+                });
+
+                // Initialize search query with torrent name (will be updated if metadata is detected)
                 search_query.set(torrent_name.clone());
-                is_detecting.set(false);
                 import_phase.set(crate::ui::import_context::ImportPhase::ManualSearch);
             });
         }
@@ -389,8 +517,8 @@ pub fn FolderDetectionPage() -> Element {
         let import_context_for_reset = import_context.clone();
         let library_manager = library_manager.clone();
         let import_service = import_service.clone();
-        let mut torrent_source_signal = torrent_source;
-        let mut seed_after_download_signal = seed_after_download;
+        let torrent_source_signal = torrent_source;
+        let seed_after_download_signal = seed_after_download;
         move |candidate: MatchCandidate| {
             let folder = folder_path.read().clone();
             let metadata = detected_metadata.read().clone();
@@ -676,6 +804,16 @@ pub fn FolderDetectionPage() -> Element {
         }
     };
 
+    // Check if there are .cue files available for metadata detection (computed before rsx!)
+    let has_cue_files_for_manual = {
+        let files = folder_files.read();
+        let result = files
+            .iter()
+            .any(|f| f.format.to_lowercase() == "cue" || f.format.to_lowercase() == "log");
+        drop(files);
+        result
+    };
+
     rsx! {
         div { class: "max-w-4xl mx-auto p-6",
             div { class: "mb-6",
@@ -740,7 +878,27 @@ pub fn FolderDetectionPage() -> Element {
 
                         if *is_detecting.read() {
                             div { class: "text-center py-8",
-                                p { class: "text-gray-600", "Detecting metadata..." }
+                                p { class: "text-gray-600 mb-4", "Downloading metadata files (CUE/log)..." }
+                                button {
+                                    class: "px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded transition-colors",
+                                    onclick: {
+                                        let mut is_detecting = is_detecting;
+                                        let mut search_query = search_query;
+                                        let mut import_phase = import_phase;
+                                        move |_| {
+                                            is_detecting.set(false);
+                                            // Use current search query (already set to torrent name) or folder path
+                                            if search_query.read().is_empty() {
+                                                let path = folder_path.read().clone();
+                                                if let Some(name) = std::path::Path::new(&path).file_name() {
+                                                    search_query.set(name.to_string_lossy().to_string());
+                                                }
+                                            }
+                                            import_phase.set(crate::ui::import_context::ImportPhase::ManualSearch);
+                                        }
+                                    },
+                                    "Skip and search manually"
+                                }
                             }
                         } else if !folder_files.read().is_empty() {
                             div { class: "mt-4",
@@ -775,6 +933,153 @@ pub fn FolderDetectionPage() -> Element {
 
                     // Phase 4: Manual Search
                     if *import_phase.read() == crate::ui::import_context::ImportPhase::ManualSearch {
+                        if has_cue_files_for_manual && detected_metadata.read().is_none() && !*is_detecting.read() {
+                            div { class: "bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4",
+                                div { class: "flex items-center justify-between",
+                                    div { class: "flex-1",
+                                        p { class: "text-sm text-blue-900 font-medium mb-1",
+                                            "Metadata files detected"
+                                        }
+                                        p { class: "text-xs text-blue-700",
+                                            "CUE/log files found in torrent. Download and detect metadata automatically?"
+                                        }
+                                    }
+                                    button {
+                                        class: "px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition-colors",
+                                        onclick: {
+                                            move |_| {
+                                                let path = folder_path.read().clone();
+                                                let mut is_detecting_for_async = is_detecting;
+                                                let mut detected_metadata_for_async = detected_metadata;
+                                                let mut is_looking_up_for_async = is_looking_up;
+                                                let mut exact_match_candidates_for_async = exact_match_candidates;
+                                                let mut search_query_for_async = search_query;
+                                                let mut import_phase_for_async = import_phase;
+                                                let mut confirmed_candidate_for_async = confirmed_candidate;
+                                                let client_for_manual = import_context.torrent_client_default();
+
+                                                is_detecting_for_async.set(true);
+
+                                                spawn(async move {
+                                                    use crate::musicbrainz::lookup_by_discid;
+                                                    use crate::torrent::detect_metadata_from_torrent_file;
+
+                                                    let result = detect_metadata_from_torrent_file(std::path::Path::new(&path), &client_for_manual).await;
+
+                                                    if !*is_detecting_for_async.read() {
+                                                        info!("Metadata detection was cancelled");
+                                                        return;
+                                                    }
+
+                                                    match result {
+                                                        Ok(Some(metadata)) => {
+                                                            info!("Detected metadata from torrent: {:?}", metadata);
+                                                            detected_metadata_for_async.set(Some(metadata.clone()));
+                                                            is_detecting_for_async.set(false);
+
+                                                            let mut init_search_query =
+                                                                |metadata: &crate::import::FolderMetadata| {
+                                                                    let mut query_parts = Vec::new();
+                                                                    if let Some(ref artist) = metadata.artist {
+                                                                        query_parts.push(artist.clone());
+                                                                    }
+                                                                    if let Some(ref album) = metadata.album {
+                                                                        query_parts.push(album.clone());
+                                                                    }
+                                                                    search_query_for_async.set(query_parts.join(" "));
+                                                                };
+
+                                                            if let Some(ref mb_discid) = metadata.mb_discid {
+                                                                is_looking_up_for_async.set(true);
+                                                                info!("🎵 Found MB DiscID: {}, performing exact lookup", mb_discid);
+
+                                                                match lookup_by_discid(mb_discid).await {
+                                                                    Ok((releases, _external_urls)) => {
+                                                                        if releases.is_empty() {
+                                                                            info!("No exact matches found, proceeding to manual search");
+                                                                            init_search_query(&metadata);
+                                                                            import_phase_for_async.set(
+                                                                                crate::ui::import_context::ImportPhase::ManualSearch,
+                                                                            );
+                                                                        } else if releases.len() == 1 {
+                                                                            info!("✅ Single exact match found, auto-proceeding");
+                                                                            let mb_release = releases[0].clone();
+                                                                            let candidate = crate::import::MatchCandidate {
+                                                                                source: crate::import::MatchSource::MusicBrainz(mb_release),
+                                                                                confidence: 100.0,
+                                                                                match_reasons: vec!["Exact DiscID match".to_string()],
+                                                                            };
+                                                                            confirmed_candidate_for_async.set(Some(candidate));
+                                                                            import_phase_for_async.set(
+                                                                                crate::ui::import_context::ImportPhase::Confirmation,
+                                                                            );
+                                                                        } else {
+                                                                            info!("Found {} exact matches, showing for selection", releases.len());
+                                                                            let candidates: Vec<crate::import::MatchCandidate> = releases
+                                                                                .into_iter()
+                                                                                .map(|mb_release| crate::import::MatchCandidate {
+                                                                                    source: crate::import::MatchSource::MusicBrainz(mb_release),
+                                                                                    confidence: 100.0,
+                                                                                    match_reasons: vec!["Exact DiscID match".to_string()],
+                                                                                })
+                                                                                .collect();
+                                                                            exact_match_candidates_for_async.set(candidates);
+                                                                            import_phase_for_async.set(
+                                                                                crate::ui::import_context::ImportPhase::ExactLookup,
+                                                                            );
+                                                                        }
+                                                                        is_looking_up_for_async.set(false);
+                                                                    }
+                                                                    Err(e) => {
+                                                                        info!("MB DiscID lookup failed: {}, proceeding to manual search", e);
+                                                                        is_looking_up_for_async.set(false);
+                                                                        init_search_query(&metadata);
+                                                                        import_phase_for_async.set(
+                                                                            crate::ui::import_context::ImportPhase::ManualSearch,
+                                                                        );
+                                                                    }
+                                                                }
+                                                            } else {
+                                                                info!("No MB DiscID found, proceeding to manual search");
+                                                                init_search_query(&metadata);
+                                                                import_phase_for_async
+                                                                    .set(crate::ui::import_context::ImportPhase::ManualSearch);
+                                                            }
+                                                        }
+                                                        Ok(None) => {
+                                                            info!("No metadata detected from torrent");
+                                                            is_detecting_for_async.set(false);
+                                                        }
+                                                        Err(e) => {
+                                                            warn!("Failed to detect metadata from torrent: {}", e);
+                                                            is_detecting_for_async.set(false);
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                        },
+                                        "Detect from CUE/log files"
+                                    }
+                                }
+                            }
+                        }
+
+                        if *is_detecting.read() {
+                            div { class: "bg-white rounded-lg shadow p-6 text-center mb-4",
+                                p { class: "text-gray-600 mb-4", "Downloading and analyzing metadata files (CUE/log)..." }
+                                button {
+                                    class: "px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded transition-colors",
+                                    onclick: {
+                                        let mut is_detecting = is_detecting;
+                                        move |_| {
+                                            is_detecting.set(false);
+                                        }
+                                    },
+                                    "Cancel"
+                                }
+                            }
+                        }
+
                         ManualSearchPanel {
                             detected_metadata: detected_metadata,
                             on_match_select: on_manual_match_select,
