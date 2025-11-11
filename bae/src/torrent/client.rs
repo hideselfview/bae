@@ -7,10 +7,10 @@
 
 use crate::torrent::ffi::{
     create_bae_storage_constructor, create_session_params_with_storage, create_session_with_params,
-    get_session_ptr, parse_magnet_uri, session_add_torrent, torrent_get_name,
-    torrent_get_num_pieces, torrent_get_piece_length, torrent_get_storage_index,
-    torrent_get_total_size, torrent_has_metadata, torrent_have_piece, AddTorrentParams, Session,
-    TorrentHandle as FfiTorrentHandle,
+    get_session_ptr, load_torrent_file, parse_magnet_uri, session_add_torrent,
+    torrent_get_file_list, torrent_get_name, torrent_get_num_pieces, torrent_get_piece_length,
+    torrent_get_storage_index, torrent_get_total_size, torrent_has_metadata, torrent_have_piece,
+    Session, TorrentFileInfo, TorrentHandle as FfiTorrentHandle,
 };
 use crate::torrent::storage::BaeStorage;
 use cxx::UniquePtr;
@@ -351,15 +351,64 @@ impl TorrentClient {
     }
 
     /// Add a torrent from a file
-    ///
-    /// NOTE: The libtorrent-rs crate doesn't expose torrent file loading.
-    /// This would require extending the FFI bindings or parsing the .torrent file ourselves.
     pub async fn add_torrent_file(&self, path: &Path) -> Result<TorrentHandle, TorrentError> {
-        // Read and parse .torrent file
-        // For now, return an error - this needs bencode parsing or FFI extension
-        Err(TorrentError::NotImplemented(
-            "Torrent file loading requires bencode parsing or FFI extension. Use magnet links for now.".to_string(),
-        ))
+        // Convert path to string
+        let file_path = path
+            .to_str()
+            .ok_or_else(|| TorrentError::InvalidTorrent("Invalid file path encoding".to_string()))?
+            .to_string();
+
+        // Use a temporary save path - we'll handle data ourselves
+        let temp_path = std::env::temp_dir().to_string_lossy().to_string();
+
+        // Extract session reference to avoid capturing self across await
+        let session = SendSafeArc(Arc::clone(&self.session.0 .0));
+
+        // Get write lock first
+        let mut session_guard = session.0.write().await;
+
+        // Load torrent file using our wrapper function
+        let mut params = load_torrent_file(&file_path, &temp_path);
+        if params.is_null() {
+            drop(session_guard);
+            return Err(TorrentError::InvalidTorrent(
+                "Failed to load torrent file".to_string(),
+            ));
+        }
+
+        // Get raw session pointer for wrapper function
+        let session_ptr = get_session_ptr(&mut *session_guard);
+        if session_ptr.is_null() {
+            drop(session_guard);
+            drop(params);
+            return Err(TorrentError::Libtorrent(
+                "Failed to get session pointer".to_string(),
+            ));
+        }
+
+        // Add torrent using our wrapper function
+        let handle_ptr = unsafe { session_add_torrent(session_ptr, &mut params) };
+
+        // Drop guard and params immediately
+        drop(session_guard);
+        drop(params);
+
+        if handle_ptr.is_null() {
+            return Err(TorrentError::Libtorrent(
+                "Failed to add torrent to session".to_string(),
+            ));
+        }
+
+        // Get storage_index for this torrent (needed for read_piece)
+        let storage_index = unsafe { torrent_get_storage_index(handle_ptr) };
+
+        // Store raw pointer directly (opaque type, can't use UniquePtr)
+        // SAFETY: We own the handle_ptr returned from session_add_torrent
+        // The handle will be valid as long as the session exists
+        Ok(TorrentHandle {
+            handle: SendSafeTorrentHandle(Arc::new(RwLock::new(handle_ptr))),
+            storage_index,
+        })
     }
 
     /// Add a torrent from magnet link
@@ -543,10 +592,27 @@ impl TorrentHandle {
 
     /// Get the list of files in the torrent
     pub async fn get_file_list(&self) -> Result<Vec<TorrentFile>, TorrentError> {
-        // TODO: Implement actual file list retrieval
-        Err(TorrentError::NotImplemented(
-            "get_file_list() not yet implemented".to_string(),
-        ))
+        let handle_guard = self.handle.0.read().await;
+        let handle_ptr = *handle_guard;
+        if handle_ptr.is_null() {
+            return Err(TorrentError::Libtorrent(
+                "Invalid torrent handle".to_string(),
+            ));
+        }
+        let file_infos = unsafe { torrent_get_file_list(handle_ptr) };
+        drop(handle_guard);
+
+        let files: Vec<TorrentFile> = file_infos
+            .into_iter()
+            .map(|info: TorrentFileInfo| TorrentFile {
+                index: info.index,
+                path: PathBuf::from(info.path),
+                size: info.size,
+                priority: FilePriority::Normal,
+            })
+            .collect();
+
+        Ok(files)
     }
 
     /// Set file priorities

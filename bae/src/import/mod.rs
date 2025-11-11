@@ -32,4 +32,4 @@ pub use discogs_matcher::{rank_discogs_matches, rank_mb_matches, MatchCandidate,
 pub use folder_metadata_detector::{detect_metadata, FolderMetadata};
 pub use handle::ImportHandle;
 pub use service::{ImportConfig, ImportService};
-pub use types::{ImportProgress, ImportRequestParams};
+pub use types::{ImportProgress, ImportRequestParams, TorrentSource};

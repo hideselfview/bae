@@ -6,8 +6,8 @@
 #[cxx::bridge]
 mod ffi {
     unsafe extern "C++" {
-        include!("cpp/bae_storage.h");
-        include!("cpp/bae_storage_helpers.h");
+        include!("bae_storage.h");
+        include!("bae_storage_helpers.h");
         include!("libtorrent/session.hpp");
         include!("libtorrent/session_params.hpp");
 
@@ -56,6 +56,9 @@ mod ffi {
         /// Parse a magnet URI and return add_torrent_params
         fn parse_magnet_uri(magnet: &str, save_path: &str) -> UniquePtr<AddTorrentParams>;
 
+        /// Load a torrent file and return add_torrent_params
+        fn load_torrent_file(file_path: &str, save_path: &str) -> UniquePtr<AddTorrentParams>;
+
         /// Add a torrent to a session using our Session type
         unsafe fn session_add_torrent(
             sess: *mut Session,
@@ -79,13 +82,23 @@ mod ffi {
 
         /// Check if a piece is available (downloaded and verified)
         unsafe fn torrent_have_piece(handle: *mut TorrentHandle, piece_index: i32) -> bool;
+
+        /// Get the list of files in the torrent
+        unsafe fn torrent_get_file_list(handle: *mut TorrentHandle) -> Vec<TorrentFileInfo>;
+    }
+
+    /// File info from torrent (shared between Rust and C++)
+    struct TorrentFileInfo {
+        index: i32,
+        path: String,
+        size: i64,
     }
 }
 
 pub use ffi::{
     create_bae_storage_constructor, create_session_params_with_storage, create_session_with_params,
-    get_session_ptr, parse_magnet_uri, session_add_torrent, torrent_get_name,
-    torrent_get_num_pieces, torrent_get_piece_length, torrent_get_storage_index,
-    torrent_get_total_size, torrent_has_metadata, torrent_have_piece, AddTorrentParams,
-    BaeStorageConstructor, Session, SessionParams, TorrentHandle,
+    get_session_ptr, load_torrent_file, parse_magnet_uri, session_add_torrent,
+    torrent_get_file_list, torrent_get_name, torrent_get_num_pieces, torrent_get_piece_length,
+    torrent_get_storage_index, torrent_get_total_size, torrent_has_metadata, torrent_have_piece,
+    Session, TorrentFileInfo, TorrentHandle,
 };

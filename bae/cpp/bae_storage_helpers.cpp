@@ -41,6 +41,18 @@ std::unique_ptr<add_torrent_params> parse_magnet_uri(const std::string& magnet, 
     return params;
 }
 
+std::unique_ptr<add_torrent_params> load_torrent_file(const std::string& file_path, const std::string& save_path) {
+    error_code ec;
+    torrent_info ti(file_path, ec);
+    if (ec) {
+        return nullptr;
+    }
+    auto params = std::make_unique<add_torrent_params>();
+    params->ti = std::make_shared<torrent_info>(std::move(ti));
+    params->save_path = save_path;
+    return params;
+}
+
 torrent_handle* session_add_torrent(session* sess, std::unique_ptr<add_torrent_params>& params) {
     if (!sess || !params) {
         return nullptr;
@@ -120,6 +132,28 @@ bool torrent_have_piece(torrent_handle* handle, int32_t piece_index) {
         return false;
     }
     return handle->have_piece(piece_index_t(piece_index));
+}
+
+std::vector<LibTorrentFileInfo> torrent_get_file_list_internal(torrent_handle* handle) {
+    std::vector<LibTorrentFileInfo> files;
+    if (!handle) {
+        return files;
+    }
+    torrent_status status = handle->status();
+    auto torrent_file = status.torrent_file.lock();
+    if (!torrent_file) {
+        return files;
+    }
+    auto file_storage = torrent_file->files();
+    for (int i = 0; i < file_storage.num_files(); ++i) {
+        LibTorrentFileInfo info;
+        info.index = i;
+        auto file_path = file_storage.file_path(i);
+        info.path = std::string(file_path.begin(), file_path.end());
+        info.size = file_storage.file_size(i);
+        files.push_back(info);
+    }
+    return files;
 }
 
 } // namespace libtorrent

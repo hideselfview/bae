@@ -36,30 +36,162 @@ pub fn FolderDetectionPage() -> Element {
     let search_query = import_context.search_query;
     let folder_files = import_context.folder_files;
     let mut selected_source = use_signal(|| ImportSource::Folder);
+    let mut torrent_source = use_signal(|| None::<crate::import::TorrentSource>);
+    let mut seed_after_download = use_signal(|| true);
 
     let on_source_select = {
         let import_context = import_context.clone();
+        let mut torrent_source_signal = torrent_source;
         move |source: ImportSource| {
             selected_source.set(source);
-            // Reset import context when switching sources
+            // Reset import context and torrent source when switching sources
             import_context.reset();
+            torrent_source_signal.set(None);
         }
     };
 
-    let on_torrent_file_select = move |(path, seed_after_download): (PathBuf, bool)| {
-        // TODO: Handle torrent file selection
-        info!(
-            "Torrent file selected: {:?}, seed_after_download: {}",
-            path, seed_after_download
-        );
+    let on_torrent_file_select = {
+        let mut folder_path = folder_path;
+        let mut detected_metadata = detected_metadata;
+        let mut exact_match_candidates = exact_match_candidates;
+        let mut selected_match_index = selected_match_index;
+        let mut confirmed_candidate = confirmed_candidate;
+        let mut import_error_message = import_error_message;
+        let mut duplicate_album_id = duplicate_album_id;
+        let mut import_phase = import_phase;
+        let mut is_detecting = is_detecting;
+        let mut search_query = search_query;
+        let mut torrent_source_signal = torrent_source;
+        let mut seed_after_download_signal = seed_after_download;
+
+        move |(path, seed_flag): (PathBuf, bool)| {
+            // Store torrent source and seed flag
+            torrent_source_signal.set(Some(crate::import::TorrentSource::File(path.clone())));
+            seed_after_download_signal.set(seed_flag);
+
+            // Reset state
+            folder_path.set(path.to_string_lossy().to_string());
+            detected_metadata.set(None);
+            exact_match_candidates.set(Vec::new());
+            selected_match_index.set(None);
+            confirmed_candidate.set(None);
+            import_error_message.set(None);
+            duplicate_album_id.set(None);
+            import_phase.set(crate::ui::import_context::ImportPhase::MetadataDetection);
+            is_detecting.set(true);
+
+            let mut is_detecting = is_detecting;
+            let mut import_phase = import_phase;
+            let mut import_error_message = import_error_message;
+            let mut search_query = search_query;
+            let mut folder_files = folder_files;
+
+            spawn(async move {
+                use crate::torrent::TorrentClient;
+                use tokio::runtime::Handle;
+
+                // Create torrent client
+                let runtime_handle = Handle::current();
+                let torrent_client = match TorrentClient::new(runtime_handle) {
+                    Ok(client) => client,
+                    Err(e) => {
+                        import_error_message
+                            .set(Some(format!("Failed to create torrent client: {}", e)));
+                        is_detecting.set(false);
+                        import_phase.set(crate::ui::import_context::ImportPhase::FolderSelection);
+                        return;
+                    }
+                };
+
+                // Add torrent file
+                let torrent_handle = match torrent_client.add_torrent_file(&path).await {
+                    Ok(handle) => handle,
+                    Err(e) => {
+                        import_error_message
+                            .set(Some(format!("Failed to add torrent file: {}", e)));
+                        is_detecting.set(false);
+                        import_phase.set(crate::ui::import_context::ImportPhase::FolderSelection);
+                        return;
+                    }
+                };
+
+                // Wait for metadata (should be immediate for torrent files, but needed for consistency)
+                if let Err(e) = torrent_handle.wait_for_metadata().await {
+                    import_error_message
+                        .set(Some(format!("Failed to get torrent metadata: {}", e)));
+                    is_detecting.set(false);
+                    import_phase.set(crate::ui::import_context::ImportPhase::FolderSelection);
+                    return;
+                }
+
+                // Get torrent name
+                let torrent_name = match torrent_handle.name().await {
+                    Ok(name) => name,
+                    Err(e) => {
+                        import_error_message
+                            .set(Some(format!("Failed to get torrent name: {}", e)));
+                        is_detecting.set(false);
+                        import_phase.set(crate::ui::import_context::ImportPhase::FolderSelection);
+                        return;
+                    }
+                };
+
+                // Get file list from torrent
+                let torrent_files = match torrent_handle.get_file_list().await {
+                    Ok(files) => files,
+                    Err(e) => {
+                        import_error_message
+                            .set(Some(format!("Failed to get torrent file list: {}", e)));
+                        is_detecting.set(false);
+                        import_phase.set(crate::ui::import_context::ImportPhase::FolderSelection);
+                        return;
+                    }
+                };
+
+                // Convert torrent files to FileInfo format
+                let mut files: Vec<FileInfo> = torrent_files
+                    .into_iter()
+                    .map(|tf| {
+                        let name = tf
+                            .path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+                        let format = tf
+                            .path
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .unwrap_or("")
+                            .to_uppercase();
+                        FileInfo {
+                            name,
+                            size: tf.size as u64,
+                            format,
+                        }
+                    })
+                    .collect();
+                files.sort_by(|a, b| a.name.cmp(&b.name));
+                folder_files.set(files);
+
+                info!(
+                    "Torrent loaded: {} ({} files)",
+                    torrent_name,
+                    folder_files.read().len()
+                );
+
+                // Initialize search query with torrent name
+                search_query.set(torrent_name.clone());
+                is_detecting.set(false);
+                import_phase.set(crate::ui::import_context::ImportPhase::ManualSearch);
+            });
+        }
     };
 
     let on_magnet_link = move |(magnet, seed_after_download): (String, bool)| {
         // TODO: Handle magnet link
-        info!(
-            "Magnet link: {}, seed_after_download: {}",
-            magnet, seed_after_download
-        );
+        let _ = (magnet, seed_after_download); // Placeholder until implementation
+        info!("Magnet link selection not yet implemented");
     };
 
     let on_torrent_error = {
@@ -257,9 +389,13 @@ pub fn FolderDetectionPage() -> Element {
         let import_context_for_reset = import_context.clone();
         let library_manager = library_manager.clone();
         let import_service = import_service.clone();
+        let mut torrent_source_signal = torrent_source;
+        let mut seed_after_download_signal = seed_after_download;
         move |candidate: MatchCandidate| {
             let folder = folder_path.read().clone();
             let metadata = detected_metadata.read().clone();
+            let torrent_source_opt = torrent_source_signal.read().clone();
+            let seed_flag = *seed_after_download_signal.read();
             let import_service = import_service.clone();
             let mut duplicate_album_id = duplicate_album_id;
             let mut import_error_message = import_error_message;
@@ -311,83 +447,185 @@ pub fn FolderDetectionPage() -> Element {
                 // Extract master_year from metadata or release date
                 let master_year = metadata.as_ref().and_then(|m| m.year).unwrap_or(1970);
 
-                match candidate.source.clone() {
-                    MatchSource::Discogs(discogs_result) => {
-                        let master_id = match discogs_result.master_id {
-                            Some(id) => id.to_string(),
-                            None => {
-                                import_error_message
-                                    .set(Some("Discogs result has no master_id".to_string()));
-                                return;
-                            }
-                        };
-                        let release_id = discogs_result.id.to_string();
+                // Check if this is a torrent import
+                if let Some(torrent_source) = torrent_source_opt {
+                    match candidate.source.clone() {
+                        MatchSource::Discogs(discogs_result) => {
+                            let master_id = match discogs_result.master_id {
+                                Some(id) => id.to_string(),
+                                None => {
+                                    import_error_message
+                                        .set(Some("Discogs result has no master_id".to_string()));
+                                    return;
+                                }
+                            };
+                            let release_id = discogs_result.id.to_string();
 
-                        match import_context_for_reset
-                            .import_release(release_id, master_id)
-                            .await
-                        {
-                            Ok(discogs_release) => {
-                                info!(
-                                    "Starting import for Discogs release: {}",
-                                    discogs_release.title
-                                );
+                            match import_context_for_reset
+                                .import_release(release_id, master_id)
+                                .await
+                            {
+                                Ok(discogs_release) => {
+                                    info!(
+                                        "Starting torrent import for Discogs release: {}",
+                                        discogs_release.title
+                                    );
 
-                                let request = ImportRequestParams::FromFolder {
-                                    discogs_release: Some(discogs_release),
-                                    mb_release: None,
-                                    folder: PathBuf::from(folder),
-                                    master_year,
-                                };
+                                    let request = ImportRequestParams::FromTorrent {
+                                        torrent_source,
+                                        discogs_release: Some(discogs_release),
+                                        mb_release: None,
+                                        master_year,
+                                        seed_after_download: seed_flag,
+                                    };
 
-                                match import_service.send_request(request).await {
-                                    Ok((album_id, _release_id)) => {
-                                        info!("Import started, navigating to album: {}", album_id);
-                                        // Reset import state before navigating
-                                        import_context_for_reset.reset();
-                                        navigator.push(Route::AlbumDetail {
-                                            album_id,
-                                            release_id: String::new(),
-                                        });
-                                    }
-                                    Err(e) => {
-                                        import_error_message
-                                            .set(Some(format!("Failed to start import: {}", e)));
+                                    match import_service.send_request(request).await {
+                                        Ok((album_id, _release_id)) => {
+                                            info!(
+                                                "Import started, navigating to album: {}",
+                                                album_id
+                                            );
+                                            // Reset import state before navigating
+                                            import_context_for_reset.reset();
+                                            navigator.push(Route::AlbumDetail {
+                                                album_id,
+                                                release_id: String::new(),
+                                            });
+                                        }
+                                        Err(e) => {
+                                            import_error_message.set(Some(format!(
+                                                "Failed to start import: {}",
+                                                e
+                                            )));
+                                        }
                                     }
                                 }
+                                Err(e) => {
+                                    import_error_message.set(Some(format!(
+                                        "Failed to fetch Discogs release: {}",
+                                        e
+                                    )));
+                                }
                             }
-                            Err(e) => {
-                                import_error_message
-                                    .set(Some(format!("Failed to fetch Discogs release: {}", e)));
+                        }
+                        MatchSource::MusicBrainz(mb_release) => {
+                            info!(
+                                "Starting torrent import for MusicBrainz release: {}",
+                                mb_release.title
+                            );
+
+                            let request = ImportRequestParams::FromTorrent {
+                                torrent_source,
+                                discogs_release: None,
+                                mb_release: Some(mb_release.clone()),
+                                master_year,
+                                seed_after_download: seed_flag,
+                            };
+
+                            match import_service.send_request(request).await {
+                                Ok((album_id, _release_id)) => {
+                                    info!("Import started, navigating to album: {}", album_id);
+                                    // Reset import state before navigating
+                                    import_context_for_reset.reset();
+                                    navigator.push(Route::AlbumDetail {
+                                        album_id,
+                                        release_id: String::new(),
+                                    });
+                                }
+                                Err(e) => {
+                                    import_error_message
+                                        .set(Some(format!("Failed to start import: {}", e)));
+                                }
                             }
                         }
                     }
-                    MatchSource::MusicBrainz(mb_release) => {
-                        info!(
-                            "Starting import for MusicBrainz release: {}",
-                            mb_release.title
-                        );
+                } else {
+                    // Folder import (existing logic)
+                    match candidate.source.clone() {
+                        MatchSource::Discogs(discogs_result) => {
+                            let master_id = match discogs_result.master_id {
+                                Some(id) => id.to_string(),
+                                None => {
+                                    import_error_message
+                                        .set(Some("Discogs result has no master_id".to_string()));
+                                    return;
+                                }
+                            };
+                            let release_id = discogs_result.id.to_string();
 
-                        let request = ImportRequestParams::FromFolder {
-                            discogs_release: None,
-                            mb_release: Some(mb_release.clone()),
-                            folder: PathBuf::from(folder),
-                            master_year,
-                        };
+                            match import_context_for_reset
+                                .import_release(release_id, master_id)
+                                .await
+                            {
+                                Ok(discogs_release) => {
+                                    info!(
+                                        "Starting import for Discogs release: {}",
+                                        discogs_release.title
+                                    );
 
-                        match import_service.send_request(request).await {
-                            Ok((album_id, _release_id)) => {
-                                info!("Import started, navigating to album: {}", album_id);
-                                // Reset import state before navigating
-                                import_context_for_reset.reset();
-                                navigator.push(Route::AlbumDetail {
-                                    album_id,
-                                    release_id: String::new(),
-                                });
+                                    let request = ImportRequestParams::FromFolder {
+                                        discogs_release: Some(discogs_release),
+                                        mb_release: None,
+                                        folder: PathBuf::from(folder),
+                                        master_year,
+                                    };
+
+                                    match import_service.send_request(request).await {
+                                        Ok((album_id, _release_id)) => {
+                                            info!(
+                                                "Import started, navigating to album: {}",
+                                                album_id
+                                            );
+                                            // Reset import state before navigating
+                                            import_context_for_reset.reset();
+                                            navigator.push(Route::AlbumDetail {
+                                                album_id,
+                                                release_id: String::new(),
+                                            });
+                                        }
+                                        Err(e) => {
+                                            import_error_message.set(Some(format!(
+                                                "Failed to start import: {}",
+                                                e
+                                            )));
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    import_error_message.set(Some(format!(
+                                        "Failed to fetch Discogs release: {}",
+                                        e
+                                    )));
+                                }
                             }
-                            Err(e) => {
-                                import_error_message
-                                    .set(Some(format!("Failed to start import: {}", e)));
+                        }
+                        MatchSource::MusicBrainz(mb_release) => {
+                            info!(
+                                "Starting import for MusicBrainz release: {}",
+                                mb_release.title
+                            );
+
+                            let request = ImportRequestParams::FromFolder {
+                                discogs_release: None,
+                                mb_release: Some(mb_release.clone()),
+                                folder: PathBuf::from(folder),
+                                master_year,
+                            };
+
+                            match import_service.send_request(request).await {
+                                Ok((album_id, _release_id)) => {
+                                    info!("Import started, navigating to album: {}", album_id);
+                                    // Reset import state before navigating
+                                    import_context_for_reset.reset();
+                                    navigator.push(Route::AlbumDetail {
+                                        album_id,
+                                        release_id: String::new(),
+                                    });
+                                }
+                                Err(e) => {
+                                    import_error_message
+                                        .set(Some(format!("Failed to start import: {}", e)));
+                                }
                             }
                         }
                     }
@@ -475,11 +713,17 @@ pub fn FolderDetectionPage() -> Element {
                 }
             } else {
                 div { class: "space-y-6",
-                    // Show selected folder
+                    // Show selected folder or torrent
                     div { class: "bg-white rounded-lg shadow p-6",
                         div { class: "mb-6 pb-4 border-b border-gray-200",
                             div { class: "flex items-start justify-between mb-3",
-                                h3 { class: "text-sm font-semibold text-gray-700 uppercase tracking-wide", "Selected Folder" }
+                                h3 { class: "text-sm font-semibold text-gray-700 uppercase tracking-wide",
+                                    if torrent_source.read().is_some() {
+                                        "Selected Torrent"
+                                    } else {
+                                        "Selected Folder"
+                                    }
+                                }
                                 button {
                                     class: "px-3 py-1 text-sm text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-md transition-colors",
                                     onclick: on_change_folder,
