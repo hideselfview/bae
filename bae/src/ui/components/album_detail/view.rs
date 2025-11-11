@@ -6,6 +6,7 @@ use rfd::AsyncFileDialog;
 use tracing::error;
 
 use super::super::use_playback_service;
+use super::super::use_torrent_seeder;
 use super::album_art::AlbumArt;
 use super::track_row::TrackRow;
 use super::utils::get_album_track_ids;
@@ -26,6 +27,7 @@ pub fn AlbumDetailView(
     let playback = use_playback_service();
     let library_manager = use_library_manager();
     let app_context = use_context::<AppContext>();
+    let torrent_seeder = use_torrent_seeder();
     let mut show_delete_confirm = use_signal(|| false);
     let mut show_release_delete_confirm = use_signal(|| None::<String>);
     let mut is_deleting = use_signal(|| false);
@@ -36,6 +38,28 @@ pub fn AlbumDetailView(
     let mut show_view_files_modal = use_signal(|| None::<String>);
     let is_exporting = use_signal(|| false);
     let mut export_error = use_signal(|| None::<String>);
+
+    // Load torrent info for all releases
+    let library_manager_for_torrents = library_manager.clone();
+    let releases_for_torrents = releases.clone();
+    let torrents_resource = use_resource(move || {
+        let library_manager = library_manager_for_torrents.clone();
+        let releases = releases_for_torrents.clone();
+        async move {
+            let mut torrents = std::collections::HashMap::new();
+            for release in &releases {
+                if let Ok(Some(torrent)) = library_manager
+                    .get()
+                    .database()
+                    .get_torrent_by_release(&release.id)
+                    .await
+                {
+                    torrents.insert(release.id.clone(), torrent);
+                }
+            }
+            Ok::<_, crate::library::LibraryError>(torrents)
+        }
+    });
 
     let artist_name = if artists.is_empty() {
         "Unknown Artist".to_string()
@@ -449,6 +473,18 @@ pub fn AlbumDetailView(
                                                                     let release_id_for_delete_action = release_id_for_delete.clone();
                                                                     let release_id_for_export = release_id_for_delete.clone();
                                                                     let release_id_for_view_files = release_id_for_delete.clone();
+                                                                    let release_id_for_seeding = release_id_for_delete.clone();
+                                                                    let torrent_seeder_clone = torrent_seeder.clone();
+                                                                    let library_manager_for_refresh = library_manager.clone();
+                                                                    let torrents = torrents_resource
+                                                                        .value()
+                                                                        .read()
+                                                                        .as_ref()
+                                                                        .and_then(|r| r.as_ref().ok())
+                                                                        .cloned()
+                                                                        .unwrap_or_default();
+                                                                    let torrent = torrents.get(&release_id_for_seeding);
+                                                                    let is_seeding = torrent.map(|t| t.is_seeding).unwrap_or(false);
                                                                     rsx! {
                                                                         div {
                                                                             class: "absolute right-0 top-full mt-1 bg-gray-700 rounded-lg shadow-lg overflow-hidden z-10 border border-gray-600 min-w-[160px]",
@@ -463,6 +499,47 @@ pub fn AlbumDetailView(
                                                                                     }
                                                                                 },
                                                                                 "View Files"
+                                                                            }
+                                                                            if torrent.is_some() {
+                                                                                if is_seeding {
+                                                                                    button {
+                                                                                        class: "w-full px-4 py-2 text-left text-white hover:bg-gray-600 transition-colors flex items-center gap-2 text-sm",
+                                                                                        disabled: is_deleting() || is_exporting(),
+                                                                                        onclick: {
+                                                                                            let release_id = release_id_for_seeding.clone();
+                                                                                            let seeder = torrent_seeder_clone.clone();
+                                                                                            let mut torrents_resource_clone = torrents_resource;
+                                                                                            move |evt| {
+                                                                                                evt.stop_propagation();
+                                                                                                show_release_dropdown.set(None);
+                                                                                                if !is_deleting() && !is_exporting() {
+                                                                                                    seeder.stop_seeding(release_id.clone());
+                                                                                                    torrents_resource_clone.restart();
+                                                                                                }
+                                                                                            }
+                                                                                        },
+                                                                                        "Stop Seeding"
+                                                                                    }
+                                                                                } else {
+                                                                                    button {
+                                                                                        class: "w-full px-4 py-2 text-left text-white hover:bg-gray-600 transition-colors flex items-center gap-2 text-sm",
+                                                                                        disabled: is_deleting() || is_exporting(),
+                                                                                        onclick: {
+                                                                                            let release_id = release_id_for_seeding.clone();
+                                                                                            let seeder = torrent_seeder_clone.clone();
+                                                                                            let mut torrents_resource_clone = torrents_resource;
+                                                                                            move |evt| {
+                                                                                                evt.stop_propagation();
+                                                                                                show_release_dropdown.set(None);
+                                                                                                if !is_deleting() && !is_exporting() {
+                                                                                                    seeder.start_seeding(release_id.clone());
+                                                                                                    torrents_resource_clone.restart();
+                                                                                                }
+                                                                                            }
+                                                                                        },
+                                                                                        "Start Seeding"
+                                                                                    }
+                                                                                }
                                                                             }
                                                                             button {
                                                                                 class: "w-full px-4 py-2 text-left text-white hover:bg-gray-600 transition-colors flex items-center gap-2 text-sm",
