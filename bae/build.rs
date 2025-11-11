@@ -2,7 +2,7 @@ use std::path::Path;
 use std::process::Command;
 
 fn main() {
-    // Compile C++ custom storage backend
+    // Compile C++ custom storage backend with cxx bridge
     compile_cpp_storage();
     // Run tailwindcss to generate CSS (using locally installed version)
     let output = Command::new("npx")
@@ -153,6 +153,7 @@ fn compile_cpp_storage() {
     let source = cpp_dir.join("bae_storage.cpp");
     let helpers_header = cpp_dir.join("bae_storage_helpers.h");
     let helpers_source = cpp_dir.join("bae_storage_helpers.cpp");
+    let ffi_rs = Path::new(manifest_dir).join("src/torrent/ffi.rs");
 
     if !header.exists() || !source.exists() || !helpers_header.exists() || !helpers_source.exists()
     {
@@ -160,18 +161,33 @@ fn compile_cpp_storage() {
         return;
     }
 
-    // Use cc crate to compile C++ code
+    // Use cxx_build to compile C++ code with bridge code generation
+    // This ensures cxx bridge code is generated and compiled together with our C++ code
     // Note: This requires libtorrent development headers to be installed
-    cc::Build::new()
-        .cpp(true)
+    let wrappers_source = cpp_dir.join("bae_storage_cxx_wrappers.cpp");
+    cxx_build::bridge(&ffi_rs)
         .file(&source)
         .file(&helpers_source)
+        .file(&wrappers_source)
         .include(&cpp_dir)
         .include("/opt/homebrew/include") // macOS Homebrew
         .include("/usr/local/include") // Standard Unix
         .flag("-std=c++17")
         .compile("bae_storage");
 
+    println!("cargo:rerun-if-changed={}", ffi_rs.display());
+    println!("cargo:rerun-if-changed={}", source.display());
+    println!("cargo:rerun-if-changed={}", helpers_source.display());
+    println!("cargo:rerun-if-changed={}", header.display());
+    println!("cargo:rerun-if-changed={}", helpers_header.display());
+    println!("cargo:rerun-if-changed={}", wrappers_source.display());
+
+    // Link directives for the library and tests.
+    // Note: These directives DON'T propagate to binaries automatically - binaries must
+    // use #[link] attributes (see src/main.rs) to link these native libraries.
+    let out_dir = std::env::var("OUT_DIR").unwrap();
+    println!("cargo:rustc-link-search=native={}", out_dir);
+    println!("cargo:rustc-link-lib=static=bae_storage");
     println!("cargo:rustc-link-lib=torrent-rasterbar");
     println!("cargo:rustc-link-search=native=/opt/homebrew/lib"); // macOS Homebrew
     println!("cargo:rustc-link-search=native=/usr/local/lib"); // Standard Unix

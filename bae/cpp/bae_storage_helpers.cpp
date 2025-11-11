@@ -56,7 +56,7 @@ torrent_handle* session_add_torrent(session* sess, std::unique_ptr<add_torrent_p
     return new torrent_handle(std::move(handle));
 }
 
-std::string torrent_get_name(torrent_handle* handle) {
+std::string torrent_get_name_internal(torrent_handle* handle) {
     if (!handle) {
         return "";
     }
@@ -76,9 +76,11 @@ int32_t torrent_get_storage_index(torrent_handle* handle) {
     if (!handle) {
         return -1;
     }
-    torrent_status status = handle->status();
-    // storage_index is available in torrent_status
-    return static_cast<int32_t>(status.storage_index);
+    // storage_index is not directly available in torrent_status
+    // We need to get it from the session's internal state
+    // For now, return -1 and let Rust track it via storage_index_map
+    // TODO: Find proper way to get storage_index from torrent_handle
+    return -1;
 }
 
 int32_t torrent_get_piece_length(torrent_handle* handle) {
@@ -86,11 +88,11 @@ int32_t torrent_get_piece_length(torrent_handle* handle) {
         return 0;
     }
     torrent_status status = handle->status();
-    if (!status.torrent_file) {
+    auto torrent_file = status.torrent_file.lock();
+    if (!torrent_file) {
         return 0;
     }
-    auto const& info = *status.torrent_file;
-    return static_cast<int32_t>(info.piece_length());
+    return static_cast<int32_t>(torrent_file->piece_length());
 }
 
 int64_t torrent_get_total_size(torrent_handle* handle) {
@@ -106,11 +108,11 @@ int32_t torrent_get_num_pieces(torrent_handle* handle) {
         return 0;
     }
     torrent_status status = handle->status();
-    if (!status.torrent_file) {
+    auto torrent_file = status.torrent_file.lock();
+    if (!torrent_file) {
         return 0;
     }
-    auto const& info = *status.torrent_file;
-    return static_cast<int32_t>(info.num_pieces());
+    return static_cast<int32_t>(torrent_file->num_pieces());
 }
 
 bool torrent_have_piece(torrent_handle* handle, int32_t piece_index) {

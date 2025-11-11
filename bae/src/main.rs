@@ -1,3 +1,12 @@
+// Link native libraries for C++ FFI bridge.
+// These link directives are needed because link flags from a library's build.rs
+// don't automatically propagate to binaries that depend on it. While build.rs
+// generates and compiles libbae_storage.a, we need to explicitly tell the binary
+// linker to link it along with libtorrent-rasterbar.
+#[link(name = "bae_storage", kind = "static")]
+#[link(name = "torrent-rasterbar")]
+extern "C" {}
+
 use tracing::{error, info};
 
 use crate::db::Database;
@@ -20,7 +29,6 @@ mod torrent;
 mod ui;
 
 use library::SharedLibraryManager;
-use std::sync::Arc;
 use subsonic::create_router;
 
 /// Root application context containing all top-level dependencies

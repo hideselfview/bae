@@ -52,8 +52,9 @@ std::unique_ptr<add_torrent_params> parse_magnet_uri(const std::string& magnet, 
 /// Add a torrent to a session using our Session type
 torrent_handle* session_add_torrent(session* sess, std::unique_ptr<add_torrent_params>& params);
 
-/// Get the name of a torrent from its handle
-std::string torrent_get_name(torrent_handle* handle);
+/// Get the name of a torrent from its handle (internal version)
+/// Note: This is wrapped for cxx bridge - the global namespace version returns rust::String
+std::string torrent_get_name_internal(torrent_handle* handle);
 
 /// Check if a torrent has metadata available
 bool torrent_has_metadata(torrent_handle* handle);
@@ -71,6 +72,38 @@ int32_t torrent_get_num_pieces(torrent_handle* handle);
 bool torrent_have_piece(torrent_handle* handle, int32_t piece_index);
 
 } // namespace libtorrent
+
+// Type aliases for cxx bridge (must be in global namespace)
+using BaeStorageConstructor = std::function<std::unique_ptr<libtorrent::disk_interface>(libtorrent::io_context&, libtorrent::settings_interface const&, libtorrent::counters&)>;
+using SessionParams = libtorrent::session_params;
+using Session = libtorrent::session;
+using AddTorrentParams = libtorrent::add_torrent_params;
+using TorrentHandle = libtorrent::torrent_handle;
+
+// Forward declarations for global namespace wrappers
+// cxx expects functions in global namespace, all are implemented in bae_storage_cxx_wrappers.cpp
+std::unique_ptr<Session> create_session_with_params(std::unique_ptr<SessionParams> params);
+Session* get_session_ptr(std::unique_ptr<Session>& sess);
+TorrentHandle* session_add_torrent(Session* sess, std::unique_ptr<AddTorrentParams>& params);
+bool torrent_has_metadata(TorrentHandle* handle);
+int32_t torrent_get_storage_index(TorrentHandle* handle);
+int32_t torrent_get_piece_length(TorrentHandle* handle);
+int64_t torrent_get_total_size(TorrentHandle* handle);
+int32_t torrent_get_num_pieces(TorrentHandle* handle);
+bool torrent_have_piece(TorrentHandle* handle, int32_t piece_index);
+
+// Functions wrapped for cxx bridge (implemented in bae_storage_cxx_wrappers.cpp)
+// These use cxx Rust types and convert to C++ types
+#include "rust/cxx.h"
+
+std::unique_ptr<BaeStorageConstructor> create_bae_storage_constructor(
+    rust::Fn<rust::Vec<uint8_t>(int32_t, int32_t, int32_t, int32_t)> read_cb,
+    rust::Fn<bool(int32_t, int32_t, int32_t, rust::Slice<const uint8_t>)> write_cb,
+    rust::Fn<bool(int32_t, int32_t, rust::Slice<const uint8_t>)> hash_cb
+);
+std::unique_ptr<SessionParams> create_session_params_with_storage(std::unique_ptr<BaeStorageConstructor> disk_io);
+std::unique_ptr<AddTorrentParams> parse_magnet_uri(rust::Str magnet, rust::Str save_path);
+rust::String torrent_get_name(TorrentHandle* handle);
 
 #endif // BAE_STORAGE_HELPERS_H
 
