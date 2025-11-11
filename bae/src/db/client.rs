@@ -1569,7 +1569,10 @@ impl Database {
     }
 
     /// Get torrent by release ID
-    pub async fn get_torrent_by_release(&self, release_id: &str) -> Result<Option<DbTorrent>, sqlx::Error> {
+    pub async fn get_torrent_by_release(
+        &self,
+        release_id: &str,
+    ) -> Result<Option<DbTorrent>, sqlx::Error> {
         let row = sqlx::query(
             r#"
             SELECT id, release_id, info_hash, magnet_link, torrent_name,
@@ -1600,7 +1603,10 @@ impl Database {
     }
 
     /// Insert a torrent piece mapping
-    pub async fn insert_torrent_piece_mapping(&self, mapping: &DbTorrentPieceMapping) -> Result<(), sqlx::Error> {
+    pub async fn insert_torrent_piece_mapping(
+        &self,
+        mapping: &DbTorrentPieceMapping,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
             INSERT INTO torrent_piece_mappings (
@@ -1621,7 +1627,10 @@ impl Database {
     }
 
     /// Get piece mappings for a torrent
-    pub async fn get_torrent_piece_mappings(&self, torrent_id: &str) -> Result<Vec<DbTorrentPieceMapping>, sqlx::Error> {
+    pub async fn get_torrent_piece_mappings(
+        &self,
+        torrent_id: &str,
+    ) -> Result<Vec<DbTorrentPieceMapping>, sqlx::Error> {
         let rows = sqlx::query(
             r#"
             SELECT id, torrent_id, piece_index, chunk_ids,
@@ -1649,7 +1658,11 @@ impl Database {
     }
 
     /// Get a specific piece mapping
-    pub async fn get_torrent_piece_mapping(&self, torrent_id: &str, piece_index: i32) -> Result<Option<DbTorrentPieceMapping>, sqlx::Error> {
+    pub async fn get_torrent_piece_mapping(
+        &self,
+        torrent_id: &str,
+        piece_index: i32,
+    ) -> Result<Option<DbTorrentPieceMapping>, sqlx::Error> {
         let row = sqlx::query(
             r#"
             SELECT id, torrent_id, piece_index, chunk_ids,
@@ -1675,7 +1688,11 @@ impl Database {
     }
 
     /// Update torrent seeding status
-    pub async fn update_torrent_seeding(&self, torrent_id: &str, is_seeding: bool) -> Result<(), sqlx::Error> {
+    pub async fn update_torrent_seeding(
+        &self,
+        torrent_id: &str,
+        is_seeding: bool,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query("UPDATE torrents SET is_seeding = ? WHERE id = ?")
             .bind(is_seeding)
             .bind(torrent_id)

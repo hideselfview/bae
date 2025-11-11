@@ -1,13 +1,13 @@
 use super::file_list::FileInfo;
 use super::{
-    file_list::FileList, folder_selector::FolderSelector,
-    manual_search_panel::ManualSearchPanel, match_list::MatchList,
+    file_list::FileList, folder_selector::FolderSelector, manual_search_panel::ManualSearchPanel,
+    match_list::MatchList,
 };
-use crate::ui::components::import::{ImportSourceSelector, ImportSource, TorrentInput};
 use crate::import::{ImportRequestParams, MatchCandidate, MatchSource};
 use crate::library::use_import_service;
 use crate::library::use_library_manager;
 use crate::musicbrainz::lookup_by_discid;
+use crate::ui::components::import::{ImportSource, ImportSourceSelector, TorrentInput};
 use crate::ui::import_context::ImportContext;
 use crate::ui::Route;
 use dioxus::prelude::*;

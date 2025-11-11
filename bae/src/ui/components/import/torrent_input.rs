@@ -1,5 +1,5 @@
-use dioxus::prelude::*;
 use dioxus::html::KeyboardEvent;
+use dioxus::prelude::*;
 use rfd::AsyncFileDialog;
 use std::path::PathBuf;
 
@@ -139,4 +139,3 @@ pub fn TorrentInput(
         }
     }
 }
-
