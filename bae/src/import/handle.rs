@@ -40,6 +40,8 @@ pub struct ImportRequest {
     /// Torrent source (for torrent imports only, stored to recreate handle in import service)
     /// We can't send TorrentClient/TorrentHandle through channels as they contain UniquePtr
     pub torrent_source: Option<TorrentSource>,
+    /// Whether to start seeding after download completes (for torrent imports only)
+    pub seed_after_download: bool,
 }
 
 /// Torrent-specific metadata for import
@@ -50,6 +52,7 @@ pub struct TorrentImportMetadata {
     pub total_size_bytes: i64,
     pub piece_length: i32,
     pub num_pieces: i32,
+    pub seed_after_download: bool,
 }
 
 impl ImportHandle {
@@ -199,6 +202,7 @@ impl ImportHandle {
                         cue_flac_metadata,
                         torrent_metadata: None,
                         torrent_source: None,
+                        seed_after_download: false,
                     })
                     .map_err(|_| "Failed to queue validated album for import".to_string())?;
 
@@ -209,6 +213,7 @@ impl ImportHandle {
                 discogs_release,
                 mb_release,
                 master_year,
+                seed_after_download,
             } => {
                 // Validate that at least one release is provided
                 if discogs_release.is_none() && mb_release.is_none() {
@@ -405,6 +410,7 @@ impl ImportHandle {
                     total_size_bytes: total_size,
                     piece_length,
                     num_pieces,
+                    seed_after_download,
                 };
 
                 // Save torrent record (will be used for seeding later)
@@ -445,6 +451,7 @@ impl ImportHandle {
                         cue_flac_metadata,
                         torrent_metadata: Some(torrent_metadata),
                         torrent_source: Some(torrent_source_for_request),
+                        seed_after_download,
                     })
                     .map_err(|_| "Failed to queue validated torrent for import".to_string())?;
 

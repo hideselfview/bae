@@ -1,8 +1,9 @@
 use crate::cache::CacheManager;
 use crate::db::{Database, DbTorrent, DbTorrentPieceMapping};
-use crate::encryption::EncryptionService;
 use crate::torrent::client::TorrentClient;
+use crate::torrent::{BaeStorage, TorrentPieceMapper};
 use thiserror::Error;
+use tokio::sync::mpsc;
 use tracing::{error, info};
 
 #[derive(Error, Debug)]
@@ -11,35 +12,110 @@ pub enum SeederError {
     Database(#[from] sqlx::Error),
     #[error("Cache error: {0}")]
     Cache(#[from] crate::cache::CacheError),
-    #[error("Encryption error: {0}")]
-    Encryption(#[from] crate::encryption::EncryptionError),
     #[error("Torrent error: {0}")]
     Torrent(#[from] crate::torrent::client::TorrentError),
     #[error("Piece mapping error: {0}")]
     PieceMapping(String),
 }
 
-/// Manages seeding torrents from cached chunks
-pub struct TorrentSeeder {
+/// Commands sent to the seeder service
+#[derive(Debug, Clone)]
+pub enum SeederCommand {
+    StartSeeding(String), // release_id
+    StopSeeding(String),  // release_id
+}
+
+/// Handle to the seeder service for sending commands
+#[derive(Clone)]
+pub struct TorrentSeederHandle {
+    command_tx: mpsc::UnboundedSender<SeederCommand>,
+}
+
+impl TorrentSeederHandle {
+    pub fn start_seeding(&self, release_id: String) {
+        let _ = self
+            .command_tx
+            .send(SeederCommand::StartSeeding(release_id));
+    }
+
+    pub fn stop_seeding(&self, release_id: String) {
+        let _ = self.command_tx.send(SeederCommand::StopSeeding(release_id));
+    }
+}
+
+/// Manages seeding torrents from cached chunks via custom storage
+/// Runs on a dedicated thread with its own Tokio runtime
+struct TorrentSeeder {
+    command_rx: mpsc::UnboundedReceiver<SeederCommand>,
     client: TorrentClient,
     cache_manager: CacheManager,
-    encryption_service: EncryptionService,
     database: Database,
+    chunk_size_bytes: usize,
+}
+
+/// Start the torrent seeder service
+/// Returns a handle for sending commands to the seeder
+pub fn start(
+    cache_manager: CacheManager,
+    database: Database,
+    chunk_size_bytes: usize,
+    _runtime_handle: tokio::runtime::Handle,
+) -> TorrentSeederHandle {
+    let (command_tx, command_rx) = mpsc::unbounded_channel();
+
+    // Clone for the thread
+    let cache_manager_for_worker = cache_manager.clone();
+    let database_for_worker = database.clone();
+
+    // Spawn the service task on a dedicated thread (TorrentClient isn't Send-safe due to FFI)
+    std::thread::spawn(move || {
+        // Create a new tokio runtime for this thread
+        let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
+
+        let rt_handle = rt.handle().clone();
+        rt.block_on(async move {
+            // Create TorrentClient on this thread
+            let client = TorrentClient::new(rt_handle).expect("Failed to create torrent client");
+
+            let service = TorrentSeeder {
+                command_rx,
+                client,
+                cache_manager: cache_manager_for_worker,
+                database: database_for_worker,
+                chunk_size_bytes,
+            };
+
+            service.run_seeder_worker().await;
+        });
+    });
+
+    TorrentSeederHandle { command_tx }
 }
 
 impl TorrentSeeder {
-    pub fn new(
-        client: TorrentClient,
-        cache_manager: CacheManager,
-        encryption_service: EncryptionService,
-        database: Database,
-    ) -> Self {
-        TorrentSeeder {
-            client,
-            cache_manager,
-            encryption_service,
-            database,
+    async fn run_seeder_worker(mut self) {
+        info!("TorrentSeeder worker started");
+
+        loop {
+            match self.command_rx.recv().await {
+                Some(SeederCommand::StartSeeding(release_id)) => {
+                    if let Err(e) = self.start_seeding(&release_id).await {
+                        error!("Failed to start seeding for release {}: {}", release_id, e);
+                    }
+                }
+                Some(SeederCommand::StopSeeding(release_id)) => {
+                    if let Err(e) = self.stop_seeding(&release_id).await {
+                        error!("Failed to stop seeding for release {}: {}", release_id, e);
+                    }
+                }
+                None => {
+                    info!("TorrentSeeder command channel closed");
+                    break;
+                }
+            }
         }
+
+        info!("TorrentSeeder worker stopped");
     }
 
     /// Start seeding a torrent for a release
@@ -51,6 +127,51 @@ impl TorrentSeeder {
             "Starting seeding for release {} (torrent: {})",
             release_id, torrent.info_hash
         );
+
+        // Re-add torrent to libtorrent session using stored magnet link
+        let magnet_link = torrent.magnet_link.as_ref().ok_or_else(|| {
+            SeederError::PieceMapping("Torrent has no magnet link stored".to_string())
+        })?;
+
+        let torrent_handle = self
+            .client
+            .add_magnet_link(magnet_link)
+            .await
+            .map_err(|e| SeederError::Torrent(e))?;
+
+        // Wait for metadata
+        torrent_handle
+            .wait_for_metadata()
+            .await
+            .map_err(|e| SeederError::Torrent(e))?;
+
+        // Get storage_index from handle
+        let storage_index = torrent_handle
+            .storage_index()
+            .await
+            .map_err(|e| SeederError::Torrent(e))?;
+
+        // Create piece mapper
+        let piece_mapper = TorrentPieceMapper::new(
+            torrent.piece_length as usize,
+            self.chunk_size_bytes,
+            torrent.num_pieces as usize,
+            torrent.total_size_bytes as usize,
+        );
+
+        // Create BaeStorage instance
+        let bae_storage = BaeStorage::new(
+            self.cache_manager.clone(),
+            self.database.clone(),
+            piece_mapper,
+            torrent.info_hash.clone(),
+            torrent.release_id.clone(),
+        );
+
+        // Register storage with torrent client
+        self.client
+            .register_storage(storage_index, torrent.info_hash.clone(), bae_storage)
+            .await;
 
         // Load piece mappings
         let piece_mappings = self.get_piece_mappings(&torrent.id).await?;
@@ -70,6 +191,8 @@ impl TorrentSeeder {
 
         // Mark torrent as seeding in database
         self.mark_torrent_seeding(&torrent.id, true).await?;
+
+        info!("Successfully started seeding for release {}", release_id);
 
         Ok(())
     }
@@ -103,105 +226,6 @@ impl TorrentSeeder {
         self.mark_torrent_seeding(&torrent.id, false).await?;
 
         Ok(())
-    }
-
-    /// Read a piece of data from cached chunks
-    pub async fn read_piece(
-        &self,
-        torrent_id: &str,
-        piece_index: i32,
-    ) -> Result<Vec<u8>, SeederError> {
-        // Get piece mapping
-        let mapping = self.get_piece_mapping(torrent_id, piece_index).await?;
-
-        // Parse chunk IDs
-        let chunk_ids: Vec<String> = serde_json::from_str(&mapping.chunk_ids)
-            .map_err(|e| SeederError::PieceMapping(format!("Failed to parse chunk IDs: {}", e)))?;
-
-        if chunk_ids.is_empty() {
-            return Err(SeederError::PieceMapping(
-                "No chunks mapped to piece".to_string(),
-            ));
-        }
-
-        // Read and decrypt chunks
-        let mut decrypted_chunks = Vec::new();
-        for chunk_id in &chunk_ids {
-            let cached_data = self
-                .cache_manager
-                .get_chunk(chunk_id)
-                .await?
-                .ok_or_else(|| {
-                    SeederError::Cache(crate::cache::CacheError::Io(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        format!("Chunk {} not in cache", chunk_id),
-                    )))
-                })?;
-
-            let decrypted = self.encryption_service.decrypt_chunk(&cached_data)?;
-            decrypted_chunks.push(decrypted);
-        }
-
-        // Extract piece bytes from chunks
-        // Piece may span multiple chunks, need to extract the right byte range
-        let piece_data = self.extract_piece_from_chunks(
-            &decrypted_chunks,
-            mapping.start_byte_in_first_chunk as usize,
-            mapping.end_byte_in_last_chunk as usize,
-        )?;
-
-        Ok(piece_data)
-    }
-
-    /// Extract piece bytes from decrypted chunks
-    fn extract_piece_from_chunks(
-        &self,
-        chunks: &[Vec<u8>],
-        start_byte: usize,
-        end_byte: usize,
-    ) -> Result<Vec<u8>, SeederError> {
-        if chunks.is_empty() {
-            return Err(SeederError::PieceMapping("No chunks provided".to_string()));
-        }
-
-        if chunks.len() == 1 {
-            // Piece is entirely within one chunk
-            let chunk = &chunks[0];
-            if end_byte > chunk.len() {
-                return Err(SeederError::PieceMapping(format!(
-                    "Piece end byte {} exceeds chunk size {}",
-                    end_byte,
-                    chunk.len()
-                )));
-            }
-            return Ok(chunk[start_byte..end_byte].to_vec());
-        }
-
-        // Piece spans multiple chunks
-        let mut piece_data = Vec::new();
-        let mut current_offset = 0;
-
-        for (i, chunk) in chunks.iter().enumerate() {
-            let chunk_start = if i == 0 { start_byte } else { 0 };
-            let chunk_end = if i == chunks.len() - 1 {
-                end_byte - current_offset
-            } else {
-                chunk.len()
-            };
-
-            if chunk_end > chunk.len() {
-                return Err(SeederError::PieceMapping(format!(
-                    "Invalid chunk range: end {} exceeds chunk size {}",
-                    chunk_end,
-                    chunk.len()
-                )));
-            }
-
-            piece_data.extend_from_slice(&chunk[chunk_start..chunk_end]);
-            current_offset += chunk.len();
-        }
-
-        Ok(piece_data)
     }
 
     /// Get torrent by release ID

@@ -149,6 +149,7 @@ impl ImportService {
             cue_flac_metadata,
             torrent_metadata,
             torrent_source,
+            seed_after_download,
         } = request;
 
         // Mark release as importing now that pipeline is starting

@@ -5,28 +5,35 @@ use std::path::PathBuf;
 
 #[component]
 pub fn TorrentInput(
-    on_file_select: EventHandler<PathBuf>,
-    on_magnet_link: EventHandler<String>,
+    on_file_select: EventHandler<(PathBuf, bool)>,
+    on_magnet_link: EventHandler<(String, bool)>,
     on_error: EventHandler<String>,
 ) -> Element {
     let mut magnet_link = use_signal(|| String::new());
     let mut input_mode = use_signal(|| "file"); // "file" or "magnet"
+    let mut seed_after_download = use_signal(|| true);
 
-    let on_file_button_click = move |_| {
-        spawn(async move {
-            if let Some(file_handle) = AsyncFileDialog::new()
-                .set_title("Select Torrent File")
-                .add_filter("Torrent", &["torrent"])
-                .pick_file()
-                .await
-            {
-                on_file_select.call(file_handle.path().to_path_buf());
-            }
-        });
+    let on_file_button_click = {
+        let seed_after_download = seed_after_download;
+        let on_file_select = on_file_select.clone();
+        move |_| {
+            let seed_flag = *seed_after_download.read();
+            spawn(async move {
+                if let Some(file_handle) = AsyncFileDialog::new()
+                    .set_title("Select Torrent File")
+                    .add_filter("Torrent", &["torrent"])
+                    .pick_file()
+                    .await
+                {
+                    on_file_select.call((file_handle.path().to_path_buf(), seed_flag));
+                }
+            });
+        }
     };
 
     let on_magnet_submit = {
         let mut magnet_link = magnet_link;
+        let seed_after_download = seed_after_download;
         let on_error = on_error.clone();
         let on_magnet_link = on_magnet_link.clone();
         move |_| {
@@ -39,7 +46,8 @@ pub fn TorrentInput(
                 on_error.call("Invalid magnet link format".to_string());
                 return;
             }
-            on_magnet_link.call(link);
+            let seed_flag = *seed_after_download.read();
+            on_magnet_link.call((link, seed_flag));
         }
     };
 
@@ -134,6 +142,22 @@ pub fn TorrentInput(
                     p { class: "text-xs text-gray-500",
                         "Paste a magnet link to start downloading"
                     }
+                }
+            }
+
+            // Seed after download option
+            div { class: "mt-4 flex items-center space-x-2",
+                input {
+                    r#type: "checkbox",
+                    id: "seed-after-download",
+                    checked: *seed_after_download.read(),
+                    onchange: move |evt| seed_after_download.set(evt.checked()),
+                    class: "w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                }
+                label {
+                    r#for: "seed-after-download",
+                    class: "text-sm text-gray-700",
+                    "Seed after download"
                 }
             }
         }

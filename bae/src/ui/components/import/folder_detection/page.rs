@@ -46,14 +46,20 @@ pub fn FolderDetectionPage() -> Element {
         }
     };
 
-    let on_torrent_file_select = move |path: PathBuf| {
+    let on_torrent_file_select = move |(path, seed_after_download): (PathBuf, bool)| {
         // TODO: Handle torrent file selection
-        info!("Torrent file selected: {:?}", path);
+        info!(
+            "Torrent file selected: {:?}, seed_after_download: {}",
+            path, seed_after_download
+        );
     };
 
-    let on_magnet_link = move |magnet: String| {
+    let on_magnet_link = move |(magnet, seed_after_download): (String, bool)| {
         // TODO: Handle magnet link
-        info!("Magnet link: {}", magnet);
+        info!(
+            "Magnet link: {}, seed_after_download: {}",
+            magnet, seed_after_download
+        );
     };
 
     let on_torrent_error = {

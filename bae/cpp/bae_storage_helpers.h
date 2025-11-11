@@ -67,6 +67,9 @@ int32_t torrent_get_piece_length(torrent_handle* handle);
 int64_t torrent_get_total_size(torrent_handle* handle);
 int32_t torrent_get_num_pieces(torrent_handle* handle);
 
+/// Check if a piece is available (downloaded and verified)
+bool torrent_have_piece(torrent_handle* handle, int32_t piece_index);
+
 } // namespace libtorrent
 
 #endif // BAE_STORAGE_HELPERS_H

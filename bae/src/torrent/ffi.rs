@@ -76,6 +76,9 @@ mod ffi {
         unsafe fn torrent_get_piece_length(handle: *mut TorrentHandle) -> i32;
         unsafe fn torrent_get_total_size(handle: *mut TorrentHandle) -> i64;
         unsafe fn torrent_get_num_pieces(handle: *mut TorrentHandle) -> i32;
+
+        /// Check if a piece is available (downloaded and verified)
+        unsafe fn torrent_have_piece(handle: *mut TorrentHandle, piece_index: i32) -> bool;
     }
 }
 
@@ -83,6 +86,6 @@ pub use ffi::{
     create_bae_storage_constructor, create_session_params_with_storage, create_session_with_params,
     get_session_ptr, parse_magnet_uri, session_add_torrent, torrent_get_name,
     torrent_get_num_pieces, torrent_get_piece_length, torrent_get_storage_index,
-    torrent_get_total_size, torrent_has_metadata, AddTorrentParams, BaeStorageConstructor, Session,
-    SessionParams, TorrentHandle,
+    torrent_get_total_size, torrent_has_metadata, torrent_have_piece, AddTorrentParams,
+    BaeStorageConstructor, Session, SessionParams, TorrentHandle,
 };

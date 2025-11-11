@@ -20,6 +20,7 @@ mod torrent;
 mod ui;
 
 use library::SharedLibraryManager;
+use std::sync::Arc;
 use subsonic::create_router;
 
 /// Root application context containing all top-level dependencies
@@ -121,6 +122,14 @@ fn main() {
         chunk_size_bytes: config.chunk_size_bytes,
     };
 
+    // Create torrent seeder service (runs on dedicated thread)
+    let torrent_seeder = torrent::start_seeder(
+        cache_manager.clone(),
+        database.clone(),
+        config.chunk_size_bytes,
+        runtime_handle.clone(),
+    );
+
     // Create import service with shared runtime handle
     let import_handle = import::ImportService::start(
         import_config,
@@ -171,6 +180,7 @@ fn main() {
         cache: cache_manager.clone(),
         encryption_service: encryption_service.clone(),
         cloud_storage: cloud_storage.clone(),
+        torrent_seeder: torrent_seeder.clone(),
     };
 
     // Start Subsonic API server as async task on shared runtime

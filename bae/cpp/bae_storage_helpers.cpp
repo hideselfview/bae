@@ -113,5 +113,12 @@ int32_t torrent_get_num_pieces(torrent_handle* handle) {
     return static_cast<int32_t>(info.num_pieces());
 }
 
+bool torrent_have_piece(torrent_handle* handle, int32_t piece_index) {
+    if (!handle) {
+        return false;
+    }
+    return handle->have_piece(piece_index_t(piece_index));
+}
+
 } // namespace libtorrent
 

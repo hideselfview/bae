@@ -50,6 +50,7 @@ pub enum ImportRequestParams {
         discogs_release: Option<DiscogsRelease>,
         mb_release: Option<MbRelease>,
         master_year: u32,
+        seed_after_download: bool,
     },
 }
 
