@@ -34,39 +34,6 @@ fn main() {
     apply_dioxus_patch();
 }
 
-fn configure_libtorrent_paths() {
-    #[cfg(target_os = "macos")]
-    {
-        // Check for Homebrew installation
-        let homebrew_prefix = "/opt/homebrew";
-        let pkgconfig_path = format!("{}/lib/pkgconfig", homebrew_prefix);
-        let lib_path = format!("{}/lib", homebrew_prefix);
-
-        // Check if pkgconfig directory exists
-        if std::path::Path::new(&pkgconfig_path).exists() {
-            // Set PKG_CONFIG_PATH so libtorrent-sys can find libtorrent-rasterbar.pc
-            let existing_pkg_config = std::env::var("PKG_CONFIG_PATH").unwrap_or_default();
-            let new_pkg_config = if existing_pkg_config.is_empty() {
-                pkgconfig_path.clone()
-            } else {
-                format!("{}:{}", existing_pkg_config, pkgconfig_path)
-            };
-            std::env::set_var("PKG_CONFIG_PATH", &new_pkg_config);
-            println!("cargo:warning=Set PKG_CONFIG_PATH={}", new_pkg_config);
-
-            // Set LIBRARY_PATH for linking
-            let existing_lib = std::env::var("LIBRARY_PATH").unwrap_or_default();
-            let new_lib = if existing_lib.is_empty() {
-                lib_path.clone()
-            } else {
-                format!("{}:{}", existing_lib, lib_path)
-            };
-            std::env::set_var("LIBRARY_PATH", &new_lib);
-            println!("cargo:warning=Set LIBRARY_PATH={}", new_lib);
-        }
-    }
-}
-
 fn apply_dioxus_patch() {
     // Get patch file path (next to build.rs)
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
