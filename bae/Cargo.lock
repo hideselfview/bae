@@ -842,7 +842,6 @@ dependencies = [
  "keyring",
  "libc",
  "libflac-sys",
- "libtorrent",
  "musicbrainz_rs",
  "nom",
  "objc",
@@ -4045,25 +4044,6 @@ dependencies = [
  "cc",
  "pkg-config",
  "vcpkg",
-]
-
-[[package]]
-name = "libtorrent"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29c76963eecb5b118a7f79b291a6c4f0b7aec7227d4bcdeff4eaa3dd1d22131f"
-dependencies = [
- "libtorrent-sys",
-]
-
-[[package]]
-name = "libtorrent-sys"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "462828fbd214b15ad3cc9dffdd99cdc0dc833cb93ccab2d4ccdd3fabba64fcf2"
-dependencies = [
- "cxx",
- "cxx-build",
 ]
 
 [[package]]
