@@ -47,6 +47,11 @@ std::unique_ptr<SessionParams> create_session_params_with_storage(std::unique_pt
     return libtorrent::create_session_params_with_storage(std::move(*disk_io));
 }
 
+// Wrapper for create_session_params_default
+std::unique_ptr<SessionParams> create_session_params_default() {
+    return libtorrent::create_session_params_default();
+}
+
 // Wrapper for parse_magnet_uri - converts rust::Str to std::string
 std::unique_ptr<AddTorrentParams> parse_magnet_uri(rust::Str magnet, rust::Str save_path) {
     return libtorrent::parse_magnet_uri(std::string(magnet), std::string(save_path));
@@ -114,5 +119,14 @@ rust::Vec<TorrentFileInfo> torrent_get_file_list(TorrentHandle* handle) {
         result.push_back(info);
     }
     return result;
+}
+
+bool torrent_set_file_priorities(TorrentHandle* handle, rust::Vec<uint8_t> priorities) {
+    std::vector<uint8_t> cpp_priorities(priorities.begin(), priorities.end());
+    return libtorrent::torrent_set_file_priorities_internal(handle, cpp_priorities);
+}
+
+float torrent_get_progress(TorrentHandle* handle) {
+    return libtorrent::torrent_get_progress_internal(handle);
 }
 

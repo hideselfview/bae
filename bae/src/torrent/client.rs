@@ -6,11 +6,12 @@
 // and parse bencoded data for additional torrent metadata.
 
 use crate::torrent::ffi::{
-    create_bae_storage_constructor, create_session_params_with_storage, create_session_with_params,
-    get_session_ptr, load_torrent_file, parse_magnet_uri, session_add_torrent,
-    torrent_get_file_list, torrent_get_name, torrent_get_num_pieces, torrent_get_piece_length,
+    create_bae_storage_constructor, create_session_params_default,
+    create_session_params_with_storage, create_session_with_params, get_session_ptr,
+    load_torrent_file, parse_magnet_uri, session_add_torrent, torrent_get_file_list,
+    torrent_get_name, torrent_get_num_pieces, torrent_get_piece_length, torrent_get_progress,
     torrent_get_storage_index, torrent_get_total_size, torrent_has_metadata, torrent_have_piece,
-    Session, TorrentFileInfo, TorrentHandle as FfiTorrentHandle,
+    torrent_set_file_priorities, Session, TorrentFileInfo, TorrentHandle as FfiTorrentHandle,
 };
 use crate::torrent::storage::BaeStorage;
 use cxx::UniquePtr;
@@ -98,9 +99,9 @@ impl Clone for TorrentClient {
 }
 
 impl TorrentClient {
-    /// Create a new torrent client
+    /// Create a new torrent client with custom storage
     ///
-    /// TODO: Integrate custom storage backend. For now uses default libtorrent session.
+    /// This creates a session with custom storage backend for use in the main import flow.
     /// Storage instances will be registered per-torrent when adding torrents.
     pub fn new(runtime_handle: tokio::runtime::Handle) -> Result<Self, TorrentError> {
         let storage_registry: StorageRegistry = Arc::new(RwLock::new(HashMap::new()));
@@ -298,6 +299,37 @@ impl TorrentClient {
 
         Ok(TorrentClient {
             session: SendSafeSession(SendSafeArc(Arc::new(RwLock::new(custom_session)))),
+            runtime_handle,
+            storage_registry,
+            storage_index_map,
+        })
+    }
+
+    /// Create a new torrent client with default disk storage
+    ///
+    /// This creates a session that uses libtorrent's default disk storage,
+    /// which writes files directly to disk. Useful for temporary operations
+    /// like metadata detection where we don't need custom storage.
+    pub fn new_with_default_storage(
+        runtime_handle: tokio::runtime::Handle,
+    ) -> Result<Self, TorrentError> {
+        // Create session with default storage (no custom storage)
+        let session_params = create_session_params_default();
+        let default_session = create_session_with_params(session_params);
+
+        if default_session.is_null() {
+            return Err(TorrentError::Libtorrent(
+                "Failed to create libtorrent session with default storage".to_string(),
+            ));
+        }
+
+        // For default storage, we don't need storage registry or index map
+        // but we still create empty ones to satisfy the struct
+        let storage_registry: StorageRegistry = Arc::new(RwLock::new(HashMap::new()));
+        let storage_index_map: StorageIndexMap = Arc::new(RwLock::new(HashMap::new()));
+
+        Ok(TorrentClient {
+            session: SendSafeSession(SendSafeArc(Arc::new(RwLock::new(default_session)))),
             runtime_handle,
             storage_registry,
             storage_index_map,
@@ -618,12 +650,29 @@ impl TorrentHandle {
     /// Set file priorities
     pub async fn set_file_priorities(
         &self,
-        _priorities: Vec<FilePriority>,
+        priorities: Vec<FilePriority>,
     ) -> Result<(), TorrentError> {
-        // TODO: Implement actual priority setting
-        Err(TorrentError::NotImplemented(
-            "set_file_priorities() not yet implemented".to_string(),
-        ))
+        let handle_guard = self.handle.0.read().await;
+        let handle_ptr = *handle_guard;
+        if handle_ptr.is_null() {
+            return Err(TorrentError::Libtorrent(
+                "Invalid torrent handle".to_string(),
+            ));
+        }
+
+        // Convert FilePriority enum to u8 values
+        let priority_values: Vec<u8> = priorities.iter().map(|p| *p as u8).collect();
+
+        let success = unsafe { torrent_set_file_priorities(handle_ptr, priority_values) };
+        drop(handle_guard);
+
+        if !success {
+            return Err(TorrentError::Libtorrent(
+                "Failed to set file priorities".to_string(),
+            ));
+        }
+
+        Ok(())
     }
 
     /// Check if torrent is complete
@@ -636,10 +685,18 @@ impl TorrentHandle {
 
     /// Get download progress (0.0 to 1.0)
     pub async fn progress(&self) -> Result<f32, TorrentError> {
-        // TODO: Implement actual progress retrieval
-        Err(TorrentError::NotImplemented(
-            "progress() not yet implemented".to_string(),
-        ))
+        let handle_guard = self.handle.0.read().await;
+        let handle_ptr = *handle_guard;
+        if handle_ptr.is_null() {
+            return Err(TorrentError::Libtorrent(
+                "Invalid torrent handle".to_string(),
+            ));
+        }
+
+        let progress = unsafe { torrent_get_progress(handle_ptr) };
+        drop(handle_guard);
+
+        Ok(progress)
     }
 
     /// Read a piece of data from our custom storage
@@ -705,6 +762,92 @@ impl TorrentHandle {
         }
         let available = unsafe { torrent_have_piece(handle_ptr, piece_index as i32) };
         Ok(available)
+    }
+
+    /// Read a specific file from the torrent by file index
+    ///
+    /// This reads the file data from torrent pieces. The file must be downloaded first.
+    /// Returns the file contents as bytes.
+    pub async fn read_file_by_index(&self, file_index: i32) -> Result<Vec<u8>, TorrentError> {
+        // Get file list to find the file and calculate byte offsets
+        let files = self.get_file_list().await?;
+
+        // Find the file and calculate cumulative byte offset
+        let mut cumulative_offset = 0i64;
+        let mut target_file: Option<&TorrentFile> = None;
+
+        for file in &files {
+            if file.index == file_index {
+                target_file = Some(file);
+                break;
+            }
+            cumulative_offset += file.size;
+        }
+
+        let file = target_file.ok_or_else(|| {
+            TorrentError::InvalidTorrent(format!("File index {} not found", file_index))
+        })?;
+
+        // Get torrent metadata for piece calculations
+        let piece_length = self.piece_length().await? as usize;
+        let total_size = self.total_size().await? as usize;
+
+        // Calculate which pieces contain this file
+        let file_start_byte = cumulative_offset as usize;
+        let file_end_byte = (cumulative_offset + file.size) as usize;
+
+        let start_piece = file_start_byte / piece_length;
+        let end_piece = (file_end_byte - 1) / piece_length;
+
+        // Read all pieces that contain this file
+        let mut file_data = Vec::with_capacity(file.size as usize);
+
+        for piece_index in start_piece..=end_piece {
+            // Wait for piece to be ready
+            loop {
+                if self.is_piece_ready(piece_index).await? {
+                    break;
+                }
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            }
+
+            // Read piece
+            let piece_data = self.read_piece(piece_index).await?;
+
+            // Calculate byte range within this piece that belongs to our file
+            let piece_start_byte = piece_index * piece_length;
+            let piece_end_byte = ((piece_index + 1) * piece_length).min(total_size);
+
+            let overlap_start = file_start_byte.max(piece_start_byte);
+            let overlap_end = file_end_byte.min(piece_end_byte);
+
+            if overlap_start < overlap_end {
+                // Extract bytes from piece data
+                let piece_offset = overlap_start - piece_start_byte;
+                let piece_length_needed = overlap_end - overlap_start;
+
+                if piece_offset + piece_length_needed <= piece_data.len() {
+                    file_data.extend_from_slice(
+                        &piece_data[piece_offset..piece_offset + piece_length_needed],
+                    );
+                }
+            }
+        }
+
+        Ok(file_data)
+    }
+
+    /// Read a specific file from the torrent by path
+    ///
+    /// Finds the file by path and reads it from torrent pieces.
+    pub async fn read_file_by_path(&self, file_path: &Path) -> Result<Vec<u8>, TorrentError> {
+        let files = self.get_file_list().await?;
+
+        let file = files.iter().find(|f| f.path == file_path).ok_or_else(|| {
+            TorrentError::InvalidTorrent(format!("File not found: {:?}", file_path))
+        })?;
+
+        self.read_file_by_index(file.index).await
     }
 
     /// Wait for metadata to be available

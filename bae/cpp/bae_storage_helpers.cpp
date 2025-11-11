@@ -21,6 +21,12 @@ std::unique_ptr<session_params> create_session_params_with_storage(
     return params;
 }
 
+std::unique_ptr<session_params> create_session_params_default() {
+    // Create session_params without setting disk_io_constructor
+    // This uses libtorrent's default disk storage
+    return std::make_unique<session_params>();
+}
+
 std::unique_ptr<session> create_session_with_params(
     std::unique_ptr<session_params> params
 ) {
@@ -154,6 +160,30 @@ std::vector<LibTorrentFileInfo> torrent_get_file_list_internal(torrent_handle* h
         files.push_back(info);
     }
     return files;
+}
+
+bool torrent_set_file_priorities_internal(torrent_handle* handle, const std::vector<uint8_t>& priorities) {
+    if (!handle) {
+        return false;
+    }
+    // Convert vector<uint8_t> to vector<download_priority_t>
+    std::vector<download_priority_t> libtorrent_priorities;
+    libtorrent_priorities.reserve(priorities.size());
+    for (uint8_t p : priorities) {
+        libtorrent_priorities.push_back(static_cast<download_priority_t>(p));
+    }
+    handle->prioritize_files(libtorrent_priorities);
+    return true;
+}
+
+float torrent_get_progress_internal(torrent_handle* handle) {
+    if (!handle) {
+        return 0.0f;
+    }
+    torrent_status status = handle->status();
+    // progress_ppm is parts per million (0 to 1000000)
+    // Convert to 0.0 to 1.0
+    return static_cast<float>(status.progress_ppm) / 1000000.0f;
 }
 
 } // namespace libtorrent
