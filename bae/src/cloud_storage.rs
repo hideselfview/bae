@@ -3,7 +3,7 @@ use aws_credential_types::Credentials;
 use aws_sdk_s3::{primitives::ByteStreamError, Client, Error as S3Error};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 #[derive(Error, Debug)]
 pub enum CloudStorageError {
@@ -127,20 +127,54 @@ impl S3CloudStorage {
                 Err(e) => {
                     debug!("Bucket check failed: {:?}", e);
                     info!("Creating bucket '{}'", bucket_name);
-                    client
-                        .create_bucket()
-                        .bucket(&bucket_name)
-                        .send()
-                        .await
-                        .map_err(|e| {
-                            let error_msg = format!(
-                                "Create bucket failed: {}. Endpoint: {:?}, Bucket: {}",
-                                e, config.endpoint_url, bucket_name
-                            );
-                            error!("{}", error_msg);
-                            CloudStorageError::SdkError(error_msg)
-                        })?;
-                    info!("Bucket '{}' created successfully", bucket_name);
+
+                    match client.create_bucket().bucket(&bucket_name).send().await {
+                        Ok(_) => {
+                            info!("Bucket '{}' created successfully", bucket_name);
+                        }
+                        Err(create_err) => {
+                            // Check if the error is because bucket already exists
+                            let err_str = format!("{:?}", create_err);
+                            if err_str.contains("BucketAlreadyOwnedByYou")
+                                || err_str.contains("BucketAlreadyExists")
+                            {
+                                info!(
+                                    "Bucket '{}' already exists (create returned: {})",
+                                    bucket_name, err_str
+                                );
+                            } else {
+                                // Try to use the bucket anyway - maybe we have access
+                                warn!(
+                                    "Failed to create bucket '{}': {}. Attempting to use it anyway...",
+                                    bucket_name, create_err
+                                );
+
+                                // Test if we can actually use the bucket by listing objects
+                                match client
+                                    .list_objects_v2()
+                                    .bucket(&bucket_name)
+                                    .max_keys(1)
+                                    .send()
+                                    .await
+                                {
+                                    Ok(_) => {
+                                        info!(
+                                            "Bucket '{}' is accessible despite creation error",
+                                            bucket_name
+                                        );
+                                    }
+                                    Err(list_err) => {
+                                        let error_msg = format!(
+                                            "Cannot access bucket '{}'. Create error: {}. List error: {}. Endpoint: {:?}",
+                                            bucket_name, create_err, list_err, config.endpoint_url
+                                        );
+                                        error!("{}", error_msg);
+                                        return Err(CloudStorageError::SdkError(error_msg));
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
