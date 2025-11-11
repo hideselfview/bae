@@ -1,8 +1,8 @@
 use crate::cache::CacheManager;
 use crate::cloud_storage::{CloudStorageError, CloudStorageManager};
 use crate::db::{
-    Database, DbAlbum, DbAlbumArtist, DbArtist, DbAudioFormat, DbChunk, DbFile, DbRelease, DbTrack,
-    DbTrackArtist, DbTrackChunkCoords, DbTorrent, ImportStatus,
+    Database, DbAlbum, DbAlbumArtist, DbArtist, DbAudioFormat, DbChunk, DbFile, DbRelease,
+    DbTorrent, DbTrack, DbTrackArtist, DbTrackChunkCoords, ImportStatus,
 };
 use crate::encryption::EncryptionService;
 use crate::library::export::ExportService;
@@ -141,6 +141,17 @@ impl LibraryManager {
     /// Insert torrent metadata
     pub async fn insert_torrent(&self, torrent: &DbTorrent) -> Result<(), LibraryError> {
         self.database.insert_torrent(torrent).await?;
+        Ok(())
+    }
+
+    /// Get torrent by release ID
+    pub async fn get_torrent_by_release(&self, release_id: &str) -> Result<Option<DbTorrent>, LibraryError> {
+        Ok(self.database.get_torrent_by_release(release_id).await?)
+    }
+
+    /// Insert torrent piece mapping
+    pub async fn insert_torrent_piece_mapping(&self, mapping: &crate::db::DbTorrentPieceMapping) -> Result<(), LibraryError> {
+        self.database.insert_torrent_piece_mapping(mapping).await?;
         Ok(())
     }
 

@@ -26,13 +26,28 @@ pub struct PieceMapping {
 
 impl TorrentPieceMapper {
     /// Create a new piece mapper
-    pub fn new(piece_length: usize, chunk_size: usize, total_pieces: usize, total_size: usize) -> Self {
+    pub fn new(
+        piece_length: usize,
+        chunk_size: usize,
+        total_pieces: usize,
+        total_size: usize,
+    ) -> Self {
         TorrentPieceMapper {
             piece_length,
             chunk_size,
             total_pieces,
             total_size,
         }
+    }
+
+    /// Get the piece length
+    pub fn piece_length(&self) -> usize {
+        self.piece_length
+    }
+
+    /// Get the total size
+    pub fn total_size(&self) -> usize {
+        self.total_size
     }
 
     /// Map a torrent piece to the bae chunks it spans
@@ -111,4 +126,3 @@ impl TorrentPieceMapper {
             .collect()
     }
 }
-

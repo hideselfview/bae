@@ -4,15 +4,15 @@
 // Provides the public API for interacting with the import service.
 
 use crate::cue_flac::CueFlacProcessor;
-use crate::db::{DbAlbum, DbRelease, Database};
+use crate::db::{Database, DbAlbum, DbRelease};
 use crate::import::progress::ImportProgressHandle;
 use crate::import::track_to_file_mapper::map_tracks_to_files;
 use crate::import::types::{
-    CueFlacMetadata, DiscoveredFile, ImportProgress, ImportRequestParams, TrackFile, TorrentSource,
+    CueFlacMetadata, DiscoveredFile, ImportProgress, ImportRequestParams, TorrentSource, TrackFile,
 };
 use crate::library::SharedLibraryManager;
 use crate::playback::symphonia_decoder::TrackDecoder;
-use crate::torrent::{TorrentClient, TorrentHandle, SelectiveDownloader};
+use crate::torrent::{SelectiveDownloader, TorrentClient, TorrentHandle};
 use std::path::Path;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -37,6 +37,11 @@ pub struct ImportRequest {
     pub cue_flac_metadata: Option<std::collections::HashMap<std::path::PathBuf, CueFlacMetadata>>,
     /// Torrent metadata (for torrent imports only)
     pub torrent_metadata: Option<TorrentImportMetadata>,
+    /// Torrent handle (for torrent imports only, stored separately to avoid Send issues)
+    /// This is stored as Option to allow passing through channels
+    pub torrent_handle: Option<TorrentHandle>,
+    /// Torrent client (for torrent imports only, needed to recreate handle if needed)
+    pub torrent_client: Option<TorrentClient>,
 }
 
 /// Torrent-specific metadata for import
@@ -195,6 +200,8 @@ impl ImportHandle {
                         discovered_files,
                         cue_flac_metadata,
                         torrent_metadata: None,
+                        torrent_handle: None,
+                        torrent_client: None,
                     })
                     .map_err(|_| "Failed to queue validated album for import".to_string())?;
 
@@ -227,18 +234,14 @@ impl ImportHandle {
 
                 // Add torrent to client
                 let torrent_handle = match torrent_source {
-                    TorrentSource::File(path) => {
-                        torrent_client
-                            .add_torrent_file(&path)
-                            .await
-                            .map_err(|e| format!("Failed to add torrent file: {}", e))?
-                    }
-                    TorrentSource::MagnetLink(magnet) => {
-                        torrent_client
-                            .add_magnet_link(&magnet)
-                            .await
-                            .map_err(|e| format!("Failed to add magnet link: {}", e))?
-                    }
+                    TorrentSource::File(path) => torrent_client
+                        .add_torrent_file(&path)
+                        .await
+                        .map_err(|e| format!("Failed to add torrent file: {}", e))?,
+                    TorrentSource::MagnetLink(magnet) => torrent_client
+                        .add_magnet_link(&magnet)
+                        .await
+                        .map_err(|e| format!("Failed to add magnet link: {}", e))?,
                 };
 
                 // Wait for metadata to be available (for magnet links)
@@ -280,7 +283,10 @@ impl ImportHandle {
                     .map_err(|e| format!("Failed to prioritize metadata files: {}", e))?;
 
                 if !metadata_files.is_empty() {
-                    info!("Waiting for {} metadata files to download...", metadata_files.len());
+                    info!(
+                        "Waiting for {} metadata files to download...",
+                        metadata_files.len()
+                    );
                     selective_downloader
                         .wait_for_metadata_files(&torrent_handle, &metadata_files)
                         .await
@@ -438,6 +444,8 @@ impl ImportHandle {
                         discovered_files,
                         cue_flac_metadata,
                         torrent_metadata: Some(torrent_metadata),
+                        torrent_handle: Some(torrent_handle),
+                        torrent_client: Some(torrent_client),
                     })
                     .map_err(|_| "Failed to queue validated torrent for import".to_string())?;
 

@@ -45,7 +45,7 @@ impl TorrentClient {
     pub fn new(_runtime_handle: tokio::runtime::Handle) -> Result<Self, TorrentError> {
         // TODO: Implement actual session creation
         // let session = libtorrent::session::new()?;
-        
+
         Ok(TorrentClient {
             _session: Arc::new(RwLock::new(())),
             runtime_handle: _runtime_handle,
@@ -55,13 +55,17 @@ impl TorrentClient {
     /// Add a torrent from a file
     pub async fn add_torrent_file(&self, _path: &Path) -> Result<TorrentHandle, TorrentError> {
         // TODO: Implement actual torrent file loading
-        Err(TorrentError::NotImplemented("add_torrent_file not yet implemented".to_string()))
+        Err(TorrentError::NotImplemented(
+            "add_torrent_file not yet implemented".to_string(),
+        ))
     }
 
     /// Add a torrent from magnet link
     pub async fn add_magnet_link(&self, _magnet: &str) -> Result<TorrentHandle, TorrentError> {
         // TODO: Implement actual magnet link handling
-        Err(TorrentError::NotImplemented("add_magnet_link not yet implemented".to_string()))
+        Err(TorrentError::NotImplemented(
+            "add_magnet_link not yet implemented".to_string(),
+        ))
     }
 }
 
@@ -89,55 +93,94 @@ impl TorrentHandle {
     /// Get the name of the torrent
     pub async fn name(&self) -> Result<String, TorrentError> {
         // TODO: Implement actual name retrieval
-        Err(TorrentError::NotImplemented("name() not yet implemented".to_string()))
+        Err(TorrentError::NotImplemented(
+            "name() not yet implemented".to_string(),
+        ))
     }
 
     /// Get the total size of the torrent
     pub async fn total_size(&self) -> Result<i64, TorrentError> {
         // TODO: Implement actual size retrieval
-        Err(TorrentError::NotImplemented("total_size() not yet implemented".to_string()))
+        Err(TorrentError::NotImplemented(
+            "total_size() not yet implemented".to_string(),
+        ))
     }
 
     /// Get the piece length
     pub async fn piece_length(&self) -> Result<i32, TorrentError> {
         // TODO: Implement actual piece length retrieval
-        Err(TorrentError::NotImplemented("piece_length() not yet implemented".to_string()))
+        Err(TorrentError::NotImplemented(
+            "piece_length() not yet implemented".to_string(),
+        ))
     }
 
     /// Get the number of pieces
     pub async fn num_pieces(&self) -> Result<i32, TorrentError> {
         // TODO: Implement actual piece count retrieval
-        Err(TorrentError::NotImplemented("num_pieces() not yet implemented".to_string()))
+        Err(TorrentError::NotImplemented(
+            "num_pieces() not yet implemented".to_string(),
+        ))
     }
 
     /// Get the list of files in the torrent
     pub async fn get_file_list(&self) -> Result<Vec<TorrentFile>, TorrentError> {
         // TODO: Implement actual file list retrieval
-        Err(TorrentError::NotImplemented("get_file_list() not yet implemented".to_string()))
+        Err(TorrentError::NotImplemented(
+            "get_file_list() not yet implemented".to_string(),
+        ))
     }
 
     /// Set file priorities
-    pub async fn set_file_priorities(&self, _priorities: Vec<FilePriority>) -> Result<(), TorrentError> {
+    pub async fn set_file_priorities(
+        &self,
+        _priorities: Vec<FilePriority>,
+    ) -> Result<(), TorrentError> {
         // TODO: Implement actual priority setting
-        Err(TorrentError::NotImplemented("set_file_priorities() not yet implemented".to_string()))
+        Err(TorrentError::NotImplemented(
+            "set_file_priorities() not yet implemented".to_string(),
+        ))
     }
 
     /// Check if torrent is complete
     pub async fn is_complete(&self) -> Result<bool, TorrentError> {
         // TODO: Implement actual completion check
-        Err(TorrentError::NotImplemented("is_complete() not yet implemented".to_string()))
+        Err(TorrentError::NotImplemented(
+            "is_complete() not yet implemented".to_string(),
+        ))
     }
 
     /// Get download progress (0.0 to 1.0)
     pub async fn progress(&self) -> Result<f32, TorrentError> {
         // TODO: Implement actual progress retrieval
-        Err(TorrentError::NotImplemented("progress() not yet implemented".to_string()))
+        Err(TorrentError::NotImplemented(
+            "progress() not yet implemented".to_string(),
+        ))
     }
 
     /// Read a piece of data
-    pub async fn read_piece(&self, _piece_index: usize) -> Result<Vec<u8>, TorrentError> {
-        // TODO: Implement actual piece reading
-        Err(TorrentError::NotImplemented("read_piece() not yet implemented".to_string()))
+    pub async fn read_piece(&self, piece_index: usize) -> Result<Vec<u8>, TorrentError> {
+        // TODO: Implement actual piece reading from libtorrent
+        // For now, return an error indicating this needs implementation
+        // Once libtorrent API is understood, this should:
+        // 1. Check if piece is available
+        // 2. Read piece data from libtorrent handle
+        // 3. Return piece bytes
+        Err(TorrentError::NotImplemented(
+            format!("read_piece() not yet implemented for piece {}", piece_index),
+        ))
+    }
+
+    /// Check if a piece is ready to be read
+    pub async fn is_piece_ready(&self, piece_index: usize) -> Result<bool, TorrentError> {
+        // TODO: Implement actual piece availability check
+        // For now, return an error indicating this needs implementation
+        // Once libtorrent API is understood, this should:
+        // 1. Check torrent status
+        // 2. Check if piece at piece_index is available
+        // 3. Return true if piece can be read
+        Err(TorrentError::NotImplemented(
+            format!("is_piece_ready() not yet implemented for piece {}", piece_index),
+        ))
     }
 
     /// Wait for metadata to be available

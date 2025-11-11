@@ -129,6 +129,8 @@ impl ImportService {
             discovered_files,
             cue_flac_metadata,
             torrent_metadata,
+            torrent_handle,
+            torrent_client: _torrent_client,
         } = request;
 
         // Mark release as importing now that pipeline is starting
@@ -192,12 +194,33 @@ impl ImportService {
             cue_flac_data.clone(),
         );
 
-        // Spawn chunk producer task with the file to chunk mappings that tell it what to produce
-        tokio::spawn(pipeline::chunk_producer::produce_chunk_stream_from_files(
-            files_to_chunks.clone(),
-            self.config.chunk_size_bytes,
-            chunk_tx,
-        ));
+        // Spawn chunk producer task - use torrent producer if this is a torrent import
+        let piece_mappings_handle = if let (Some(torrent_handle), Some(torrent_meta)) = (torrent_handle, &torrent_metadata) {
+            // Torrent import: use torrent producer
+            use crate::torrent::TorrentPieceMapper;
+            let piece_mapper = TorrentPieceMapper::new(
+                torrent_meta.piece_length as usize,
+                self.config.chunk_size_bytes,
+                torrent_meta.num_pieces as usize,
+                torrent_meta.total_size_bytes as usize,
+            );
+            
+            let handle = tokio::spawn(pipeline::torrent_producer::produce_chunk_stream_from_torrent(
+                torrent_handle,
+                piece_mapper,
+                self.config.chunk_size_bytes,
+                chunk_tx,
+            ));
+            Some(handle)
+        } else {
+            // Regular import: use file producer
+            tokio::spawn(pipeline::chunk_producer::produce_chunk_stream_from_files(
+                files_to_chunks.clone(),
+                self.config.chunk_size_bytes,
+                chunk_tx,
+            ));
+            None
+        };
 
         // Wait for the pipeline to complete
         let results: Vec<_> = pipeline.collect().await;
@@ -210,6 +233,40 @@ impl ImportService {
         info!("All {} chunks uploaded successfully", total_chunks);
 
         // ========== TEARDOWN ==========
+
+        // Get piece mappings if this was a torrent import
+        if let Some(handle) = piece_mappings_handle {
+            if let Some(torrent_meta) = &torrent_metadata {
+                // Get torrent ID from database
+                let torrent = library_manager
+                    .get_torrent_by_release(&db_release.id)
+                    .await
+                    .map_err(|e| format!("Failed to get torrent: {}", e))?
+                    .ok_or_else(|| "Torrent not found in database".to_string())?;
+                
+                // Wait for producer to finish and get piece mappings
+                let piece_mappings = handle.await.map_err(|e| format!("Producer task failed: {}", e))?;
+                
+                // Save piece mappings to database
+                for (piece_index, (chunk_ids, start_byte, end_byte)) in &piece_mappings {
+                    let mapping = crate::db::DbTorrentPieceMapping::new(
+                        &torrent.id,
+                        *piece_index as i32,
+                        chunk_ids.clone(),
+                        *start_byte,
+                        *end_byte,
+                    )
+                    .map_err(|e| format!("Failed to create piece mapping: {}", e))?;
+                    
+                    library_manager
+                        .insert_torrent_piece_mapping(&mapping)
+                        .await
+                        .map_err(|e| format!("Failed to save piece mapping: {}", e))?;
+                }
+                
+                info!("Saved {} piece mappings to database", piece_mappings.len());
+            }
+        }
 
         // Persist release-level metadata to database
         let persister = MetadataPersister::new(library_manager);
