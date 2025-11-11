@@ -110,17 +110,13 @@ fn get_flac_duration_seconds(flac_path: &Path) -> Result<f64, MetadataDetectionE
     Ok(duration_seconds)
 }
 
-/// Convert CUE time format (MM:SS:FF) to CD sectors
-/// CD audio uses 75 sectors per second, and frames are already in 1/75 second units
-/// Formula: (MM * 60 + SS) * 75 + FF + 150 (lead-in offset)
-fn cue_time_to_sectors(mm: u32, ss: u32, ff: u32) -> i32 {
-    ((mm * 60 + ss) * 75 + ff) as i32 + 150
-}
-
 /// Extract track INDEX offsets from CUE file content
-/// Returns vector of sector offsets for each track's INDEX 01
-fn extract_track_offsets_from_cue(cue_content: &str) -> Result<Vec<i32>, MetadataDetectionError> {
+/// Returns (final offsets with 150 added, raw sectors without 150)
+fn extract_track_offsets_from_cue(
+    cue_content: &str,
+) -> Result<(Vec<i32>, Vec<i32>), MetadataDetectionError> {
     let mut offsets = Vec::new();
+    let mut raw_sectors = Vec::new();
 
     for line in cue_content.lines() {
         let line = line.trim();
@@ -133,7 +129,11 @@ fn extract_track_offsets_from_cue(cue_content: &str) -> Result<Vec<i32>, Metadat
                     parts[1].parse::<u32>(),
                     parts[2].parse::<u32>(),
                 ) {
-                    let sectors = cue_time_to_sectors(mm, ss, ff);
+                    // Calculate raw sectors (without lead-in offset)
+                    let raw_sector = ((mm * 60 + ss) * 75 + ff) as i32;
+                    raw_sectors.push(raw_sector);
+                    // Add 150 for final offset
+                    let sectors = raw_sector + 150;
                     offsets.push(sectors);
                 }
             }
@@ -147,14 +147,15 @@ fn extract_track_offsets_from_cue(cue_content: &str) -> Result<Vec<i32>, Metadat
         )));
     }
 
-    Ok(offsets)
+    Ok((offsets, raw_sectors))
 }
 
 /// Extract lead-out sector from EAC/XLD log file
 /// Looks for the "End sector" column in the TOC table
 /// Format: "       10  | 37:42.72 |  4:14.43 |    169722    |   188814"
 /// The 5th column (index 4) contains the end sector for each track
-fn extract_leadout_from_log(log_content: &str) -> Option<i32> {
+/// Returns (final offset with 150 added, raw sector without 150)
+fn extract_leadout_from_log(log_content: &str) -> Option<(i32, i32)> {
     debug!("🔍 Parsing LOG file to extract lead-out sector");
 
     // Find the TOC section - look for "TOC of the extracted CD" header
@@ -212,12 +213,15 @@ fn extract_leadout_from_log(log_content: &str) -> Option<i32> {
     }
 
     if let Some(sector) = last_end_sector {
-        let lead_out = sector + 150; // Add lead-in offset
+        // The last track's "End sector" is the end of the last track.
+        // The lead-out starts one sector after that, so we add 1 before adding the lead-in offset.
+        let lead_out_start = sector + 1;
+        let lead_out = lead_out_start + 150; // Add lead-in offset
         info!(
-            "✅ Extracted lead-out from LOG: {} sectors (last track end: {}, tracks found: {})",
-            lead_out, sector, track_count
+            "✅ Extracted lead-out from LOG: {} sectors (last track end: {}, lead-out start: {}, tracks found: {})",
+            lead_out, sector, lead_out_start, track_count
         );
-        Some(lead_out)
+        Some((lead_out, lead_out_start))
     } else {
         warn!("⚠️ Could not find any end sectors in LOG file");
         debug!(
@@ -236,13 +240,17 @@ fn extract_leadout_from_log(log_content: &str) -> Option<i32> {
 /// Extract track offsets from EAC/XLD log file
 /// Looks for the "Start sector" column in the TOC table
 /// Format: "       10  | 37:42.72 |  4:14.43 |    169722    |   188814"
-/// The 4th column (index 2) contains the start sector for each track
-fn extract_track_offsets_from_log(log_content: &str) -> Result<Vec<i32>, MetadataDetectionError> {
+/// The 4th column (index 3) contains the start sector for each track
+/// Returns (final offsets with 150 added, raw sectors without 150)
+fn extract_track_offsets_from_log(
+    log_content: &str,
+) -> Result<(Vec<i32>, Vec<i32>), MetadataDetectionError> {
     debug!("🔍 Parsing LOG file to extract track offsets");
 
     // Find the TOC section - look for "TOC of the extracted CD" header
     let mut in_toc_section = false;
     let mut track_offsets = Vec::new();
+    let mut raw_sectors = Vec::new();
 
     for line in log_content.lines() {
         let line = line.trim();
@@ -287,6 +295,7 @@ fn extract_track_offsets_from_log(log_content: &str) -> Result<Vec<i32>, Metadat
                 let start_sector_str = parts[3].trim();
                 if let Ok(sector) = start_sector_str.parse::<i32>() {
                     if sector >= 0 {
+                        raw_sectors.push(sector);
                         // Add 150 to match discid format (lead-in offset)
                         let offset = sector + 150;
                         track_offsets.push(offset);
@@ -313,7 +322,7 @@ fn extract_track_offsets_from_log(log_content: &str) -> Result<Vec<i32>, Metadat
         "✅ Extracted {} track offset(s) from LOG",
         track_offsets.len()
     );
-    Ok(track_offsets)
+    Ok((track_offsets, raw_sectors))
 }
 
 /// Calculate MusicBrainz DiscID from LOG file alone
@@ -351,11 +360,15 @@ pub fn calculate_mb_discid_from_log(log_path: &Path) -> Result<String, MetadataD
     info!("📄 LOG file decoded, length: {} chars", log_content.len());
 
     // Extract track offsets from log
-    let track_offsets = extract_track_offsets_from_log(&log_content)?;
+    let (track_offsets, raw_track_sectors) = extract_track_offsets_from_log(&log_content)?;
     info!("📊 Found {} track(s) in LOG file", track_offsets.len());
+    info!(
+        "📊 LOG METHOD - Raw track start sectors (before adding 150): {:?}",
+        raw_track_sectors
+    );
 
     // Extract lead-out from log
-    let lead_out_sectors = extract_leadout_from_log(&log_content).ok_or_else(|| {
+    let (lead_out_sectors, raw_leadout_sector) = extract_leadout_from_log(&log_content).ok_or_else(|| {
         warn!("⚠️ Could not extract lead-out sector from log file. Log content preview (first 500 chars):\n{}", 
               log_content.chars().take(500).collect::<String>());
         MetadataDetectionError::Io(std::io::Error::new(
@@ -363,7 +376,14 @@ pub fn calculate_mb_discid_from_log(log_path: &Path) -> Result<String, MetadataD
             "Could not extract lead-out sector from log file",
         ))
     })?;
-    info!("📏 Lead-out offset from log: {} sectors", lead_out_sectors);
+    info!(
+        "📏 LOG METHOD - Raw lead-out sector (before adding 150): {}",
+        raw_leadout_sector
+    );
+    info!(
+        "📏 LOG METHOD - Lead-out offset: {} sectors (raw: {} + 150)",
+        lead_out_sectors, raw_leadout_sector
+    );
 
     // Build offsets array in the format expected by discid:
     // [lead_out, track1_offset, track2_offset, ...]
@@ -381,12 +401,13 @@ pub fn calculate_mb_discid_from_log(log_path: &Path) -> Result<String, MetadataD
         offsets.len()
     );
 
-    // Debug: Print all offsets
-    debug!("📋 Offsets (lead-out first, then tracks):");
-    debug!("   Lead-out: {} sectors", offsets[0]);
+    // Print all offsets for comparison
+    info!("📋 LOG METHOD - Offsets array (lead-out first, then tracks):");
+    info!("   Lead-out: {} sectors", offsets[0]);
     for (i, offset) in offsets.iter().enumerate().skip(1) {
-        debug!("   Track {}: {} sectors", i, offset);
+        info!("   Track {}: {} sectors", i, offset);
     }
+    info!("📋 LOG METHOD - Raw offsets array: {:?}", offsets);
 
     // Create DiscID using discid crate
     let disc = discid::DiscId::put(first_track, &offsets).map_err(|e| {
@@ -418,16 +439,28 @@ pub fn calculate_mb_discid_from_cue_flac(
     let cue_content = fs::read_to_string(cue_path)?;
 
     // Extract track offsets
-    let track_offsets = extract_track_offsets_from_cue(&cue_content)?;
+    let (track_offsets, raw_track_sectors) = extract_track_offsets_from_cue(&cue_content)?;
     info!("📊 Found {} track(s) in CUE file", track_offsets.len());
+    info!(
+        "📊 CUE/FLAC METHOD - Raw track start sectors (before adding 150): {:?}",
+        raw_track_sectors
+    );
 
     // Get FLAC duration
     let duration_seconds = get_flac_duration_seconds(flac_path)?;
     info!("⏱️ FLAC duration: {:.2} seconds", duration_seconds);
 
     // Calculate lead-out offset: total duration in sectors + lead-in
-    let lead_out_sectors = (duration_seconds * 75.0).round() as i32 + 150;
-    info!("📏 Lead-out offset: {} sectors", lead_out_sectors);
+    let raw_leadout_sector = (duration_seconds * 75.0).round() as i32;
+    let lead_out_sectors = raw_leadout_sector + 150;
+    info!(
+        "📏 CUE/FLAC METHOD - Raw lead-out sector (from FLAC duration): {} sectors",
+        raw_leadout_sector
+    );
+    info!(
+        "📏 CUE/FLAC METHOD - Lead-out offset: {} sectors (raw: {} + 150)",
+        lead_out_sectors, raw_leadout_sector
+    );
 
     // Build offsets array in the format expected by discid:
     // [lead_out, track1_offset, track2_offset, ...]
@@ -446,12 +479,13 @@ pub fn calculate_mb_discid_from_cue_flac(
         offsets.len()
     );
 
-    // Debug: Print all offsets
-    debug!("📋 Offsets (lead-out first, then tracks):");
-    debug!("   Lead-out: {} sectors", offsets[0]);
+    // Print all offsets for comparison
+    info!("📋 CUE/FLAC METHOD - Offsets array (lead-out first, then tracks):");
+    info!("   Lead-out: {} sectors", offsets[0]);
     for (i, offset) in offsets.iter().enumerate().skip(1) {
-        debug!("   Track {}: {} sectors", i, offset);
+        info!("   Track {}: {} sectors", i, offset);
     }
+    info!("📋 CUE/FLAC METHOD - Raw offsets array: {:?}", offsets);
 
     // Create DiscID using discid crate
     // The discid crate API: DiscId::put(first, offsets) where:
@@ -925,12 +959,19 @@ mod tests {
         // Test extracting lead-out
         let lead_out = extract_leadout_from_log(&log_content);
         match lead_out {
-            Some(sector) => {
-                println!("✅ Successfully extracted lead-out: {} sectors", sector);
-                // Expected: last track end sector is 188814, so lead-out should be 188814 + 150 = 188964
+            Some((final_offset, raw_sector)) => {
+                println!(
+                    "✅ Successfully extracted lead-out: {} sectors (raw: {})",
+                    final_offset, raw_sector
+                );
+                // Expected: last track end sector is 188814, so lead-out start is 188815, and final offset is 188815 + 150 = 188965
                 assert_eq!(
-                    sector, 188964,
-                    "Expected lead-out to be 188964 (188814 + 150)"
+                    final_offset, 188965,
+                    "Expected lead-out to be 188965 (188814 + 1 + 150)"
+                );
+                assert_eq!(
+                    raw_sector, 188815,
+                    "Expected raw lead-out sector to be 188815 (188814 + 1)"
                 );
             }
             None => {
