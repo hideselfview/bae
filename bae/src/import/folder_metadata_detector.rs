@@ -150,8 +150,262 @@ fn extract_track_offsets_from_cue(cue_content: &str) -> Result<Vec<i32>, Metadat
     Ok(offsets)
 }
 
+/// Extract lead-out sector from EAC/XLD log file
+/// Looks for the "End sector" column in the TOC table
+/// Format: "       10  | 37:42.72 |  4:14.43 |    169722    |   188814"
+/// The 5th column (index 4) contains the end sector for each track
+fn extract_leadout_from_log(log_content: &str) -> Option<i32> {
+    debug!("🔍 Parsing LOG file to extract lead-out sector");
+
+    // Find the TOC section - look for "TOC of the extracted CD" header
+    let mut in_toc_section = false;
+    let mut last_end_sector = None;
+    let mut track_count = 0;
+
+    for line in log_content.lines() {
+        let line = line.trim();
+
+        // Detect TOC section start
+        if line.contains("TOC of the extracted") {
+            in_toc_section = true;
+            debug!("Found TOC section header");
+            continue;
+        }
+
+        // Stop parsing after TOC section (look for next major section)
+        if in_toc_section
+            && (line.contains("Range status")
+                || line.contains("AccurateRip")
+                || (line.is_empty() && track_count > 0 && last_end_sector.is_some()))
+        {
+            debug!("End of TOC section, found {} tracks", track_count);
+            break;
+        }
+
+        if !in_toc_section {
+            continue;
+        }
+
+        // Skip header separator lines and empty lines
+        if line.contains("---")
+            || line.is_empty()
+            || (line.contains("Track") && line.contains("Start sector"))
+        {
+            continue;
+        }
+
+        // Parse lines with pipe separators (TOC table format)
+        if line.contains('|') {
+            let parts: Vec<&str> = line.split('|').collect();
+            if parts.len() >= 5 {
+                // The 5th column (index 4) is the end sector
+                let end_sector_str = parts[4].trim();
+                if let Ok(sector) = end_sector_str.parse::<i32>() {
+                    if sector > 0 {
+                        track_count += 1;
+                        last_end_sector = Some(sector);
+                        debug!("  Track {} end sector: {}", track_count, sector);
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(sector) = last_end_sector {
+        let lead_out = sector + 150; // Add lead-in offset
+        info!(
+            "✅ Extracted lead-out from LOG: {} sectors (last track end: {}, tracks found: {})",
+            lead_out, sector, track_count
+        );
+        Some(lead_out)
+    } else {
+        warn!("⚠️ Could not find any end sectors in LOG file");
+        debug!(
+            "LOG content preview (TOC section):\n{}",
+            log_content
+                .lines()
+                .skip_while(|l| !l.contains("TOC of the extracted"))
+                .take(15)
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        None
+    }
+}
+
+/// Extract track offsets from EAC/XLD log file
+/// Looks for the "Start sector" column in the TOC table
+/// Format: "       10  | 37:42.72 |  4:14.43 |    169722    |   188814"
+/// The 4th column (index 2) contains the start sector for each track
+fn extract_track_offsets_from_log(log_content: &str) -> Result<Vec<i32>, MetadataDetectionError> {
+    debug!("🔍 Parsing LOG file to extract track offsets");
+
+    // Find the TOC section - look for "TOC of the extracted CD" header
+    let mut in_toc_section = false;
+    let mut track_offsets = Vec::new();
+
+    for line in log_content.lines() {
+        let line = line.trim();
+
+        // Detect TOC section start
+        if line.contains("TOC of the extracted") {
+            in_toc_section = true;
+            debug!("Found TOC section header");
+            continue;
+        }
+
+        // Stop parsing after TOC section (look for next major section)
+        if in_toc_section
+            && (line.contains("Range status")
+                || line.contains("AccurateRip")
+                || (line.is_empty() && !track_offsets.is_empty()))
+        {
+            debug!("End of TOC section, found {} tracks", track_offsets.len());
+            break;
+        }
+
+        if !in_toc_section {
+            continue;
+        }
+
+        // Skip header separator lines and empty lines
+        if line.contains("---")
+            || line.is_empty()
+            || (line.contains("Track") && line.contains("Start sector"))
+        {
+            continue;
+        }
+
+        // Parse lines with pipe separators (TOC table format)
+        // Format: "       1  |  0:00.00 |  5:12.10 |         0    |    23409   "
+        // Columns: Track | Start | Length | Start sector | End sector
+        // Index:     0        1       2          3             4
+        if line.contains('|') {
+            let parts: Vec<&str> = line.split('|').collect();
+            if parts.len() >= 5 {
+                // The 4th column (index 3) is the start sector
+                let start_sector_str = parts[3].trim();
+                if let Ok(sector) = start_sector_str.parse::<i32>() {
+                    if sector >= 0 {
+                        // Add 150 to match discid format (lead-in offset)
+                        let offset = sector + 150;
+                        track_offsets.push(offset);
+                        debug!(
+                            "  Track {} start sector: {} (offset: {})",
+                            track_offsets.len(),
+                            sector,
+                            offset
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    if track_offsets.is_empty() {
+        return Err(MetadataDetectionError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "No track offsets found in LOG file",
+        )));
+    }
+
+    info!(
+        "✅ Extracted {} track offset(s) from LOG",
+        track_offsets.len()
+    );
+    Ok(track_offsets)
+}
+
+/// Calculate MusicBrainz DiscID from LOG file alone
+/// This is the most efficient method as it doesn't require CUE or audio files
+pub fn calculate_mb_discid_from_log(log_path: &Path) -> Result<String, MetadataDetectionError> {
+    info!("🎵 Calculating MusicBrainz DiscID from LOG: {:?}", log_path);
+
+    // Read LOG file - handle UTF-16 and non-UTF-8 content gracefully
+    info!("📄 Reading LOG file: {:?}", log_path);
+    let log_bytes = fs::read(log_path)?;
+    info!("📏 LOG file size: {} bytes", log_bytes.len());
+
+    // Try to decode - LOG files can be UTF-16 (Windows EAC) or UTF-8
+    let log_content = if log_bytes.len() >= 2 && log_bytes[0] == 0xFF && log_bytes[1] == 0xFE {
+        // UTF-16 LE BOM
+        info!("📄 Detected UTF-16 LE encoding");
+        let utf16_chars: Vec<u16> = log_bytes[2..]
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect();
+        String::from_utf16_lossy(&utf16_chars)
+    } else if log_bytes.len() >= 2 && log_bytes[0] == 0xFE && log_bytes[1] == 0xFF {
+        // UTF-16 BE BOM
+        info!("📄 Detected UTF-16 BE encoding");
+        let utf16_chars: Vec<u16> = log_bytes[2..]
+            .chunks_exact(2)
+            .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
+            .collect();
+        String::from_utf16_lossy(&utf16_chars)
+    } else {
+        // Try UTF-8, using lossy conversion if needed
+        info!("📄 Assuming UTF-8 encoding");
+        String::from_utf8_lossy(&log_bytes).to_string()
+    };
+    info!("📄 LOG file decoded, length: {} chars", log_content.len());
+
+    // Extract track offsets from log
+    let track_offsets = extract_track_offsets_from_log(&log_content)?;
+    info!("📊 Found {} track(s) in LOG file", track_offsets.len());
+
+    // Extract lead-out from log
+    let lead_out_sectors = extract_leadout_from_log(&log_content).ok_or_else(|| {
+        warn!("⚠️ Could not extract lead-out sector from log file. Log content preview (first 500 chars):\n{}", 
+              log_content.chars().take(500).collect::<String>());
+        MetadataDetectionError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Could not extract lead-out sector from log file",
+        ))
+    })?;
+    info!("📏 Lead-out offset from log: {} sectors", lead_out_sectors);
+
+    // Build offsets array in the format expected by discid:
+    // [lead_out, track1_offset, track2_offset, ...]
+    let mut offsets = Vec::with_capacity(track_offsets.len() + 1);
+    offsets.push(lead_out_sectors);
+    offsets.extend_from_slice(&track_offsets);
+
+    let first_track = 1;
+    let last_track = track_offsets.len() as i32;
+
+    info!(
+        "🎯 First track: {}, Last track: {}, Total offsets: {}",
+        first_track,
+        last_track,
+        offsets.len()
+    );
+
+    // Debug: Print all offsets
+    debug!("📋 Offsets (lead-out first, then tracks):");
+    debug!("   Lead-out: {} sectors", offsets[0]);
+    for (i, offset) in offsets.iter().enumerate().skip(1) {
+        debug!("   Track {}: {} sectors", i, offset);
+    }
+
+    // Create DiscID using discid crate
+    let disc = discid::DiscId::put(first_track, &offsets).map_err(|e| {
+        MetadataDetectionError::Io(std::io::Error::other(format!(
+            "Failed to calculate DiscID: {}",
+            e
+        )))
+    })?;
+
+    let mb_discid_str = disc.id();
+    info!("✅ MusicBrainz DiscID: {}", mb_discid_str);
+    println!("🎵 MusicBrainz DiscID result: {}", mb_discid_str);
+
+    Ok(mb_discid_str.to_string())
+}
+
 /// Calculate MusicBrainz DiscID from CUE file and FLAC file
-pub fn calculate_mb_discid_from_cue(
+/// This requires both files: CUE for track offsets, FLAC for lead-out calculation
+pub fn calculate_mb_discid_from_cue_flac(
     cue_path: &Path,
     flac_path: &Path,
 ) -> Result<String, MetadataDetectionError> {
@@ -324,6 +578,7 @@ pub fn detect_metadata(folder_path: PathBuf) -> Result<FolderMetadata, MetadataD
     // Check for CUE files first (highest priority for DISCID)
     let entries = fs::read_dir(&folder_path)?;
     let mut cue_files = Vec::new();
+    let mut log_files = Vec::new();
     let mut audio_files = Vec::new();
 
     for entry in entries.flatten() {
@@ -331,6 +586,7 @@ pub fn detect_metadata(folder_path: PathBuf) -> Result<FolderMetadata, MetadataD
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
             match ext.to_lowercase().as_str() {
                 "cue" => cue_files.push(path),
+                "log" => log_files.push(path),
                 "flac" | "mp3" | "wav" | "m4a" | "aac" | "ogg" => {
                     audio_files.push(path);
                 }
@@ -340,8 +596,9 @@ pub fn detect_metadata(folder_path: PathBuf) -> Result<FolderMetadata, MetadataD
     }
 
     info!(
-        "📄 Found {} CUE file(s), {} audio file(s)",
+        "📄 Found {} CUE file(s), {} log file(s), {} audio file(s)",
         cue_files.len(),
+        log_files.len(),
         audio_files.len()
     );
 
@@ -357,28 +614,66 @@ pub fn detect_metadata(folder_path: PathBuf) -> Result<FolderMetadata, MetadataD
                 }
             }
 
-            // Calculate MusicBrainz DiscID if we have a matching FLAC file
+            // Calculate MusicBrainz DiscID - try log file first, then FLAC
             if mb_discid.is_none() {
-                // Find matching FLAC file (same stem as CUE file)
                 let cue_stem = cue_path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-                if let Some(flac_path) = audio_files.iter().find(|p| {
-                    p.extension().and_then(|e| e.to_str()) == Some("flac")
-                        && p.file_stem().and_then(|s| s.to_str()) == Some(cue_stem)
-                }) {
-                    match calculate_mb_discid_from_cue(cue_path, flac_path) {
+
+                // Try matching log file first (more efficient, no audio download needed)
+                if let Some(log_path) = log_files
+                    .iter()
+                    .find(|p| p.file_stem().and_then(|s| s.to_str()) == Some(cue_stem))
+                {
+                    info!(
+                        "🔍 Attempting MB DiscID calculation from LOG file: {:?}",
+                        log_path
+                    );
+                    match calculate_mb_discid_from_log(log_path) {
                         Ok(id) => {
+                            info!("✅ Calculated MusicBrainz DiscID from log: {}", id);
                             mb_discid = Some(id);
-                            info!(
-                                "🎵 Calculated MusicBrainz DiscID: {}",
-                                mb_discid.as_ref().unwrap()
-                            );
                         }
                         Err(e) => {
-                            warn!("✗ Failed to calculate MB DiscID: {}", e);
+                            warn!("✗ Failed to calculate MB DiscID from log: {}", e);
+                            info!("🔄 Will try FLAC file as fallback if available");
                         }
                     }
                 } else {
-                    debug!("No matching FLAC file found for CUE: {:?}", cue_path);
+                    debug!("No matching LOG file found for CUE stem: {}", cue_stem);
+                }
+
+                // Fall back to FLAC if log didn't work
+                if mb_discid.is_none() {
+                    info!(
+                        "🔍 Looking for matching FLAC file for CUE stem: {}",
+                        cue_stem
+                    );
+                    if let Some(flac_path) = audio_files.iter().find(|p| {
+                        p.extension().and_then(|e| e.to_str()) == Some("flac")
+                            && p.file_stem().and_then(|s| s.to_str()) == Some(cue_stem)
+                    }) {
+                        info!("📀 Found matching FLAC file: {:?}", flac_path);
+                        match calculate_mb_discid_from_cue_flac(cue_path, flac_path) {
+                            Ok(id) => {
+                                info!("✅ Calculated MusicBrainz DiscID from FLAC: {}", id);
+                                mb_discid = Some(id);
+                            }
+                            Err(e) => {
+                                warn!("✗ Failed to calculate MB DiscID from FLAC: {}", e);
+                            }
+                        }
+                    } else {
+                        info!(
+                            "⚠️ No matching FLAC file found for CUE: {:?} (stem: {})",
+                            cue_path, cue_stem
+                        );
+                        info!(
+                            "📋 Available audio files: {:?}",
+                            audio_files
+                                .iter()
+                                .map(|p| p.file_name())
+                                .collect::<Vec<_>>()
+                        );
+                    }
                 }
             }
 
@@ -547,4 +842,201 @@ fn aggregate_year_sources(sources: Vec<(u32, f32)>) -> Option<u32> {
         .into_iter()
         .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
         .map(|(y, _)| y)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_extract_leadout_from_log_acdc() {
+        // Use the fixture LOG file
+        let log_path = PathBuf::from("tests/fixtures/acdc_back_in_black.log");
+
+        // Try alternative path if running from different directory
+        let log_path = if log_path.exists() {
+            log_path
+        } else {
+            PathBuf::from("bae/tests/fixtures/acdc_back_in_black.log")
+        };
+
+        if !log_path.exists() {
+            eprintln!("LOG file not found at: {:?}", log_path);
+            eprintln!("Current directory: {:?}", std::env::current_dir().unwrap());
+            return;
+        }
+
+        println!("🎵 Testing LOG file parsing");
+        println!("   LOG: {:?}", log_path);
+
+        // Initialize tracing for debug output
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .try_init();
+
+        // Read the LOG file as bytes (like the real code does)
+        let log_bytes = std::fs::read(&log_path).expect("Failed to read LOG file");
+        println!("📄 LOG file size: {} bytes", log_bytes.len());
+
+        // Decode - matching the real implementation (handles UTF-16 and UTF-8)
+        let log_content = if log_bytes.len() >= 2 && log_bytes[0] == 0xFF && log_bytes[1] == 0xFE {
+            // UTF-16 LE BOM
+            println!("📄 Detected UTF-16 LE encoding");
+            let utf16_chars: Vec<u16> = log_bytes[2..]
+                .chunks_exact(2)
+                .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                .collect();
+            String::from_utf16_lossy(&utf16_chars)
+        } else if log_bytes.len() >= 2 && log_bytes[0] == 0xFE && log_bytes[1] == 0xFF {
+            // UTF-16 BE BOM
+            println!("📄 Detected UTF-16 BE encoding");
+            let utf16_chars: Vec<u16> = log_bytes[2..]
+                .chunks_exact(2)
+                .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
+                .collect();
+            String::from_utf16_lossy(&utf16_chars)
+        } else {
+            // Try UTF-8, using lossy conversion if needed
+            println!("📄 Assuming UTF-8 encoding");
+            String::from_utf8_lossy(&log_bytes).to_string()
+        };
+        println!(
+            "📄 LOG file decoded, length: {} chars, {} lines",
+            log_content.len(),
+            log_content.lines().count()
+        );
+
+        // Show TOC section for debugging
+        println!("📄 TOC section:");
+        let mut in_toc = false;
+        for (i, line) in log_content.lines().enumerate() {
+            if line.contains("TOC of the extracted") {
+                in_toc = true;
+            }
+            if in_toc {
+                println!("   {}: {}", i + 1, line);
+                if line.contains("Range status") || line.contains("AccurateRip") {
+                    break;
+                }
+            }
+        }
+
+        // Test extracting lead-out
+        let lead_out = extract_leadout_from_log(&log_content);
+        match lead_out {
+            Some(sector) => {
+                println!("✅ Successfully extracted lead-out: {} sectors", sector);
+                // Expected: last track end sector is 188814, so lead-out should be 188814 + 150 = 188964
+                assert_eq!(
+                    sector, 188964,
+                    "Expected lead-out to be 188964 (188814 + 150)"
+                );
+            }
+            None => {
+                eprintln!("❌ Failed to extract lead-out from LOG file");
+                eprintln!(
+                    "LOG content preview (TOC section):\n{}",
+                    log_content
+                        .lines()
+                        .skip_while(|l| !l.contains("TOC of the extracted"))
+                        .take(15)
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                );
+                panic!("Failed to extract lead-out");
+            }
+        }
+    }
+
+    #[test]
+    fn test_calculate_mb_discid_from_log_acdc() {
+        // Use the fixture LOG file
+        let log_path = PathBuf::from("tests/fixtures/acdc_back_in_black.log");
+
+        // Try alternative path if running from different directory
+        let log_path = if log_path.exists() {
+            log_path
+        } else {
+            PathBuf::from("bae/tests/fixtures/acdc_back_in_black.log")
+        };
+
+        if !log_path.exists() {
+            eprintln!("LOG file not found at: {:?}", log_path);
+            eprintln!("Current directory: {:?}", std::env::current_dir().unwrap());
+            return;
+        }
+
+        println!("🎵 Testing MB DiscID calculation from LOG file alone");
+        println!("   LOG: {:?}", log_path);
+
+        // Initialize tracing for debug output
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .try_init();
+
+        match calculate_mb_discid_from_log(&log_path) {
+            Ok(discid) => {
+                println!(
+                    "✅ Successfully calculated MusicBrainz DiscID from LOG: {}",
+                    discid
+                );
+                assert_eq!(discid.len(), 28, "DiscID should be 28 characters");
+                assert!(
+                    discid
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+                    "DiscID should contain only alphanumeric characters, dashes, and underscores"
+                );
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to calculate DiscID from LOG: {}", e);
+                panic!("Failed to calculate DiscID from LOG: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_calculate_mb_discid_from_log_acdc_cue_log() {
+        // Use the fixture LOG file (CUE not needed anymore)
+        let log_path = PathBuf::from("tests/fixtures/acdc_back_in_black.log");
+
+        // Try alternative path if running from different directory
+        let log_path = if log_path.exists() {
+            log_path
+        } else {
+            PathBuf::from("bae/tests/fixtures/acdc_back_in_black.log")
+        };
+
+        if !log_path.exists() {
+            eprintln!("LOG file not found, skipping test");
+            eprintln!("  LOG: {:?} (exists: {})", log_path, log_path.exists());
+            return;
+        }
+
+        println!("🎵 Testing MB DiscID calculation from LOG file alone");
+        println!("   LOG: {:?}", log_path);
+
+        // Initialize tracing for debug output
+        let _ = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .try_init();
+
+        match calculate_mb_discid_from_log(&log_path) {
+            Ok(discid) => {
+                println!("✅ Successfully calculated MusicBrainz DiscID: {}", discid);
+                assert_eq!(discid.len(), 28, "DiscID should be 28 characters");
+                assert!(
+                    discid
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+                    "DiscID should contain only alphanumeric characters, dashes, and underscores"
+                );
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to calculate DiscID: {}", e);
+                panic!("Failed to calculate DiscID: {}", e);
+            }
+        }
+    }
 }
