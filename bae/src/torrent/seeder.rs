@@ -48,11 +48,8 @@ impl TorrentSeeder {
     pub async fn start_seeding(&self, release_id: &str) -> Result<(), SeederError> {
         // Load torrent metadata from database
         let torrent = self.get_torrent_by_release(release_id).await?;
-
-        info!(
-            "Starting seeding for release {} (torrent: {})",
-            release_id, torrent.info_hash
-        );
+        
+        info!("Starting seeding for release {} (torrent: {})", release_id, torrent.info_hash);
 
         // Load piece mappings
         let piece_mappings = self.get_piece_mappings(&torrent.id).await?;
@@ -60,9 +57,8 @@ impl TorrentSeeder {
         // Get all chunk IDs that need to be pinned
         let mut chunk_ids = Vec::new();
         for mapping in &piece_mappings {
-            let ids: Vec<String> = serde_json::from_str(&mapping.chunk_ids).map_err(|e| {
-                SeederError::PieceMapping(format!("Failed to parse chunk IDs: {}", e))
-            })?;
+            let ids: Vec<String> = serde_json::from_str(&mapping.chunk_ids)
+                .map_err(|e| SeederError::PieceMapping(format!("Failed to parse chunk IDs: {}", e)))?;
             chunk_ids.extend(ids);
         }
 
@@ -79,11 +75,8 @@ impl TorrentSeeder {
     /// Stop seeding a torrent
     pub async fn stop_seeding(&self, release_id: &str) -> Result<(), SeederError> {
         let torrent = self.get_torrent_by_release(release_id).await?;
-
-        info!(
-            "Stopping seeding for release {} (torrent: {})",
-            release_id, torrent.info_hash
-        );
+        
+        info!("Stopping seeding for release {} (torrent: {})", release_id, torrent.info_hash);
 
         // Load piece mappings to get chunk IDs
         let piece_mappings = self.get_piece_mappings(&torrent.id).await?;
@@ -91,9 +84,8 @@ impl TorrentSeeder {
         // Get all chunk IDs that were pinned
         let mut chunk_ids = Vec::new();
         for mapping in &piece_mappings {
-            let ids: Vec<String> = serde_json::from_str(&mapping.chunk_ids).map_err(|e| {
-                SeederError::PieceMapping(format!("Failed to parse chunk IDs: {}", e))
-            })?;
+            let ids: Vec<String> = serde_json::from_str(&mapping.chunk_ids)
+                .map_err(|e| SeederError::PieceMapping(format!("Failed to parse chunk IDs: {}", e)))?;
             chunk_ids.extend(ids);
         }
 
@@ -108,11 +100,7 @@ impl TorrentSeeder {
     }
 
     /// Read a piece of data from cached chunks
-    pub async fn read_piece(
-        &self,
-        torrent_id: &str,
-        piece_index: i32,
-    ) -> Result<Vec<u8>, SeederError> {
+    pub async fn read_piece(&self, torrent_id: &str, piece_index: i32) -> Result<Vec<u8>, SeederError> {
         // Get piece mapping
         let mapping = self.get_piece_mapping(torrent_id, piece_index).await?;
 
@@ -121,24 +109,16 @@ impl TorrentSeeder {
             .map_err(|e| SeederError::PieceMapping(format!("Failed to parse chunk IDs: {}", e)))?;
 
         if chunk_ids.is_empty() {
-            return Err(SeederError::PieceMapping(
-                "No chunks mapped to piece".to_string(),
-            ));
+            return Err(SeederError::PieceMapping("No chunks mapped to piece".to_string()));
         }
 
         // Read and decrypt chunks
         let mut decrypted_chunks = Vec::new();
         for chunk_id in &chunk_ids {
-            let cached_data = self
-                .cache_manager
-                .get_chunk(chunk_id)
-                .await?
-                .ok_or_else(|| {
-                    SeederError::Cache(crate::cache::CacheError::Io(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        format!("Chunk {} not in cache", chunk_id),
-                    )))
-                })?;
+            let cached_data = self.cache_manager.get_chunk(chunk_id).await?
+                .ok_or_else(|| SeederError::Cache(crate::cache::CacheError::Io(
+                    std::io::Error::new(std::io::ErrorKind::NotFound, format!("Chunk {} not in cache", chunk_id))
+                )))?;
 
             let decrypted = self.encryption_service.decrypt_chunk(&cached_data)?;
             decrypted_chunks.push(decrypted);
@@ -215,19 +195,12 @@ impl TorrentSeeder {
     }
 
     /// Get piece mappings for a torrent
-    async fn get_piece_mappings(
-        &self,
-        torrent_id: &str,
-    ) -> Result<Vec<DbTorrentPieceMapping>, SeederError> {
+    async fn get_piece_mappings(&self, torrent_id: &str) -> Result<Vec<DbTorrentPieceMapping>, SeederError> {
         Ok(self.database.get_torrent_piece_mappings(torrent_id).await?)
     }
 
     /// Get a specific piece mapping
-    async fn get_piece_mapping(
-        &self,
-        torrent_id: &str,
-        piece_index: i32,
-    ) -> Result<DbTorrentPieceMapping, SeederError> {
+    async fn get_piece_mapping(&self, torrent_id: &str, piece_index: i32) -> Result<DbTorrentPieceMapping, SeederError> {
         self.database
             .get_torrent_piece_mapping(torrent_id, piece_index)
             .await?
@@ -235,14 +208,8 @@ impl TorrentSeeder {
     }
 
     /// Mark torrent as seeding or not
-    async fn mark_torrent_seeding(
-        &self,
-        torrent_id: &str,
-        is_seeding: bool,
-    ) -> Result<(), SeederError> {
-        Ok(self
-            .database
-            .update_torrent_seeding(torrent_id, is_seeding)
-            .await?)
+    async fn mark_torrent_seeding(&self, torrent_id: &str, is_seeding: bool) -> Result<(), SeederError> {
+        Ok(self.database.update_torrent_seeding(torrent_id, is_seeding).await?)
     }
 }
+

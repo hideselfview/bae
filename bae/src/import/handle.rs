@@ -4,16 +4,15 @@
 // Provides the public API for interacting with the import service.
 
 use crate::cue_flac::CueFlacProcessor;
-use crate::db::{Database, DbAlbum, DbRelease};
+use crate::db::{DbAlbum, DbRelease, Database};
 use crate::import::progress::ImportProgressHandle;
 use crate::import::track_to_file_mapper::map_tracks_to_files;
 use crate::import::types::{
-    CueFlacMetadata, DiscoveredFile, ImportProgress, ImportRequestParams, TorrentSource, TrackFile,
+    CueFlacMetadata, DiscoveredFile, ImportProgress, ImportRequestParams, TrackFile, TorrentSource,
 };
 use crate::library::SharedLibraryManager;
 use crate::playback::symphonia_decoder::TrackDecoder;
-use crate::torrent::client::{TorrentClient, TorrentHandle};
-use crate::torrent::selective_downloader::SelectiveDownloader;
+use crate::torrent::{TorrentClient, TorrentHandle, SelectiveDownloader};
 use std::path::Path;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -220,22 +219,26 @@ impl ImportHandle {
                 let torrent_client = TorrentClient::new(self.runtime_handle.clone())
                     .map_err(|e| format!("Failed to create torrent client: {}", e))?;
 
-                // Extract magnet link before match to avoid partial move
-                let magnet_link = match &torrent_source {
+                // Extract magnet link before moving torrent_source
+                let magnet_link_opt = match &torrent_source {
                     TorrentSource::MagnetLink(m) => Some(m.clone()),
                     _ => None,
                 };
 
                 // Add torrent to client
-                let torrent_handle = match &torrent_source {
-                    TorrentSource::File(path) => torrent_client
-                        .add_torrent_file(path)
-                        .await
-                        .map_err(|e| format!("Failed to add torrent file: {}", e))?,
-                    TorrentSource::MagnetLink(magnet) => torrent_client
-                        .add_magnet_link(magnet)
-                        .await
-                        .map_err(|e| format!("Failed to add magnet link: {}", e))?,
+                let torrent_handle = match torrent_source {
+                    TorrentSource::File(path) => {
+                        torrent_client
+                            .add_torrent_file(&path)
+                            .await
+                            .map_err(|e| format!("Failed to add torrent file: {}", e))?
+                    }
+                    TorrentSource::MagnetLink(magnet) => {
+                        torrent_client
+                            .add_magnet_link(&magnet)
+                            .await
+                            .map_err(|e| format!("Failed to add magnet link: {}", e))?
+                    }
                 };
 
                 // Wait for metadata to be available (for magnet links)
@@ -277,10 +280,7 @@ impl ImportHandle {
                     .map_err(|e| format!("Failed to prioritize metadata files: {}", e))?;
 
                 if !metadata_files.is_empty() {
-                    info!(
-                        "Waiting for {} metadata files to download...",
-                        metadata_files.len()
-                    );
+                    info!("Waiting for {} metadata files to download...", metadata_files.len());
                     selective_downloader
                         .wait_for_metadata_files(&torrent_handle, &metadata_files)
                         .await
@@ -394,7 +394,7 @@ impl ImportHandle {
 
                 let torrent_metadata = TorrentImportMetadata {
                     info_hash: info_hash.clone(),
-                    magnet_link: magnet_link,
+                    magnet_link: magnet_link_opt,
                     torrent_name: torrent_name.clone(),
                     total_size_bytes: total_size,
                     piece_length,

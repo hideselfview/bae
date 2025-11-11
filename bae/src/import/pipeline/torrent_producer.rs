@@ -4,8 +4,7 @@
 // Maps torrent pieces to bae chunks using TorrentPieceMapper.
 
 use crate::import::pipeline::ChunkData;
-use crate::torrent::client::TorrentHandle;
-use crate::torrent::piece_mapper::TorrentPieceMapper;
+use crate::torrent::{TorrentHandle, TorrentPieceMapper};
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 use uuid::Uuid;
@@ -33,8 +32,7 @@ pub async fn produce_chunk_stream_from_torrent(
     };
 
     // Track which chunks we've started and their current data
-    let mut chunk_buffers: std::collections::HashMap<usize, Vec<u8>> =
-        std::collections::HashMap::new();
+    let mut chunk_buffers: std::collections::HashMap<usize, Vec<u8>> = std::collections::HashMap::new();
 
     // Process pieces as they complete
     for piece_index in 0..total_pieces {
@@ -48,7 +46,7 @@ pub async fn produce_chunk_stream_from_torrent(
 
         // Read piece data (placeholder - needs actual libtorrent piece reading)
         warn!("Piece reading not yet fully implemented - needs libtorrent async piece reading API");
-
+        
         // For now, return error indicating this needs implementation
         let _ = chunk_tx
             .send(Err(format!(
@@ -80,3 +78,4 @@ pub async fn produce_chunk_stream_from_torrent(
         }
     }
 }
+

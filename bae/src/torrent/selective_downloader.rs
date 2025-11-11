@@ -1,4 +1,4 @@
-use crate::torrent::client::{FilePriority, TorrentClient, TorrentFile, TorrentHandle};
+use crate::torrent::client::{TorrentClient, TorrentHandle, TorrentFile, FilePriority};
 use std::path::PathBuf;
 use thiserror::Error;
 use tracing::{debug, info};
@@ -32,16 +32,9 @@ impl SelectiveDownloader {
         let mut priorities = Vec::new();
 
         for file in &files {
-            let is_metadata = file
-                .path
-                .extension()
+            let is_metadata = file.path.extension()
                 .and_then(|ext| ext.to_str())
-                .map(|ext| {
-                    matches!(
-                        ext.to_lowercase().as_str(),
-                        "cue" | "log" | "txt" | "md5" | "ffp"
-                    )
-                })
+                .map(|ext| matches!(ext.to_lowercase().as_str(), "cue" | "log" | "txt" | "md5" | "ffp"))
                 .unwrap_or(false);
 
             if is_metadata {
@@ -67,7 +60,7 @@ impl SelectiveDownloader {
     ) -> Result<Vec<PathBuf>, SelectiveDownloadError> {
         loop {
             let progress = handle.progress().await?;
-
+            
             // Check if any metadata files are complete
             // Note: This is simplified - actual implementation would check individual file completion
             if progress > 0.0 {
@@ -91,10 +84,7 @@ impl SelectiveDownloader {
     }
 
     /// Enable all remaining files for download
-    pub async fn enable_remaining_files(
-        &self,
-        handle: &TorrentHandle,
-    ) -> Result<(), SelectiveDownloadError> {
+    pub async fn enable_remaining_files(&self, handle: &TorrentHandle) -> Result<(), SelectiveDownloadError> {
         let files = handle.get_file_list().await?;
         let priorities: Vec<FilePriority> = files.iter().map(|_| FilePriority::Normal).collect();
 
@@ -104,3 +94,4 @@ impl SelectiveDownloader {
         Ok(())
     }
 }
+

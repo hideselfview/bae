@@ -16,6 +16,7 @@ mod musicbrainz;
 mod playback;
 mod subsonic;
 mod test_support;
+mod torrent;
 mod ui;
 
 use library::SharedLibraryManager;

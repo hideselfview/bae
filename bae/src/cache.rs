@@ -54,7 +54,7 @@ pub struct CacheManager {
     entries: Arc<RwLock<HashMap<String, CacheEntry>>>,
     /// Current cache size in bytes
     current_size: Arc<RwLock<u64>>,
-    /// Chunk IDs that are pinned (excluded from LRU eviction)
+    /// Set of pinned chunk IDs that should not be evicted
     pinned_chunks: Arc<RwLock<HashSet<String>>>,
 }
 
@@ -224,16 +224,15 @@ impl CacheManager {
         entries: &mut HashMap<String, CacheEntry>,
         current_size: &mut u64,
     ) -> Result<(), CacheError> {
+        // Get pinned chunks to exclude from eviction
         let pinned = self.pinned_chunks.read().await;
 
-        // Find the chunk with the oldest last_accessed time, excluding pinned chunks
+        // Find the chunk with the oldest last_accessed time that is not pinned
         let lru_chunk_id = entries
             .iter()
             .filter(|(id, _)| !pinned.contains(*id))
             .min_by_key(|(_, entry)| entry.last_accessed)
             .map(|(id, _)| id.clone());
-
-        drop(pinned);
 
         if let Some(chunk_id) = lru_chunk_id {
             if let Some(entry) = entries.remove(&chunk_id) {
@@ -254,18 +253,16 @@ impl CacheManager {
         Ok(())
     }
 
-    /// Pin a chunk to prevent it from being evicted by LRU
+    /// Pin a chunk to prevent it from being evicted
     pub async fn pin_chunk(&self, chunk_id: &str) {
         let mut pinned = self.pinned_chunks.write().await;
         pinned.insert(chunk_id.to_string());
-        debug!("Pinned chunk {}", chunk_id);
     }
 
     /// Unpin a chunk, allowing it to be evicted again
     pub async fn unpin_chunk(&self, chunk_id: &str) {
         let mut pinned = self.pinned_chunks.write().await;
         pinned.remove(chunk_id);
-        debug!("Unpinned chunk {}", chunk_id);
     }
 
     /// Pin multiple chunks at once
@@ -274,7 +271,6 @@ impl CacheManager {
         for chunk_id in chunk_ids {
             pinned.insert(chunk_id.clone());
         }
-        debug!("Pinned {} chunks", chunk_ids.len());
     }
 
     /// Unpin multiple chunks at once
@@ -283,6 +279,5 @@ impl CacheManager {
         for chunk_id in chunk_ids {
             pinned.remove(chunk_id);
         }
-        debug!("Unpinned {} chunks", chunk_ids.len());
     }
 }

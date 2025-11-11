@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use dioxus::html::KeyboardEvent;
 use rfd::AsyncFileDialog;
 use std::path::PathBuf;
 
@@ -24,11 +25,11 @@ pub fn TorrentInput(
         });
     };
 
-    let submit_magnet = {
-        let magnet_link = magnet_link;
+    let on_magnet_submit = {
+        let mut magnet_link = magnet_link;
         let on_error = on_error.clone();
         let on_magnet_link = on_magnet_link.clone();
-        move || {
+        move |_| {
             let link = magnet_link.read().trim().to_string();
             if link.is_empty() {
                 on_error.call("Please enter a magnet link".to_string());
@@ -39,20 +40,6 @@ pub fn TorrentInput(
                 return;
             }
             on_magnet_link.call(link);
-        }
-    };
-
-    let on_magnet_submit_click = {
-        let submit_magnet = submit_magnet.clone();
-        move |_| {
-            submit_magnet();
-        }
-    };
-
-    let on_magnet_submit_key = {
-        let submit_magnet = submit_magnet.clone();
-        move |_| {
-            submit_magnet();
         }
     };
 
@@ -128,16 +115,18 @@ pub fn TorrentInput(
                                 placeholder: "magnet:?xt=urn:btih:...",
                                 value: "{magnet_link}",
                                 oninput: move |evt| magnet_link.set(evt.value()),
-                                onkeydown: move |evt| {
-                                    use dioxus::html::Key;
-                                    if evt.key() == Key::Enter {
-                                        on_magnet_submit_key(());
+                                onkeydown: {
+                                    let on_magnet_submit = on_magnet_submit.clone();
+                                    move |evt: KeyboardEvent| {
+                                        if evt.key() == dioxus::html::Key::Enter {
+                                            on_magnet_submit(());
+                                        }
                                     }
                                 }
                             }
                             button {
                                 class: "px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium",
-                                onclick: on_magnet_submit_click,
+                                onclick: move |_| on_magnet_submit(()),
                                 "Import"
                             }
                         }
@@ -150,3 +139,4 @@ pub fn TorrentInput(
         }
     }
 }
+
