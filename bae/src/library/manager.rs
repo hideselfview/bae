@@ -145,12 +145,18 @@ impl LibraryManager {
     }
 
     /// Get torrent by release ID
-    pub async fn get_torrent_by_release(&self, release_id: &str) -> Result<Option<DbTorrent>, LibraryError> {
+    pub async fn get_torrent_by_release(
+        &self,
+        release_id: &str,
+    ) -> Result<Option<DbTorrent>, LibraryError> {
         Ok(self.database.get_torrent_by_release(release_id).await?)
     }
 
     /// Insert torrent piece mapping
-    pub async fn insert_torrent_piece_mapping(&self, mapping: &crate::db::DbTorrentPieceMapping) -> Result<(), LibraryError> {
+    pub async fn insert_torrent_piece_mapping(
+        &self,
+        mapping: &crate::db::DbTorrentPieceMapping,
+    ) -> Result<(), LibraryError> {
         self.database.insert_torrent_piece_mapping(mapping).await?;
         Ok(())
     }

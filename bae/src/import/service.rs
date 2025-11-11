@@ -76,16 +76,28 @@ impl ImportService {
         let (requests_tx, requests_rx) = mpsc::unbounded_channel();
         let (progress_tx, progress_rx) = mpsc::unbounded_channel();
 
-        let service = ImportService {
-            config,
-            requests_rx,
-            progress_tx,
-            library_manager: library_manager.clone(),
-            encryption_service,
-            cloud_storage,
-        };
+        // Clone library_manager for the thread
+        let library_manager_for_worker = library_manager.clone();
 
-        runtime_handle.spawn(service.run_import_worker());
+        // Spawn the service task on a dedicated thread (TorrentClient isn't Send-safe due to FFI)
+        // This follows the same pattern as PlaybackService for handling non-Send types
+        std::thread::spawn(move || {
+            // Create a new tokio runtime for this thread
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
+
+            rt.block_on(async move {
+                let service = ImportService {
+                    config,
+                    requests_rx,
+                    progress_tx,
+                    library_manager: library_manager_for_worker,
+                    encryption_service,
+                    cloud_storage,
+                };
+
+                service.run_import_worker().await;
+            });
+        });
 
         ImportHandle::new(requests_tx, progress_rx, library_manager, runtime_handle)
     }
@@ -129,8 +141,7 @@ impl ImportService {
             discovered_files,
             cue_flac_metadata,
             torrent_metadata,
-            torrent_handle,
-            torrent_client: _torrent_client,
+            torrent_source,
         } = request;
 
         // Mark release as importing now that pipeline is starting
@@ -195,32 +206,71 @@ impl ImportService {
         );
 
         // Spawn chunk producer task - use torrent producer if this is a torrent import
-        let piece_mappings_handle = if let (Some(torrent_handle), Some(torrent_meta)) = (torrent_handle, &torrent_metadata) {
-            // Torrent import: use torrent producer
-            use crate::torrent::TorrentPieceMapper;
-            let piece_mapper = TorrentPieceMapper::new(
-                torrent_meta.piece_length as usize,
-                self.config.chunk_size_bytes,
-                torrent_meta.num_pieces as usize,
-                torrent_meta.total_size_bytes as usize,
-            );
-            
-            let handle = tokio::spawn(pipeline::torrent_producer::produce_chunk_stream_from_torrent(
-                torrent_handle,
-                piece_mapper,
-                self.config.chunk_size_bytes,
-                chunk_tx,
-            ));
-            Some(handle)
-        } else {
-            // Regular import: use file producer
-            tokio::spawn(pipeline::chunk_producer::produce_chunk_stream_from_files(
-                files_to_chunks.clone(),
-                self.config.chunk_size_bytes,
-                chunk_tx,
-            ));
-            None
-        };
+        use std::collections::HashMap;
+        let piece_mappings_result: Option<Result<HashMap<usize, (Vec<String>, i64, i64)>, String>> =
+            if let (Some(torrent_source), Some(torrent_meta)) = (torrent_source, &torrent_metadata)
+            {
+                // Torrent import: recreate torrent client and handle
+                use crate::torrent::{TorrentClient, TorrentPieceMapper};
+                use tokio::runtime::Handle;
+
+                // Create torrent handle in a separate block to ensure torrent_client is dropped
+                // before any awaits that might capture it
+                let torrent_handle = {
+                    let runtime_handle = Handle::current();
+                    let torrent_client = TorrentClient::new(runtime_handle)
+                        .map_err(|e| format!("Failed to create torrent client: {}", e))?;
+
+                    match torrent_source {
+                        crate::import::types::TorrentSource::File(path) => torrent_client
+                            .add_torrent_file(&path)
+                            .await
+                            .map_err(|e| format!("Failed to add torrent file: {}", e))?,
+                        crate::import::types::TorrentSource::MagnetLink(magnet) => torrent_client
+                            .add_magnet_link(&magnet)
+                            .await
+                            .map_err(|e| format!("Failed to add magnet link: {}", e))?,
+                    }
+                    // torrent_client is dropped here at the end of the block
+                };
+
+                // Wait for metadata if needed
+                torrent_handle
+                    .wait_for_metadata()
+                    .await
+                    .map_err(|e| format!("Failed to wait for metadata: {}", e))?;
+
+                // Torrent import: use torrent producer
+                // Note: We can't spawn a task with TorrentHandle as it's not Send.
+                // Instead, we'll run it in the current task.
+                let piece_mapper = TorrentPieceMapper::new(
+                    torrent_meta.piece_length as usize,
+                    self.config.chunk_size_bytes,
+                    torrent_meta.num_pieces as usize,
+                    torrent_meta.total_size_bytes as usize,
+                );
+
+                // Run torrent producer in current task (can't spawn due to Send requirement)
+                // This will block until all pieces are processed, but that's acceptable
+                // as the import service processes imports sequentially anyway
+                let piece_mappings = pipeline::torrent_producer::produce_chunk_stream_from_torrent(
+                    &torrent_handle,
+                    piece_mapper,
+                    self.config.chunk_size_bytes,
+                    chunk_tx,
+                )
+                .await;
+
+                Some(Ok(piece_mappings))
+            } else {
+                // Regular import: use file producer
+                tokio::spawn(pipeline::chunk_producer::produce_chunk_stream_from_files(
+                    files_to_chunks.clone(),
+                    self.config.chunk_size_bytes,
+                    chunk_tx,
+                ));
+                None
+            };
 
         // Wait for the pipeline to complete
         let results: Vec<_> = pipeline.collect().await;
@@ -235,7 +285,7 @@ impl ImportService {
         // ========== TEARDOWN ==========
 
         // Get piece mappings if this was a torrent import
-        if let Some(handle) = piece_mappings_handle {
+        if let Some(Ok(piece_mappings)) = piece_mappings_result {
             if let Some(torrent_meta) = &torrent_metadata {
                 // Get torrent ID from database
                 let torrent = library_manager
@@ -243,10 +293,7 @@ impl ImportService {
                     .await
                     .map_err(|e| format!("Failed to get torrent: {}", e))?
                     .ok_or_else(|| "Torrent not found in database".to_string())?;
-                
-                // Wait for producer to finish and get piece mappings
-                let piece_mappings = handle.await.map_err(|e| format!("Producer task failed: {}", e))?;
-                
+
                 // Save piece mappings to database
                 for (piece_index, (chunk_ids, start_byte, end_byte)) in &piece_mappings {
                     let mapping = crate::db::DbTorrentPieceMapping::new(
@@ -257,13 +304,13 @@ impl ImportService {
                         *end_byte,
                     )
                     .map_err(|e| format!("Failed to create piece mapping: {}", e))?;
-                    
+
                     library_manager
                         .insert_torrent_piece_mapping(&mapping)
                         .await
                         .map_err(|e| format!("Failed to save piece mapping: {}", e))?;
                 }
-                
+
                 info!("Saved {} piece mappings to database", piece_mappings.len());
             }
         }

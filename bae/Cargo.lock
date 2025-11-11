@@ -827,6 +827,7 @@ dependencies = [
  "chrono",
  "cocoa 0.25.0",
  "cpal",
+ "cxx",
  "dioxus",
  "dirs 5.0.1",
  "discid",

@@ -37,11 +37,9 @@ pub struct ImportRequest {
     pub cue_flac_metadata: Option<std::collections::HashMap<std::path::PathBuf, CueFlacMetadata>>,
     /// Torrent metadata (for torrent imports only)
     pub torrent_metadata: Option<TorrentImportMetadata>,
-    /// Torrent handle (for torrent imports only, stored separately to avoid Send issues)
-    /// This is stored as Option to allow passing through channels
-    pub torrent_handle: Option<TorrentHandle>,
-    /// Torrent client (for torrent imports only, needed to recreate handle if needed)
-    pub torrent_client: Option<TorrentClient>,
+    /// Torrent source (for torrent imports only, stored to recreate handle in import service)
+    /// We can't send TorrentClient/TorrentHandle through channels as they contain UniquePtr
+    pub torrent_source: Option<TorrentSource>,
 }
 
 /// Torrent-specific metadata for import
@@ -200,8 +198,7 @@ impl ImportHandle {
                         discovered_files,
                         cue_flac_metadata,
                         torrent_metadata: None,
-                        torrent_handle: None,
-                        torrent_client: None,
+                        torrent_source: None,
                     })
                     .map_err(|_| "Failed to queue validated album for import".to_string())?;
 
@@ -232,14 +229,17 @@ impl ImportHandle {
                     _ => None,
                 };
 
+                // Clone torrent_source for storing in ImportRequest
+                let torrent_source_for_request = torrent_source.clone();
+
                 // Add torrent to client
-                let torrent_handle = match torrent_source {
+                let torrent_handle = match &torrent_source {
                     TorrentSource::File(path) => torrent_client
-                        .add_torrent_file(&path)
+                        .add_torrent_file(path)
                         .await
                         .map_err(|e| format!("Failed to add torrent file: {}", e))?,
                     TorrentSource::MagnetLink(magnet) => torrent_client
-                        .add_magnet_link(&magnet)
+                        .add_magnet_link(magnet)
                         .await
                         .map_err(|e| format!("Failed to add magnet link: {}", e))?,
                 };
@@ -444,8 +444,7 @@ impl ImportHandle {
                         discovered_files,
                         cue_flac_metadata,
                         torrent_metadata: Some(torrent_metadata),
-                        torrent_handle: Some(torrent_handle),
-                        torrent_client: Some(torrent_client),
+                        torrent_source: Some(torrent_source_for_request),
                     })
                     .map_err(|_| "Failed to queue validated torrent for import".to_string())?;
 
