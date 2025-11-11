@@ -515,12 +515,14 @@ mod tests {
     use super::*;
     use crate::cloud_storage::CloudStorageManager;
     use crate::db::{DbAlbum, DbChunk, DbRelease, ImportStatus};
+    #[cfg(feature = "test-utils")]
     use crate::test_support::MockCloudStorage;
     use chrono::Utc;
     use std::sync::Arc;
     use tempfile::TempDir;
     use uuid::Uuid;
 
+    #[cfg(feature = "test-utils")]
     async fn setup_test_manager() -> (LibraryManager, TempDir, CloudStorageManager) {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
@@ -582,6 +584,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "test-utils")]
     async fn test_delete_release_with_single_release_deletes_album() {
         let (manager, _temp_dir, _cloud_storage) = setup_test_manager().await;
 
@@ -611,6 +614,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "test-utils")]
     async fn test_delete_release_with_multiple_releases_preserves_album() {
         let (manager, _temp_dir, _cloud_storage) = setup_test_manager().await;
 
@@ -645,6 +649,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "test-utils")]
     async fn test_delete_album_deletes_all_releases_and_chunks() {
         let (manager, _temp_dir, cloud_storage) = setup_test_manager().await;
 
@@ -688,6 +693,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "test-utils")]
     async fn test_delete_release_cloud_storage_cleanup() {
         let (manager, _temp_dir, cloud_storage) = setup_test_manager().await;
 
