@@ -28,7 +28,7 @@ use crate::import::pipeline;
 use crate::import::progress::ImportProgressTracker;
 use crate::import::types::ImportProgress;
 use crate::library::SharedLibraryManager;
-use crate::torrent::{BaeStorage, TorrentClient, TorrentPieceMapper};
+use crate::torrent::BaeStorage;
 use futures::stream::StreamExt;
 use tokio::sync::mpsc;
 use tracing::{error, info};
@@ -149,7 +149,7 @@ impl ImportService {
             cue_flac_metadata,
             torrent_metadata,
             torrent_source,
-            seed_after_download,
+            seed_after_download: _,
         } = request;
 
         // Mark release as importing now that pipeline is starting
@@ -219,13 +219,13 @@ impl ImportService {
             if let (Some(torrent_source), Some(torrent_meta)) = (torrent_source, &torrent_metadata)
             {
                 // Torrent import: recreate torrent client and handle
-                use crate::torrent::{TorrentClient, TorrentPieceMapper};
+                use crate::torrent::TorrentPieceMapper;
                 use tokio::runtime::Handle;
 
                 // Create torrent client and handle, then register storage
-                let (torrent_client, torrent_handle) = {
+                let torrent_handle = {
                     let runtime_handle = Handle::current();
-                    let torrent_client = TorrentClient::new(runtime_handle)
+                    let torrent_client = crate::torrent::TorrentClient::new(runtime_handle)
                         .map_err(|e| format!("Failed to create torrent client: {}", e))?;
 
                     let torrent_handle = match torrent_source {
@@ -277,7 +277,7 @@ impl ImportService {
                         )
                         .await;
 
-                    (torrent_client, torrent_handle)
+                    torrent_handle
                 };
 
                 // Torrent import: use torrent producer
@@ -326,7 +326,7 @@ impl ImportService {
 
         // Get piece mappings if this was a torrent import
         if let Some(Ok(piece_mappings)) = piece_mappings_result {
-            if let Some(torrent_meta) = &torrent_metadata {
+            if let Some(_torrent_meta) = &torrent_metadata {
                 // Get torrent ID from database
                 let torrent = library_manager
                     .get_torrent_by_release(&db_release.id)

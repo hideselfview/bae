@@ -475,7 +475,6 @@ pub fn AlbumDetailView(
                                                                     let release_id_for_view_files = release_id_for_delete.clone();
                                                                     let release_id_for_seeding = release_id_for_delete.clone();
                                                                     let torrent_seeder_clone = torrent_seeder.clone();
-                                                                    let library_manager_for_refresh = library_manager.clone();
                                                                     let torrents = torrents_resource
                                                                         .value()
                                                                         .read()

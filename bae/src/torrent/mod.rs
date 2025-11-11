@@ -5,8 +5,8 @@ pub mod seeder;
 pub mod selective_downloader;
 pub mod storage;
 
-pub use client::{TorrentClient, TorrentFile, TorrentHandle};
-pub use piece_mapper::{ChunkMapping, PieceMapping, TorrentPieceMapper};
-pub use seeder::{start as start_seeder, SeederError, TorrentSeederHandle};
+pub use client::{TorrentClient, TorrentHandle};
+pub use piece_mapper::TorrentPieceMapper;
+pub use seeder::{start as start_seeder, TorrentSeederHandle};
 pub use selective_downloader::SelectiveDownloader;
-pub use storage::{BaeStorage, StorageError};
+pub use storage::BaeStorage;
