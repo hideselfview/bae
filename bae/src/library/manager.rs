@@ -161,6 +161,23 @@ impl LibraryManager {
         Ok(())
     }
 
+    /// Get all torrents that are marked as seeding
+    pub async fn get_seeding_torrents(&self) -> Result<Vec<DbTorrent>, LibraryError> {
+        Ok(self.database.get_seeding_torrents().await?)
+    }
+
+    /// Mark a torrent as seeding
+    pub async fn set_torrent_seeding(
+        &self,
+        torrent_id: &str,
+        is_seeding: bool,
+    ) -> Result<(), LibraryError> {
+        self.database
+            .update_torrent_seeding(torrent_id, is_seeding)
+            .await?;
+        Ok(())
+    }
+
     /// Get all albums in the library
     pub async fn get_albums(&self) -> Result<Vec<DbAlbum>, LibraryError> {
         Ok(self.database.get_albums().await?)

@@ -1700,4 +1700,36 @@ impl Database {
             .await?;
         Ok(())
     }
+
+    /// Get all torrents that are currently seeding
+    pub async fn get_seeding_torrents(&self) -> Result<Vec<DbTorrent>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, release_id, info_hash, magnet_link, torrent_name,
+                   total_size_bytes, piece_length, num_pieces, is_seeding, created_at
+            FROM torrents
+            WHERE is_seeding = TRUE
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| DbTorrent {
+                id: row.get("id"),
+                release_id: row.get("release_id"),
+                info_hash: row.get("info_hash"),
+                magnet_link: row.get("magnet_link"),
+                torrent_name: row.get("torrent_name"),
+                total_size_bytes: row.get("total_size_bytes"),
+                piece_length: row.get("piece_length"),
+                num_pieces: row.get("num_pieces"),
+                is_seeding: row.get("is_seeding"),
+                created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
+                    .unwrap()
+                    .with_timezone(&Utc),
+            })
+            .collect())
+    }
 }
