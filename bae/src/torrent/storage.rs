@@ -25,7 +25,6 @@ pub struct BaeStorage {
     database: Database,
     piece_mapper: TorrentPieceMapper,
     torrent_id: String,
-    release_id: String,
 }
 
 impl BaeStorage {
@@ -35,14 +34,12 @@ impl BaeStorage {
         database: Database,
         piece_mapper: TorrentPieceMapper,
         torrent_id: String,
-        release_id: String,
     ) -> Self {
         BaeStorage {
             cache_manager,
             database,
             piece_mapper,
             torrent_id,
-            release_id,
         }
     }
 
@@ -245,7 +242,7 @@ impl BaeStorage {
         let calculated_hash = hasher.finalize();
 
         // Compare hashes
-        Ok(calculated_hash.as_slice() == expected_hash)
+        Ok(calculated_hash.as_ref() as &[u8] == expected_hash)
     }
 
     /// Extract piece bytes from decrypted chunks

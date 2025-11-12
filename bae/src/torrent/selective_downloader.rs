@@ -7,18 +7,14 @@ use tracing::{debug, info};
 pub enum SelectiveDownloadError {
     #[error("Torrent error: {0}")]
     Torrent(#[from] crate::torrent::client::TorrentError),
-    #[error("No metadata files found")]
-    NoMetadataFiles,
 }
 
 /// Manages selective downloading of torrent files
-pub struct SelectiveDownloader {
-    client: TorrentClient,
-}
+pub struct SelectiveDownloader;
 
 impl SelectiveDownloader {
-    pub fn new(client: TorrentClient) -> Self {
-        SelectiveDownloader { client }
+    pub fn new(_client: TorrentClient) -> Self {
+        SelectiveDownloader
     }
 
     /// Prioritize metadata files (.cue, .log, .txt) for early download

@@ -51,7 +51,10 @@ impl EncryptionService {
             ));
         }
 
-        let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
+        let key_array: [u8; 32] = key_bytes.try_into().map_err(|_| {
+            EncryptionError::KeyManagement("Failed to convert key bytes to array".to_string())
+        })?;
+        let key = Key::<Aes256Gcm>::from_slice(&key_array);
         let cipher = Aes256Gcm::new(key);
 
         Ok(EncryptionService { cipher })
@@ -65,7 +68,8 @@ impl EncryptionService {
             panic!("Invalid key length, expected 32 bytes");
         }
 
-        let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
+        let key_array: [u8; 32] = key_bytes.try_into().unwrap();
+        let key = Key::<Aes256Gcm>::from_slice(&key_array);
         let cipher = Aes256Gcm::new(key);
 
         EncryptionService { cipher }
@@ -95,7 +99,10 @@ impl EncryptionService {
             ));
         }
 
-        let nonce = Nonce::from_slice(nonce);
+        let nonce_array: [u8; 12] = nonce.try_into().map_err(|_| {
+            EncryptionError::Decryption("Failed to convert nonce bytes to array".to_string())
+        })?;
+        let nonce = Nonce::from_slice(&nonce_array);
 
         // Decrypt the data
         let plaintext = self.cipher.decrypt(nonce, ciphertext).map_err(|e| {
@@ -224,7 +231,7 @@ mod tests {
     fn create_test_encryption_service() -> EncryptionService {
         // Generate a test encryption key
         let test_key = Aes256Gcm::generate_key(OsRng);
-        let test_key_hex = hex::encode(test_key.as_slice());
+        let test_key_hex = hex::encode(test_key.as_ref() as &[u8]);
 
         // Create a test config with the generated key
         let test_config = crate::config::Config {

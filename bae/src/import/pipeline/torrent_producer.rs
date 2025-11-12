@@ -130,9 +130,9 @@ pub async fn produce_chunk_stream_from_torrent(
             let piece_data_end = overlap_end - piece_start_byte;
 
             // Ensure chunk buffer exists
-            if !chunk_buffers.contains_key(&chunk_index) {
-                chunk_buffers.insert(chunk_index, Vec::with_capacity(chunk_size));
-            }
+            chunk_buffers
+                .entry(chunk_index)
+                .or_insert_with(|| Vec::with_capacity(chunk_size));
 
             // Extract bytes from piece data for this chunk
             if piece_data_end > piece_data_start && piece_data_end <= piece_data.len() {
@@ -237,10 +237,11 @@ pub async fn produce_chunk_stream_from_torrent(
                 let chunk_start = chunk_index * chunk_size;
                 let chunk_end = ((chunk_index + 1) * chunk_size).min(total_sz);
 
-                if piece_start < chunk_end && piece_end > chunk_start {
-                    if !piece_mapping.0.contains(&chunk_id) {
-                        piece_mapping.0.push(chunk_id.clone());
-                    }
+                if piece_start < chunk_end
+                    && piece_end > chunk_start
+                    && !piece_mapping.0.contains(&chunk_id)
+                {
+                    piece_mapping.0.push(chunk_id.clone());
                 }
             }
         }

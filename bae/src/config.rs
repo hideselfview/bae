@@ -110,7 +110,7 @@ impl Config {
             // Generate temporary key for dev
             use aes_gcm::{aead::OsRng, Aes256Gcm, KeyInit};
             let key = Aes256Gcm::generate_key(OsRng);
-            hex::encode(key.as_slice())
+            hex::encode(key.as_ref() as &[u8])
         });
 
         // Import worker pool configuration

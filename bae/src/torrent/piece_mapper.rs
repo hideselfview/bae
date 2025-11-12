@@ -14,14 +14,6 @@ pub struct ChunkMapping {
     pub end_byte: usize,
 }
 
-/// Mapping from a bae chunk to torrent pieces
-#[derive(Debug, Clone)]
-pub struct PieceMapping {
-    pub piece_index: usize,
-    pub start_byte_in_piece: usize,
-    pub end_byte_in_piece: usize,
-}
-
 impl TorrentPieceMapper {
     /// Create a new piece mapper
     pub fn new(
@@ -78,49 +70,5 @@ impl TorrentPieceMapper {
         }
 
         mappings
-    }
-
-    /// Map a bae chunk to the torrent pieces it spans
-    pub fn map_chunk_to_pieces(&self, chunk_index: usize) -> Vec<PieceMapping> {
-        let chunk_start_byte = chunk_index * self.chunk_size;
-        let chunk_end_byte = ((chunk_index + 1) * self.chunk_size).min(self.total_size);
-
-        let start_piece = chunk_start_byte / self.piece_length;
-        let end_piece = (chunk_end_byte - 1) / self.piece_length;
-
-        let mut mappings = Vec::new();
-        for piece_index in start_piece..=end_piece {
-            let piece_start_byte = piece_index * self.piece_length;
-            let piece_end_byte = ((piece_index + 1) * self.piece_length).min(self.total_size);
-
-            let overlap_start = chunk_start_byte.max(piece_start_byte);
-            let overlap_end = chunk_end_byte.min(piece_end_byte);
-
-            if overlap_start < overlap_end {
-                mappings.push(PieceMapping {
-                    piece_index,
-                    start_byte_in_piece: overlap_start - piece_start_byte,
-                    end_byte_in_piece: overlap_end - piece_start_byte,
-                });
-            }
-        }
-
-        mappings
-    }
-
-    /// Get all chunk indices that a piece spans
-    pub fn get_chunk_indices_for_piece(&self, piece_index: usize) -> Vec<usize> {
-        self.map_piece_to_chunks(piece_index)
-            .into_iter()
-            .map(|m| m.chunk_index)
-            .collect()
-    }
-
-    /// Get all piece indices that a chunk spans
-    pub fn get_piece_indices_for_chunk(&self, chunk_index: usize) -> Vec<usize> {
-        self.map_chunk_to_pieces(chunk_index)
-            .into_iter()
-            .map(|m| m.piece_index)
-            .collect()
     }
 }

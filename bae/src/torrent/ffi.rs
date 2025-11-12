@@ -4,6 +4,7 @@
 // support and custom storage integration.
 
 #[cxx::bridge]
+#[allow(clippy::module_inception)]
 mod ffi {
     unsafe extern "C++" {
         include!("bae_storage.h");
@@ -54,6 +55,10 @@ mod ffi {
 
         /// Get raw session pointer from Session unique_ptr
         /// Returns a raw pointer that can be used with libtorrent-rs API
+        ///
+        /// # Safety
+        /// The returned pointer is only valid while `sess` is alive and not moved.
+        /// The caller must ensure the pointer is not used after `sess` is dropped.
         fn get_session_ptr(sess: &mut UniquePtr<Session>) -> *mut Session;
 
         /// Parse a magnet URI and return add_torrent_params
@@ -63,39 +68,75 @@ mod ffi {
         fn load_torrent_file(file_path: &str, save_path: &str) -> UniquePtr<AddTorrentParams>;
 
         /// Add a torrent to a session using our Session type
+        ///
+        /// # Safety
+        /// `sess` must be a valid pointer to a Session object that outlives the call.
+        /// `params` must be a valid UniquePtr to AddTorrentParams.
         unsafe fn session_add_torrent(
             sess: *mut Session,
             params: &mut UniquePtr<AddTorrentParams>,
         ) -> *mut TorrentHandle;
 
         /// Get the name of a torrent from its handle
+        ///
+        /// # Safety
+        /// `handle` must be a valid pointer to a TorrentHandle that outlives the call.
         unsafe fn torrent_get_name(handle: *mut TorrentHandle) -> String;
 
         /// Check if a torrent has metadata available
+        ///
+        /// # Safety
+        /// `handle` must be a valid pointer to a TorrentHandle that outlives the call.
         unsafe fn torrent_has_metadata(handle: *mut TorrentHandle) -> bool;
 
         /// Get the storage index for a torrent handle
         /// Returns the storage_index_t assigned by libtorrent for this torrent
+        ///
+        /// # Safety
+        /// `handle` must be a valid pointer to a TorrentHandle that outlives the call.
         unsafe fn torrent_get_storage_index(handle: *mut TorrentHandle) -> i32;
 
         /// Get torrent metadata for piece mapper
+        ///
+        /// # Safety
+        /// `handle` must be a valid pointer to a TorrentHandle that outlives the call.
         unsafe fn torrent_get_piece_length(handle: *mut TorrentHandle) -> i32;
+        /// Get the total size of the torrent
+        ///
+        /// # Safety
+        /// `handle` must be a valid pointer to a TorrentHandle that outlives the call.
         unsafe fn torrent_get_total_size(handle: *mut TorrentHandle) -> i64;
+        /// Get the number of pieces in the torrent
+        ///
+        /// # Safety
+        /// `handle` must be a valid pointer to a TorrentHandle that outlives the call.
         unsafe fn torrent_get_num_pieces(handle: *mut TorrentHandle) -> i32;
 
         /// Check if a piece is available (downloaded and verified)
+        ///
+        /// # Safety
+        /// `handle` must be a valid pointer to a TorrentHandle that outlives the call.
         unsafe fn torrent_have_piece(handle: *mut TorrentHandle, piece_index: i32) -> bool;
 
         /// Get the list of files in the torrent
+        ///
+        /// # Safety
+        /// `handle` must be a valid pointer to a TorrentHandle that outlives the call.
         unsafe fn torrent_get_file_list(handle: *mut TorrentHandle) -> Vec<TorrentFileInfo>;
 
         /// Set file priorities for a torrent
+        ///
+        /// # Safety
+        /// `handle` must be a valid pointer to a TorrentHandle that outlives the call.
         unsafe fn torrent_set_file_priorities(
             handle: *mut TorrentHandle,
             priorities: Vec<u8>,
         ) -> bool;
 
         /// Get download progress (0.0 to 1.0) for a torrent
+        ///
+        /// # Safety
+        /// `handle` must be a valid pointer to a TorrentHandle that outlives the call.
         unsafe fn torrent_get_progress(handle: *mut TorrentHandle) -> f32;
     }
 

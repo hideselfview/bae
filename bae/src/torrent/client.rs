@@ -30,8 +30,6 @@ pub enum TorrentError {
     Libtorrent(String),
     #[error("Invalid torrent: {0}")]
     InvalidTorrent(String),
-    #[error("Not implemented: {0}")]
-    NotImplemented(String),
 }
 
 /// Priority for torrent files
@@ -39,7 +37,6 @@ pub enum TorrentError {
 pub enum FilePriority {
     DoNotDownload = 0,
     Normal = 4,
-    High = 6,
     Maximum = 7,
 }
 
@@ -67,9 +64,9 @@ type StorageRegistry = Arc<RwLock<HashMap<String, Arc<RwLock<BaeStorage>>>>>;
 type StorageIndexMap = Arc<RwLock<HashMap<i32, String>>>;
 
 thread_local! {
-    pub(crate) static STORAGE_REGISTRY: std::cell::RefCell<Option<StorageRegistry>> = std::cell::RefCell::new(None);
-    static STORAGE_INDEX_MAP: std::cell::RefCell<Option<StorageIndexMap>> = std::cell::RefCell::new(None);
-    static RUNTIME_HANDLE: std::cell::RefCell<Option<tokio::runtime::Handle>> = std::cell::RefCell::new(None);
+    pub(crate) static STORAGE_REGISTRY: std::cell::RefCell<Option<StorageRegistry>> = const { std::cell::RefCell::new(None) };
+    static STORAGE_INDEX_MAP: std::cell::RefCell<Option<StorageIndexMap>> = const { std::cell::RefCell::new(None) };
+    static RUNTIME_HANDLE: std::cell::RefCell<Option<tokio::runtime::Handle>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Wrapper around libtorrent session
@@ -391,30 +388,6 @@ impl TorrentClient {
         index_map.insert(storage_index, torrent_id);
     }
 
-    /// Read a piece by torrent_id (for use by seeder)
-    ///
-    /// This allows reading pieces from storage without needing a TorrentHandle.
-    pub async fn read_piece_by_torrent_id(
-        &self,
-        torrent_id: &str,
-        piece_index: usize,
-    ) -> Result<Vec<u8>, TorrentError> {
-        // Look up storage from registry
-        let registry_guard = self.storage_registry.read().await;
-        let storage = registry_guard.get(torrent_id).ok_or_else(|| {
-            TorrentError::Libtorrent(format!("Storage not found for torrent_id: {}", torrent_id))
-        })?;
-
-        // Read piece from storage
-        let storage_guard = storage.read().await;
-        storage_guard
-            .read_piece(piece_index as i32, 0, 0)
-            .await
-            .map_err(|e| {
-                TorrentError::Libtorrent(format!("Failed to read piece {}: {}", piece_index, e))
-            })
-    }
-
     /// Add a torrent from a file
     pub async fn add_torrent_file(&self, path: &Path) -> Result<TorrentHandle, TorrentError> {
         // Convert path to string
@@ -442,7 +415,7 @@ impl TorrentClient {
         }
 
         // Get raw session pointer for wrapper function
-        let session_ptr = get_session_ptr(&mut *session_guard);
+        let session_ptr = get_session_ptr(&mut session_guard);
         if session_ptr.is_null() {
             drop(session_guard);
             drop(params);
@@ -498,7 +471,7 @@ impl TorrentClient {
         }
 
         // Get raw session pointer for wrapper function
-        let session_ptr = get_session_ptr(&mut *session_guard);
+        let session_ptr = get_session_ptr(&mut session_guard);
         if session_ptr.is_null() {
             drop(session_guard);
             drop(params);
@@ -670,10 +643,8 @@ impl TorrentHandle {
         let files: Vec<TorrentFile> = file_infos
             .into_iter()
             .map(|info: TorrentFileInfo| TorrentFile {
-                index: info.index,
                 path: PathBuf::from(info.path),
                 size: info.size,
-                priority: FilePriority::Normal,
             })
             .collect();
 
@@ -706,14 +677,6 @@ impl TorrentHandle {
         }
 
         Ok(())
-    }
-
-    /// Check if torrent is complete
-    pub async fn is_complete(&self) -> Result<bool, TorrentError> {
-        // TODO: Implement actual completion check
-        Err(TorrentError::NotImplemented(
-            "is_complete() not yet implemented".to_string(),
-        ))
     }
 
     /// Get download progress (0.0 to 1.0)
@@ -797,92 +760,6 @@ impl TorrentHandle {
         Ok(available)
     }
 
-    /// Read a specific file from the torrent by file index
-    ///
-    /// This reads the file data from torrent pieces. The file must be downloaded first.
-    /// Returns the file contents as bytes.
-    pub async fn read_file_by_index(&self, file_index: i32) -> Result<Vec<u8>, TorrentError> {
-        // Get file list to find the file and calculate byte offsets
-        let files = self.get_file_list().await?;
-
-        // Find the file and calculate cumulative byte offset
-        let mut cumulative_offset = 0i64;
-        let mut target_file: Option<&TorrentFile> = None;
-
-        for file in &files {
-            if file.index == file_index {
-                target_file = Some(file);
-                break;
-            }
-            cumulative_offset += file.size;
-        }
-
-        let file = target_file.ok_or_else(|| {
-            TorrentError::InvalidTorrent(format!("File index {} not found", file_index))
-        })?;
-
-        // Get torrent metadata for piece calculations
-        let piece_length = self.piece_length().await? as usize;
-        let total_size = self.total_size().await? as usize;
-
-        // Calculate which pieces contain this file
-        let file_start_byte = cumulative_offset as usize;
-        let file_end_byte = (cumulative_offset + file.size) as usize;
-
-        let start_piece = file_start_byte / piece_length;
-        let end_piece = (file_end_byte - 1) / piece_length;
-
-        // Read all pieces that contain this file
-        let mut file_data = Vec::with_capacity(file.size as usize);
-
-        for piece_index in start_piece..=end_piece {
-            // Wait for piece to be ready
-            loop {
-                if self.is_piece_ready(piece_index).await? {
-                    break;
-                }
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            }
-
-            // Read piece
-            let piece_data = self.read_piece(piece_index).await?;
-
-            // Calculate byte range within this piece that belongs to our file
-            let piece_start_byte = piece_index * piece_length;
-            let piece_end_byte = ((piece_index + 1) * piece_length).min(total_size);
-
-            let overlap_start = file_start_byte.max(piece_start_byte);
-            let overlap_end = file_end_byte.min(piece_end_byte);
-
-            if overlap_start < overlap_end {
-                // Extract bytes from piece data
-                let piece_offset = overlap_start - piece_start_byte;
-                let piece_length_needed = overlap_end - overlap_start;
-
-                if piece_offset + piece_length_needed <= piece_data.len() {
-                    file_data.extend_from_slice(
-                        &piece_data[piece_offset..piece_offset + piece_length_needed],
-                    );
-                }
-            }
-        }
-
-        Ok(file_data)
-    }
-
-    /// Read a specific file from the torrent by path
-    ///
-    /// Finds the file by path and reads it from torrent pieces.
-    pub async fn read_file_by_path(&self, file_path: &Path) -> Result<Vec<u8>, TorrentError> {
-        let files = self.get_file_list().await?;
-
-        let file = files.iter().find(|f| f.path == file_path).ok_or_else(|| {
-            TorrentError::InvalidTorrent(format!("File not found: {:?}", file_path))
-        })?;
-
-        self.read_file_by_index(file.index).await
-    }
-
     /// Wait for metadata to be available
     pub async fn wait_for_metadata(&self) -> Result<(), TorrentError> {
         // Poll until metadata is available
@@ -912,8 +789,6 @@ impl TorrentHandle {
 /// Represents a file in a torrent
 #[derive(Debug, Clone)]
 pub struct TorrentFile {
-    pub index: i32,
     pub path: PathBuf,
     pub size: i64,
-    pub priority: FilePriority,
 }

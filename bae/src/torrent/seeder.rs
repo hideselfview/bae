@@ -137,19 +137,19 @@ impl TorrentSeeder {
             .client
             .add_magnet_link(magnet_link)
             .await
-            .map_err(|e| SeederError::Torrent(e))?;
+            .map_err(SeederError::Torrent)?;
 
         // Wait for metadata
         torrent_handle
             .wait_for_metadata()
             .await
-            .map_err(|e| SeederError::Torrent(e))?;
+            .map_err(SeederError::Torrent)?;
 
         // Get storage_index from handle
         let storage_index = torrent_handle
             .storage_index()
             .await
-            .map_err(|e| SeederError::Torrent(e))?;
+            .map_err(SeederError::Torrent)?;
 
         // Create piece mapper
         let piece_mapper = TorrentPieceMapper::new(
@@ -165,7 +165,6 @@ impl TorrentSeeder {
             self.database.clone(),
             piece_mapper,
             torrent.info_hash.clone(),
-            torrent.release_id.clone(),
         );
 
         // Register storage with torrent client
@@ -242,18 +241,6 @@ impl TorrentSeeder {
         torrent_id: &str,
     ) -> Result<Vec<DbTorrentPieceMapping>, SeederError> {
         Ok(self.database.get_torrent_piece_mappings(torrent_id).await?)
-    }
-
-    /// Get a specific piece mapping
-    async fn get_piece_mapping(
-        &self,
-        torrent_id: &str,
-        piece_index: i32,
-    ) -> Result<DbTorrentPieceMapping, SeederError> {
-        self.database
-            .get_torrent_piece_mapping(torrent_id, piece_index)
-            .await?
-            .ok_or_else(|| SeederError::Database(sqlx::Error::RowNotFound))
     }
 
     /// Mark torrent as seeding or not

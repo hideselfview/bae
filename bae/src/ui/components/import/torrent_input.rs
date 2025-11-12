@@ -9,13 +9,13 @@ pub fn TorrentInput(
     on_magnet_link: EventHandler<(String, bool)>,
     on_error: EventHandler<String>,
 ) -> Element {
-    let mut magnet_link = use_signal(|| String::new());
+    let mut magnet_link = use_signal(String::new);
     let mut input_mode = use_signal(|| "file"); // "file" or "magnet"
     let mut seed_after_download = use_signal(|| true);
 
     let on_file_button_click = {
         let seed_after_download = seed_after_download;
-        let on_file_select = on_file_select.clone();
+        let on_file_select = on_file_select;
         move |_| {
             let seed_flag = *seed_after_download.read();
             spawn(async move {
@@ -32,10 +32,10 @@ pub fn TorrentInput(
     };
 
     let on_magnet_submit = {
-        let mut magnet_link = magnet_link;
+        let magnet_link = magnet_link;
         let seed_after_download = seed_after_download;
-        let on_error = on_error.clone();
-        let on_magnet_link = on_magnet_link.clone();
+        let on_error = on_error;
+        let on_magnet_link = on_magnet_link;
         move |_| {
             let link = magnet_link.read().trim().to_string();
             if link.is_empty() {
@@ -123,12 +123,9 @@ pub fn TorrentInput(
                                 placeholder: "magnet:?xt=urn:btih:...",
                                 value: "{magnet_link}",
                                 oninput: move |evt| magnet_link.set(evt.value()),
-                                onkeydown: {
-                                    let on_magnet_submit = on_magnet_submit.clone();
-                                    move |evt: KeyboardEvent| {
-                                        if evt.key() == dioxus::html::Key::Enter {
-                                            on_magnet_submit(());
-                                        }
+                                onkeydown: move |evt: KeyboardEvent| {
+                                    if evt.key() == dioxus::html::Key::Enter {
+                                        on_magnet_submit(());
                                     }
                                 }
                             }

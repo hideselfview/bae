@@ -18,8 +18,6 @@ pub enum TorrentMetadataError {
     SelectiveDownload(#[from] crate::torrent::selective_downloader::SelectiveDownloadError),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("Metadata detection error: {0}")]
-    MetadataDetection(String),
 }
 
 /// Detect metadata from CUE/log files in a torrent
