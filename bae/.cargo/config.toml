@@ -9,3 +9,7 @@ PKG_CONFIG_PATH = "/opt/homebrew/lib/pkgconfig"
 LIBRARY_PATH = "/opt/homebrew/lib"
 # Set CXXFLAGS to include Boost and libtorrent headers
 CXXFLAGS = "-I/opt/homebrew/Cellar/boost/1.89.0/include -I/opt/homebrew/Cellar/libtorrent-rasterbar/2.0.11_3/include"
+# Set C_INCLUDE_PATH for libcdio-sys (bindgen needs this to find cdio/cdio.h)
+C_INCLUDE_PATH = "/opt/homebrew/include"
+# Set BINDGEN_EXTRA_CLANG_ARGS for bindgen to find libcdio headers
+BINDGEN_EXTRA_CLANG_ARGS = "-I/opt/homebrew/include"

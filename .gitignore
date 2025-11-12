@@ -1,6 +1,8 @@
 # Rust local installation
 .rustup/
 .cargo/
+# But keep config.toml for project-specific build configuration
+!.cargo/config.toml
 
 # Rust build artifacts
 target/
