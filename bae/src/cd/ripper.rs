@@ -24,6 +24,7 @@ pub enum RipError {
 
 /// Progress update during ripping
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields are used for UI progress reporting
 pub struct RipProgress {
     pub track: u8,
     pub total_tracks: u8,

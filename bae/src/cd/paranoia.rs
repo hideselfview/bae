@@ -6,8 +6,6 @@
 use crate::cd::ffi::LibcdioDrive;
 use libc;
 use libcdio_sys;
-use std::ffi::CString;
-use std::path::PathBuf;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -88,6 +86,7 @@ impl ParanoiaReader {
     }
 
     /// Get the underlying drive
+    #[allow(dead_code)] // Public API method for future use
     pub fn drive(&self) -> &LibcdioDrive {
         &self.drive
     }

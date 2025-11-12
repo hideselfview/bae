@@ -72,7 +72,7 @@ impl LibcdioDrive {
     /// Get number of tracks
     pub fn num_tracks(&self) -> Result<u8, LibcdioError> {
         unsafe {
-            let num = libcdio_sys::cdio_get_num_tracks(self.device);
+            let num = libcdio_sys::cdio_get_num_tracks(self.device) as i32;
             if num < 0 {
                 return Err(LibcdioError::Libcdio(
                     "Failed to get track count".to_string(),
@@ -85,7 +85,7 @@ impl LibcdioDrive {
     /// Get first track number (usually 1)
     pub fn first_track_num(&self) -> Result<u8, LibcdioError> {
         unsafe {
-            let first = libcdio_sys::cdio_get_first_track_num(self.device);
+            let first = libcdio_sys::cdio_get_first_track_num(self.device) as i32;
             if first < 0 {
                 return Err(LibcdioError::Libcdio(
                     "Failed to get first track".to_string(),
@@ -98,7 +98,7 @@ impl LibcdioDrive {
     /// Get last track number
     pub fn last_track_num(&self) -> Result<u8, LibcdioError> {
         unsafe {
-            let last = libcdio_sys::cdio_get_last_track_num(self.device);
+            let last = libcdio_sys::cdio_get_last_track_num(self.device) as i32;
             if last < 0 {
                 return Err(LibcdioError::Libcdio(
                     "Failed to get last track".to_string(),
@@ -227,11 +227,9 @@ pub fn detect_drives() -> Result<Vec<PathBuf>, LibcdioError> {
                 if path.exists() {
                     // Try to open it to verify it's a CD drive
                     if let Ok(drive) = LibcdioDrive::open(&path) {
-                        if drive.has_disc() || true {
-                            // Accept even if no disc
-                            if !drives.contains(&path) {
-                                drives.push(path);
-                            }
+                        // Accept drive even if no disc is present
+                        if !drives.contains(&path) {
+                            drives.push(path);
                         }
                     }
                 }
