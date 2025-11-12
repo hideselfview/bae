@@ -1,8 +1,8 @@
 //! CUE sheet generation during ripping
 
-use crate::cue_flac::CueSheet;
 use crate::cd::drive::CdToc;
 use crate::cd::ripper::RipResult;
+use crate::cue_flac::CueSheet;
 use std::path::PathBuf;
 
 /// Generates CUE sheets from CD TOC and rip results
@@ -75,16 +75,19 @@ impl CueGenerator {
                 writeln!(file, "    PERFORMER \"{}\"", performer)?;
             }
             writeln!(file, "    TITLE \"{}\"", track.title)?;
-            
+
             // Convert milliseconds to MM:SS:FF
             let start_ms = track.start_time_ms;
             let minutes = (start_ms / 60000) % 60;
             let seconds = ((start_ms / 1000) % 60) as u8;
             let frames = ((start_ms % 1000) * 75 / 1000) as u8;
-            writeln!(file, "    INDEX 01 {:02}:{:02}:{:02}", minutes, seconds, frames)?;
+            writeln!(
+                file,
+                "    INDEX 01 {:02}:{:02}:{:02}",
+                minutes, seconds, frames
+            )?;
         }
 
         Ok(())
     }
 }
-

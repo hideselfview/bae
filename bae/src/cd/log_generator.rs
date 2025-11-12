@@ -2,8 +2,8 @@
 
 use crate::cd::drive::CdToc;
 use crate::cd::ripper::RipResult;
-use std::path::PathBuf;
 use std::io::Write;
+use std::path::PathBuf;
 
 /// Generates EAC-style log files documenting the ripping process
 pub struct LogGenerator;
@@ -22,7 +22,11 @@ impl LogGenerator {
 
         writeln!(file, "Exact Audio Copy V1.0 beta 3 from 29. August 2011")?;
         writeln!(file, "")?;
-        writeln!(file, "EAC extraction logfile from {}", chrono::Local::now().format("%d. %B %Y, %H:%M:%S"))?;
+        writeln!(
+            file,
+            "EAC extraction logfile from {}",
+            chrono::Local::now().format("%d. %B %Y, %H:%M:%S")
+        )?;
         writeln!(file, "")?;
         writeln!(file, "Used drive  : {}", drive_name)?;
         writeln!(file, "Use cdparanoia mode  : CDDA")?;
@@ -39,14 +43,26 @@ impl LogGenerator {
         writeln!(file, "Null samples used in CRC calculations       : Yes")?;
         writeln!(file, "Used interface                              : Native Win32 interface for Win NT & 2000")?;
         writeln!(file, "")?;
-        writeln!(file, "Used output format              : Internal WAV Routines")?;
-        writeln!(file, "Sample format                    : 44.100 Hz; 16 Bit; Stereo")?;
+        writeln!(
+            file,
+            "Used output format              : Internal WAV Routines"
+        )?;
+        writeln!(
+            file,
+            "Sample format                    : 44.100 Hz; 16 Bit; Stereo"
+        )?;
         writeln!(file, "")?;
         writeln!(file, "")?;
         writeln!(file, "TOC of the extracted CD")?;
         writeln!(file, "")?;
-        writeln!(file, "     Track |   Start  |  Length  | Start sector | End sector")?;
-        writeln!(file, "    ---------------------------------------------------------")?;
+        writeln!(
+            file,
+            "     Track |   Start  |  Length  | Start sector | End sector"
+        )?;
+        writeln!(
+            file,
+            "    ---------------------------------------------------------"
+        )?;
 
         for (idx, result) in rip_results.iter().enumerate() {
             let start_sector = if idx < toc.track_offsets.len() {
@@ -110,4 +126,3 @@ impl LogGenerator {
         Ok(())
     }
 }
-

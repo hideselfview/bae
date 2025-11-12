@@ -841,6 +841,7 @@ dependencies = [
  "id3",
  "keyring",
  "libc",
+ "libcdio-sys",
  "libflac-sys",
  "musicbrainz_rs",
  "nom",
@@ -935,6 +936,26 @@ dependencies = [
  "shlex",
  "syn 1.0.109",
  "which",
+]
+
+[[package]]
+name = "bindgen"
+version = "0.71.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f58bf3d7db68cfbac37cfc485a8d711e87e064c3d0fe0435b92f7a407f9d6b3"
+dependencies = [
+ "bitflags 2.10.0",
+ "cexpr",
+ "clang-sys",
+ "itertools",
+ "log",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "rustc-hash 2.1.1",
+ "shlex",
+ "syn 2.0.109",
 ]
 
 [[package]]
@@ -3978,6 +3999,15 @@ name = "libc"
 version = "0.2.177"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2874a2af47a2325c2001a6e6fad9b16a53b802102b528163885171cf92b15976"
+
+[[package]]
+name = "libcdio-sys"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "265d9805010b4bfc3108eca4d13801ca954a832fb1772354eba74cdb9bae672d"
+dependencies = [
+ "bindgen 0.71.1",
+]
 
 [[package]]
 name = "libdbus-sys"

@@ -43,6 +43,9 @@ discid = "0.5"          # Calculate MusicBrainz DiscIDs from TOC data
 flacenc = "0.4"         # FLAC encoding for CUE/FLAC splitting
 libflac-sys = "0.3.4"    # FFI bindings to libFLAC for seektable generation
 libc = "0.2"            # C types for libflac-sys FFI
+
+[target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))'.dependencies]
+libcdio-sys = "0.5"     # FFI bindings to libcdio for CD drive access (requires libcdio system library)
 rayon = "1.10"          # Parallel processing for CUE/FLAC splitting
 cpal = "0.15"           # Cross-platform audio I/O
 dotenvy = "0.15"        # .env file loading for dev mode

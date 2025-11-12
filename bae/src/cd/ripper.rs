@@ -7,8 +7,8 @@ use flacenc::config;
 use flacenc::error::Verify;
 use flacenc::source::MemSource;
 use std::path::PathBuf;
-use tokio::sync::mpsc;
 use thiserror::Error;
+use tokio::sync::mpsc;
 
 #[derive(Debug, Error)]
 pub enum RipError {
@@ -87,9 +87,7 @@ impl CdRipper {
         // 3. Stream samples through FLAC encoder
         // 4. Write FLAC file to output directory
 
-        let output_path = self
-            .output_dir
-            .join(format!("{:02}.flac", track_num));
+        let output_path = self.output_dir.join(format!("{:02}.flac", track_num));
 
         // Placeholder - will be replaced with actual libcdio-paranoia implementation
         let sample_rate = 44100u32;
@@ -108,8 +106,7 @@ impl CdRipper {
             .map_err(|e| RipError::Io(e))?;
 
         // Calculate duration (samples / sample_rate / channels)
-        let duration_ms = (samples.len() as u64 * 1000)
-            / (sample_rate as u64 * channels as u64);
+        let duration_ms = (samples.len() as u64 * 1000) / (sample_rate as u64 * channels as u64);
 
         Ok(RipResult {
             track_number: track_num,
@@ -120,11 +117,56 @@ impl CdRipper {
         })
     }
 
-    /// Read raw samples from a track (placeholder - will use libcdio-paranoia)
-    async fn read_track_samples(&self, _track_num: u8) -> Result<Vec<i32>, RipError> {
-        // TODO: Use libcdio-paranoia to read track
-        // For now, return empty vector
-        Ok(vec![])
+    /// Read raw samples from a track using libcdio
+    async fn read_track_samples(&self, track_num: u8) -> Result<Vec<i32>, RipError> {
+        use crate::cd::ffi::LibcdioDrive;
+
+        // Open drive
+        let drive = LibcdioDrive::open(&self.drive.device_path)
+            .map_err(|e| RipError::Drive(format!("Failed to open drive: {}", e)))?;
+
+        // Get track start and end LBAs
+        let start_lba = drive
+            .track_start_lba(track_num)
+            .map_err(|e| RipError::Read(format!("Failed to get start LBA: {}", e)))?;
+
+        // Calculate end LBA (start of next track, or leadout if last track)
+        let end_lba = if track_num < self.toc.last_track {
+            drive
+                .track_start_lba(track_num + 1)
+                .map_err(|e| RipError::Read(format!("Failed to get end LBA: {}", e)))?
+        } else {
+            drive
+                .leadout_lba()
+                .map_err(|e| RipError::Read(format!("Failed to get leadout: {}", e)))?
+        };
+
+        let num_sectors = end_lba - start_lba;
+
+        // Read audio sectors (run in blocking task since libcdio is synchronous)
+        let device_path = self.drive.device_path.clone();
+        let audio_data = tokio::task::spawn_blocking(move || {
+            let drive = LibcdioDrive::open(&device_path)
+                .map_err(|e| RipError::Drive(format!("Failed to open drive: {}", e)))?;
+            drive
+                .read_audio_sectors(start_lba, num_sectors)
+                .map_err(|e| RipError::Read(format!("Failed to read sectors: {}", e)))
+        })
+        .await
+        .map_err(|e| RipError::Read(format!("Task failed: {}", e)))??;
+
+        // Convert raw PCM bytes to i32 samples
+        // CD audio is 16-bit little-endian stereo (44100 Hz)
+        // Each sample is 2 bytes, interleaved L/R
+        let mut samples = Vec::with_capacity(audio_data.len() / 2);
+
+        for chunk in audio_data.chunks_exact(2) {
+            // Read 16-bit little-endian sample
+            let sample = i16::from_le_bytes([chunk[0], chunk[1]]) as i32;
+            samples.push(sample);
+        }
+
+        Ok(samples)
     }
 
     /// Encode samples to FLAC using flacenc
@@ -145,9 +187,9 @@ impl CdRipper {
 
         // Create and verify encoder config
         let config = config::Encoder::default();
-        let config = config
-            .into_verified()
-            .map_err(|(_, e)| RipError::Flac(format!("Failed to verify encoder config: {:?}", e)))?;
+        let config = config.into_verified().map_err(|(_, e)| {
+            RipError::Flac(format!("Failed to verify encoder config: {:?}", e))
+        })?;
 
         // Encode with default block size (4096)
         let flac_stream = flacenc::encode_with_fixed_block_size(&config, source, 4096)
@@ -162,4 +204,3 @@ impl CdRipper {
         Ok(sink.as_slice().to_vec())
     }
 }
-

@@ -5,10 +5,7 @@ use dioxus::prelude::*;
 use std::path::PathBuf;
 
 #[component]
-pub fn CdRipper(
-    on_drive_select: EventHandler<PathBuf>,
-    on_error: EventHandler<String>,
-) -> Element {
+pub fn CdRipper(on_drive_select: EventHandler<PathBuf>, on_error: EventHandler<String>) -> Element {
     let mut drives = use_signal(|| Vec::<CdDrive>::new());
     let mut selected_drive = use_signal(|| None::<PathBuf>);
     let mut is_scanning = use_signal(|| false);
@@ -74,4 +71,3 @@ pub fn CdRipper(
         }
     }
 }
-

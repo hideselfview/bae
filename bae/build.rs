@@ -2,6 +2,9 @@ use std::path::Path;
 use std::process::Command;
 
 fn main() {
+    // Set up libcdio include path for libcdio-sys
+    setup_libcdio_include_path();
+
     // Compile C++ custom storage backend with cxx bridge
     compile_cpp_storage();
     // Run tailwindcss to generate CSS (using locally installed version)
@@ -191,4 +194,63 @@ fn compile_cpp_storage() {
     println!("cargo:rustc-link-lib=torrent-rasterbar");
     println!("cargo:rustc-link-search=native=/opt/homebrew/lib"); // macOS Homebrew
     println!("cargo:rustc-link-search=native=/usr/local/lib"); // Standard Unix
+}
+
+fn setup_libcdio_include_path() {
+    // libcdio-sys needs to find cdio/cdio.h during build
+    // Try common installation paths and set C_INCLUDE_PATH if found
+
+    let possible_paths = [
+        // macOS Homebrew (Intel)
+        "/usr/local/include",
+        // macOS Homebrew (Apple Silicon)
+        "/opt/homebrew/include",
+        // Check for libcdio subdirectory
+        "/usr/local/Cellar/libcdio",
+        "/opt/homebrew/Cellar/libcdio",
+        // Linux standard paths
+        "/usr/include",
+    ];
+
+    // Try to find libcdio headers
+    for base_path in &possible_paths {
+        let include_path = if base_path.contains("Cellar") {
+            // Homebrew Cellar structure: /opt/homebrew/Cellar/libcdio/2.2.0/include
+            if let Ok(entries) = std::fs::read_dir(base_path) {
+                let mut versions: Vec<_> =
+                    entries.flatten().filter(|e| e.path().is_dir()).collect();
+                versions.sort_by_key(|e| e.path());
+
+                if let Some(latest) = versions.last() {
+                    latest.path().join("include")
+                } else {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+        } else {
+            Path::new(base_path).to_path_buf()
+        };
+
+        let cdio_header = include_path.join("cdio").join("cdio.h");
+        if cdio_header.exists() {
+            // Found it! Set C_INCLUDE_PATH for libcdio-sys build script
+            let include_str = include_path.to_string_lossy();
+            if let Ok(existing) = std::env::var("C_INCLUDE_PATH") {
+                std::env::set_var("C_INCLUDE_PATH", format!("{}:{}", include_str, existing));
+            } else {
+                std::env::set_var("C_INCLUDE_PATH", include_str.as_ref());
+            }
+            println!(
+                "cargo:warning=Found libcdio headers at: {}",
+                include_path.display()
+            );
+            return;
+        }
+    }
+
+    // If not found, warn but don't fail (libcdio-sys will fail with a clearer error)
+    println!("cargo:warning=libcdio headers not found. CD ripping will not be available.");
+    println!("cargo:warning=Install libcdio: brew install libcdio (macOS) or apt-get install libcdio-dev (Linux)");
 }

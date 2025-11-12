@@ -462,10 +462,7 @@ impl ImportHandle {
                 // Create CD drive instance
                 let drive = CdDrive {
                     device_path: drive_path.clone(),
-                    name: drive_path
-                        .to_str()
-                        .unwrap_or("Unknown")
-                        .to_string(),
+                    name: drive_path.to_str().unwrap_or("Unknown").to_string(),
                 };
 
                 // Read TOC from CD
@@ -474,7 +471,8 @@ impl ImportHandle {
                     .map_err(|e| format!("Failed to read CD TOC: {}", e))?;
 
                 // Create temporary directory for ripped files
-                let temp_dir = std::env::temp_dir().join(format!("bae_cd_rip_{}", uuid::Uuid::new_v4()));
+                let temp_dir =
+                    std::env::temp_dir().join(format!("bae_cd_rip_{}", uuid::Uuid::new_v4()));
                 tokio::fs::create_dir_all(&temp_dir)
                     .await
                     .map_err(|e| format!("Failed to create temp directory: {}", e))?;

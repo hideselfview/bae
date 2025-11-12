@@ -38,18 +38,65 @@ pub struct CdToc {
 impl CdDrive {
     /// Detect available CD drives
     pub fn detect_drives() -> Result<Vec<CdDrive>, CdDriveError> {
-        // TODO: Implement actual drive detection using libcdio
-        // For now, return empty list - will be implemented with FFI bindings
-        Ok(vec![])
+        use crate::cd::ffi::detect_drives;
+
+        let device_paths = detect_drives()
+            .map_err(|e| CdDriveError::Access(format!("Failed to detect drives: {}", e)))?;
+
+        let mut drives = Vec::new();
+        for path in device_paths {
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("Unknown")
+                .to_string();
+            drives.push(CdDrive {
+                device_path: path,
+                name,
+            });
+        }
+
+        Ok(drives)
     }
 
     /// Read TOC from the disc in this drive
     pub fn read_toc(&self) -> Result<CdToc, CdDriveError> {
-        // TODO: Use libcdio-paranoia to read TOC directly
-        // For now, use discid crate to read DiscID and basic track info
-        // Note: discid::read() doesn't provide direct access to offsets,
-        // so we'll need libcdio for full TOC reading
-        
+        use crate::cd::ffi::LibcdioDrive;
+
+        // Open drive with libcdio
+        let drive = LibcdioDrive::open(&self.device_path)
+            .map_err(|e| CdDriveError::Access(format!("Failed to open drive: {}", e)))?;
+
+        // Check if disc is present
+        if !drive.has_disc() {
+            return Err(CdDriveError::NoDisc);
+        }
+
+        // Get track information
+        let first_track = drive
+            .first_track_num()
+            .map_err(|e| CdDriveError::DiscId(format!("Failed to get first track: {}", e)))?;
+        let last_track = drive
+            .last_track_num()
+            .map_err(|e| CdDriveError::DiscId(format!("Failed to get last track: {}", e)))?;
+
+        // Get track offsets (LBAs)
+        let mut track_offsets = Vec::new();
+        for track_num in first_track..=last_track {
+            let lba = drive.track_start_lba(track_num).map_err(|e| {
+                CdDriveError::DiscId(format!("Failed to get LBA for track {}: {}", track_num, e))
+            })?;
+            // Convert LBA to sector offset (add 150 for lead-in)
+            track_offsets.push(lba + 150);
+        }
+
+        // Get leadout LBA
+        let leadout_lba = drive
+            .leadout_lba()
+            .map_err(|e| CdDriveError::DiscId(format!("Failed to get leadout: {}", e)))?;
+        let leadout_track = (leadout_lba + 150) as u8;
+
+        // Calculate DiscID using discid crate (for MusicBrainz lookup)
         let device_str = self
             .device_path
             .to_str()
@@ -57,25 +104,6 @@ impl CdDrive {
 
         let disc = DiscId::read(Some(device_str))
             .map_err(|e| CdDriveError::DiscId(format!("Failed to read disc: {}", e)))?;
-
-        let first_track = disc.first_track_num() as u8;
-        let last_track = disc.last_track_num() as u8;
-        
-        // TODO: Get actual offsets from libcdio
-        // For now, create placeholder offsets (will be replaced with libcdio implementation)
-        let num_tracks = (last_track - first_track + 1) as usize;
-        let mut track_offsets = Vec::with_capacity(num_tracks);
-        for i in 0..num_tracks {
-            // Placeholder: assume 75 sectors per second, ~3 minutes per track
-            track_offsets.push((150 + i * 13500) as u32); // 150 (lead-in) + track offset
-        }
-        
-        // Placeholder leadout (will be replaced with actual value from libcdio)
-        let leadout_track = if !track_offsets.is_empty() {
-            (track_offsets.last().unwrap() + 13500) as u8 // Last track + ~3 minutes
-        } else {
-            150u8
-        };
 
         Ok(CdToc {
             disc_id: disc.id(),
@@ -97,4 +125,3 @@ impl CdDrive {
         }
     }
 }
-
