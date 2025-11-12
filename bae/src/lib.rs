@@ -10,6 +10,7 @@ pub mod ui;
 pub use ui::AppContext;
 
 pub mod cache;
+pub mod cd;
 pub mod cloud_storage;
 pub mod db;
 pub mod discogs;

@@ -132,6 +132,10 @@ impl ImportService {
                             info!("Starting torrent import pipeline for '{}'", db_album.title);
                             self.import_album_from_torrent(command).await
                         }
+                        ImportCommand::CdImport { db_album, .. } => {
+                            info!("Starting CD import pipeline for '{}'", db_album.title);
+                            self.import_album_from_cd(command).await
+                        }
                     };
 
                     if let Err(e) = result {
@@ -653,6 +657,133 @@ impl ImportService {
             &chunk_layout.cue_flac_data,
         )
         .await
+    }
+
+    /// Executes the streaming import pipeline for a CD-based import.
+    ///
+    /// Orchestrates the entire import workflow:
+    /// 1. Marks the album as 'importing'
+    /// 2. Streams ripped FLAC files → encrypts → uploads (same as folder import)
+    /// 3. After upload: computes layout, persists metadata, marks complete
+    /// 4. Cleans up temporary directory
+    async fn import_album_from_cd(&self, command: ImportCommand) -> Result<(), String> {
+        let library_manager = self.library_manager.get();
+
+        let ImportCommand::CdImport {
+            db_album,
+            db_release,
+            tracks_to_files,
+            discovered_files,
+            cue_flac_metadata,
+            temp_dir,
+        } = command
+        else {
+            return Err("Expected CdImport command".to_string());
+        };
+
+        // Mark release as importing now that pipeline is starting
+        library_manager
+            .mark_release_importing(&db_release.id)
+            .await
+            .map_err(|e| format!("Failed to mark release as importing: {}", e))?;
+
+        info!("Marked release as 'importing' - starting CD import pipeline");
+
+        // Send started progress
+        let _ = self.progress_tx.send(ImportProgress::Started {
+            id: db_release.id.clone(),
+        });
+
+        // ========== COMPUTE LAYOUT FIRST ==========
+        // Compute the layout before streaming so we have accurate progress tracking
+
+        let chunk_layout = AlbumChunkLayout::build(
+            discovered_files.clone(),
+            &tracks_to_files,
+            self.config.chunk_size_bytes,
+            cue_flac_metadata.clone(),
+        )?;
+
+        // ========== STREAMING PIPELINE ==========
+        // Stream chunks with accurate progress tracking
+
+        let progress_tracker = ImportProgressTracker::new(
+            db_release.id.clone(),
+            chunk_layout.total_chunks,
+            chunk_layout.chunk_to_track.clone(),
+            chunk_layout.track_chunk_counts.clone(),
+            self.progress_tx.clone(),
+        );
+
+        let (pipeline, chunk_tx) = pipeline::build_import_pipeline(
+            self.config.clone(),
+            db_release.id.clone(),
+            self.encryption_service.clone(),
+            self.cloud_storage.clone(),
+            library_manager.clone(),
+            progress_tracker,
+            tracks_to_files.clone(),
+            chunk_layout.files_to_chunks.clone(),
+            self.config.chunk_size_bytes,
+            chunk_layout.cue_flac_data.clone(),
+        );
+
+        // CD import: use file producer (same as folder import)
+        let files_to_chunks_for_producer: Vec<crate::import::types::FileToChunks> =
+            discovered_files
+                .iter()
+                .map(|f| crate::import::types::FileToChunks {
+                    file_path: f.path.clone(),
+                    start_chunk_index: 0, // Unused by producer
+                    end_chunk_index: 0,   // Unused by producer
+                    start_byte_offset: 0, // Unused by producer
+                    end_byte_offset: 0,   // Unused by producer
+                })
+                .collect();
+        tokio::spawn(pipeline::chunk_producer::produce_chunk_stream_from_files(
+            files_to_chunks_for_producer,
+            self.config.chunk_size_bytes,
+            chunk_tx,
+        ));
+
+        // Wait for the pipeline to complete
+        let results: Vec<_> = pipeline.collect().await;
+
+        // Check for errors
+        for result in results {
+            result?;
+        }
+
+        info!("All chunks uploaded successfully, persisting metadata...");
+
+        // ========== PERSIST METADATA ==========
+        // Layout already computed at the beginning, just persist it now
+
+        self.persist_metadata_from_layout(
+            library_manager,
+            &db_release.id,
+            &tracks_to_files,
+            &chunk_layout.files_to_chunks,
+            &chunk_layout.cue_flac_data,
+        )
+        .await?;
+
+        // ========== CLEANUP TEMP DIRECTORY ==========
+        // Remove temporary directory with ripped files
+        if let Err(e) = tokio::fs::remove_dir_all(&temp_dir).await {
+            warn!("Failed to remove temp directory {:?}: {}", temp_dir, e);
+            // Don't fail the import if cleanup fails
+        } else {
+            info!("Cleaned up temp directory: {:?}", temp_dir);
+        }
+
+        // Send completion event
+        let _ = self
+            .progress_tx
+            .send(ImportProgress::Complete { id: db_release.id });
+
+        info!("CD import completed successfully for {}", db_album.title);
+        Ok(())
     }
 }
 

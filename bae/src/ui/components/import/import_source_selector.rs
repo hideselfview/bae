@@ -4,6 +4,7 @@ use dioxus::prelude::*;
 pub enum ImportSource {
     Folder,
     Torrent,
+    Cd,
 }
 
 #[component]
@@ -37,6 +38,18 @@ pub fn ImportSourceSelector(
                         on_source_select.call(ImportSource::Torrent);
                     },
                     "Torrent"
+                }
+                button {
+                    class: if *selected_source.read() == ImportSource::Cd {
+                        "px-4 py-2 font-medium transition-colors text-blue-600 border-b-2 border-blue-600"
+                    } else {
+                        "px-4 py-2 font-medium transition-colors text-gray-600 hover:text-gray-900"
+                    },
+                    onclick: move |_| {
+                        selected_source.set(ImportSource::Cd);
+                        on_source_select.call(ImportSource::Cd);
+                    },
+                    "CD"
                 }
             }
         }

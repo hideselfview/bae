@@ -442,6 +442,213 @@ impl ImportHandle {
 
                 Ok((album_id, release_id))
             }
+            ImportRequestParams::FromCd {
+                discogs_release,
+                mb_release,
+                drive_path,
+                master_year,
+            } => {
+                // Validate that at least one release is provided
+                if discogs_release.is_none() && mb_release.is_none() {
+                    return Err("Either discogs_release or mb_release must be provided".to_string());
+                }
+
+                let library_manager = self.library_manager.get();
+
+                // ========== CD RIPPING ==========
+
+                use crate::cd::{CdDrive, CdRipper, CueGenerator, LogGenerator};
+
+                // Create CD drive instance
+                let drive = CdDrive {
+                    device_path: drive_path.clone(),
+                    name: drive_path
+                        .to_str()
+                        .unwrap_or("Unknown")
+                        .to_string(),
+                };
+
+                // Read TOC from CD
+                let toc = drive
+                    .read_toc()
+                    .map_err(|e| format!("Failed to read CD TOC: {}", e))?;
+
+                // Create temporary directory for ripped files
+                let temp_dir = std::env::temp_dir().join(format!("bae_cd_rip_{}", uuid::Uuid::new_v4()));
+                tokio::fs::create_dir_all(&temp_dir)
+                    .await
+                    .map_err(|e| format!("Failed to create temp directory: {}", e))?;
+
+                // Rip tracks to FLAC (clone drive for ripper)
+                let drive_for_ripper = drive.clone();
+                let ripper = CdRipper::new(drive_for_ripper, toc.clone(), temp_dir.clone());
+                let rip_results = ripper
+                    .rip_all_tracks(None)
+                    .await
+                    .map_err(|e| format!("Failed to rip CD: {}", e))?;
+
+                // ========== PARSE RELEASE INTO DATABASE MODELS ==========
+
+                let (db_album, db_release, db_tracks, artists, album_artists) =
+                    if let Some(ref discogs_rel) = discogs_release {
+                        use crate::import::discogs_parser::parse_discogs_release;
+                        parse_discogs_release(discogs_rel, master_year)?
+                    } else if let Some(ref mb_rel) = mb_release {
+                        use crate::import::musicbrainz_parser::fetch_and_parse_mb_release;
+                        fetch_and_parse_mb_release(&mb_rel.release_id, master_year).await?
+                    } else {
+                        return Err("No release provided".to_string());
+                    };
+
+                // ========== GENERATE CUE SHEET AND LOG FILE ==========
+
+                // Get artist name from album_artists (first artist)
+                let performer_name = if let Some(first_artist) = artists.first() {
+                    first_artist.name.clone()
+                } else {
+                    "Unknown Artist".to_string()
+                };
+
+                let flac_filename = format!("{}.flac", db_album.title.replace("/", "_"));
+                let cue_sheet = CueGenerator::generate_cue_sheet(
+                    &toc,
+                    &rip_results,
+                    &flac_filename,
+                    &performer_name,
+                    &db_album.title,
+                );
+
+                let cue_path = temp_dir.join(format!("{}.cue", db_album.title.replace("/", "_")));
+                CueGenerator::write_cue_file(&cue_sheet, &cue_path)
+                    .map_err(|e| format!("Failed to write CUE file: {}", e))?;
+
+                let log_path = temp_dir.join(format!("{}.log", db_album.title.replace("/", "_")));
+                LogGenerator::write_log_file(&toc, &rip_results, &drive.name, &log_path)
+                    .map_err(|e| format!("Failed to write log file: {}", e))?;
+
+                // ========== DISCOVER FILES ==========
+
+                let mut discovered_files = Vec::new();
+                for result in &rip_results {
+                    let size = tokio::fs::metadata(&result.output_path)
+                        .await
+                        .map_err(|e| format!("Failed to get file size: {}", e))?
+                        .len();
+                    discovered_files.push(DiscoveredFile {
+                        path: result.output_path.clone(),
+                        size,
+                    });
+                }
+
+                // Add CUE and log files
+                let cue_size = tokio::fs::metadata(&cue_path)
+                    .await
+                    .map_err(|e| format!("Failed to get CUE file size: {}", e))?
+                    .len();
+                discovered_files.push(DiscoveredFile {
+                    path: cue_path.clone(),
+                    size: cue_size,
+                });
+
+                let log_size = tokio::fs::metadata(&log_path)
+                    .await
+                    .map_err(|e| format!("Failed to get log file size: {}", e))?
+                    .len();
+                discovered_files.push(DiscoveredFile {
+                    path: log_path.clone(),
+                    size: log_size,
+                });
+
+                // ========== MAP TRACKS TO FILES ==========
+
+                let mapping_result = map_tracks_to_files(&db_tracks, &discovered_files).await?;
+                let tracks_to_files = mapping_result.track_files.clone();
+                let cue_flac_metadata = mapping_result.cue_flac_metadata.clone();
+
+                // ========== INSERT ARTISTS ==========
+
+                let mut artist_id_map = std::collections::HashMap::new();
+                for artist in &artists {
+                    let parsed_id = artist.id.clone();
+
+                    let existing = if let Some(ref discogs_id) = artist.discogs_artist_id {
+                        library_manager
+                            .get_artist_by_discogs_id(discogs_id)
+                            .await
+                            .map_err(|e| format!("Database error: {}", e))?
+                    } else {
+                        None
+                    };
+
+                    let actual_id = if let Some(existing_artist) = existing {
+                        existing_artist.id
+                    } else {
+                        library_manager
+                            .insert_artist(artist)
+                            .await
+                            .map_err(|e| format!("Failed to insert artist: {}", e))?;
+                        artist.id.clone()
+                    };
+
+                    artist_id_map.insert(parsed_id, actual_id);
+                }
+
+                // ========== INSERT ALBUM + RELEASE + TRACKS ==========
+
+                library_manager
+                    .insert_album_with_release_and_tracks(&db_album, &db_release, &db_tracks)
+                    .await
+                    .map_err(|e| format!("Database error: {}", e))?;
+
+                // Extract and store durations
+                extract_and_store_durations(library_manager, &tracks_to_files).await?;
+
+                // Insert album-artist relationships
+                for album_artist in &album_artists {
+                    let actual_artist_id =
+                        artist_id_map.get(&album_artist.artist_id).ok_or_else(|| {
+                            format!(
+                                "Artist ID {} not found in artist map",
+                                album_artist.artist_id
+                            )
+                        })?;
+
+                    let mut updated_album_artist = album_artist.clone();
+                    updated_album_artist.artist_id = actual_artist_id.clone();
+
+                    library_manager
+                        .insert_album_artist(&updated_album_artist)
+                        .await
+                        .map_err(|e| {
+                            format!("Failed to insert album-artist relationship: {}", e)
+                        })?;
+                }
+
+                tracing::info!(
+                    "Validated and queued CD import '{}' (release: {}) with {} tracks",
+                    db_album.title,
+                    db_release.id,
+                    db_tracks.len()
+                );
+
+                // ========== QUEUE FOR PIPELINE ==========
+
+                let album_id = db_album.id.clone();
+                let release_id = db_release.id.clone();
+
+                self.requests_tx
+                    .send(ImportCommand::CdImport {
+                        db_album,
+                        db_release,
+                        tracks_to_files,
+                        discovered_files,
+                        cue_flac_metadata,
+                        temp_dir,
+                    })
+                    .map_err(|_| "Failed to queue validated CD import".to_string())?;
+
+                Ok((album_id, release_id))
+            }
         }
     }
 

@@ -12,6 +12,7 @@ use tracing::{error, info};
 use crate::db::Database;
 
 mod cache;
+mod cd;
 mod cloud_storage;
 mod config;
 mod cue_flac;

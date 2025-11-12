@@ -52,6 +52,12 @@ pub enum ImportRequestParams {
         master_year: u32,
         seed_after_download: bool,
     },
+    FromCd {
+        discogs_release: Option<DiscogsRelease>,
+        mb_release: Option<MbRelease>,
+        drive_path: PathBuf,
+        master_year: u32,
+    },
 }
 
 /// Source for torrent import
@@ -172,9 +178,9 @@ pub struct CueFlacLayoutData {
 
 /// Validated import command ready for pipeline execution.
 ///
-/// Split into folder and torrent variants since they have fundamentally different
+/// Split into folder, torrent, and CD variants since they have fundamentally different
 /// control flows: folder imports compute layout upfront, torrent imports stream
-/// first and compute layout after download completes.
+/// first and compute layout after download completes, CD imports rip tracks first.
 #[derive(Debug)]
 pub enum ImportCommand {
     /// Folder-based import: all files available upfront
@@ -205,5 +211,20 @@ pub enum ImportCommand {
         torrent_metadata: crate::import::handle::TorrentImportMetadata,
         /// Whether to start seeding after download completes
         seed_after_download: bool,
+    },
+    /// CD-based import: tracks ripped from CD first, then processed like folder import
+    CdImport {
+        /// Database album record
+        db_album: crate::db::DbAlbum,
+        /// Database release record
+        db_release: crate::db::DbRelease,
+        /// Logical track → physical file mappings (to ripped FLAC files)
+        tracks_to_files: Vec<TrackFile>,
+        /// Files discovered after ripping (FLAC files, CUE sheet, log file)
+        discovered_files: Vec<DiscoveredFile>,
+        /// Pre-parsed CUE/FLAC metadata (CUE sheet generated during ripping)
+        cue_flac_metadata: Option<HashMap<PathBuf, CueFlacMetadata>>,
+        /// Temporary directory where ripped files are stored (will be cleaned up after import)
+        temp_dir: PathBuf,
     },
 }

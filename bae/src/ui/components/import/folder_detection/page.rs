@@ -1,13 +1,13 @@
 use super::file_list::FileInfo;
 use super::{
-    file_list::FileList, folder_selector::FolderSelector, manual_search_panel::ManualSearchPanel,
-    match_list::MatchList,
+    file_list::FileList, folder_selector::FolderSelector,
+    manual_search_panel::ManualSearchPanel, match_list::MatchList,
 };
 use crate::import::{ImportRequestParams, MatchCandidate, MatchSource};
 use crate::library::use_import_service;
 use crate::library::use_library_manager;
 use crate::musicbrainz::lookup_by_discid;
-use crate::ui::components::import::{ImportSource, ImportSourceSelector, TorrentInput};
+use crate::ui::components::import::{CdRipper, ImportSource, ImportSourceSelector, TorrentInput};
 use crate::ui::import_context::ImportContext;
 use crate::ui::Route;
 use dioxus::prelude::*;
@@ -830,7 +830,7 @@ pub fn FolderDetectionPage() -> Element {
                 }
             }
 
-            // Phase 1: Source Selection (Folder or Torrent)
+            // Phase 1: Source Selection (Folder, Torrent, or CD)
             if *import_phase.read() == crate::ui::import_context::ImportPhase::FolderSelection {
                 div { class: "bg-white rounded-lg shadow p-6",
                     if *selected_source.read() == ImportSource::Folder {
@@ -843,11 +843,28 @@ pub fn FolderDetectionPage() -> Element {
                                 }
                             }
                         }
-                    } else {
+                    } else if *selected_source.read() == ImportSource::Torrent {
                         TorrentInput {
                             on_file_select: on_torrent_file_select,
                             on_magnet_link: on_magnet_link,
                             on_error: on_torrent_error,
+                        }
+                    } else {
+                        CdRipper {
+                            on_drive_select: {
+                                let mut folder_path = folder_path;
+                                let mut import_phase = import_phase;
+                                move |drive_path: PathBuf| {
+                                    folder_path.set(drive_path.to_string_lossy().to_string());
+                                    import_phase.set(crate::ui::import_context::ImportPhase::MetadataDetection);
+                                }
+                            },
+                            on_error: {
+                                let mut import_error_message = import_error_message;
+                                move |e: String| {
+                                    import_error_message.set(Some(e));
+                                }
+                            }
                         }
                     }
                 }
