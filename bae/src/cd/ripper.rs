@@ -65,20 +65,49 @@ impl CdRipper {
     /// (no intermediate WAV file)
     pub async fn rip_all_tracks(
         &self,
-        _progress_tx: Option<mpsc::UnboundedSender<RipProgress>>,
+        progress_tx: Option<mpsc::UnboundedSender<RipProgress>>,
     ) -> Result<Vec<RipResult>, RipError> {
         let mut results = Vec::new();
+        let total_tracks = (self.toc.last_track - self.toc.first_track + 1) as u8;
 
-        for track_num in self.toc.first_track..=self.toc.last_track {
-            let result = self.rip_track(track_num).await?;
+        for (idx, track_num) in (self.toc.first_track..=self.toc.last_track).enumerate() {
+            // Send progress update before starting track
+            if let Some(ref tx) = progress_tx {
+                let percent = ((idx * 100) / total_tracks as usize) as u8;
+                let _ = tx.send(RipProgress {
+                    track: track_num,
+                    total_tracks,
+                    percent,
+                    bytes_read: 0,
+                    errors: 0,
+                });
+            }
+
+            let result = self.rip_track(track_num, progress_tx.as_ref()).await?;
             results.push(result);
+
+            // Send progress update after completing track
+            if let Some(ref tx) = progress_tx {
+                let percent = (((idx + 1) * 100) / total_tracks as usize) as u8;
+                let _ = tx.send(RipProgress {
+                    track: track_num,
+                    total_tracks,
+                    percent,
+                    bytes_read: results.last().unwrap().bytes_written,
+                    errors: results.last().unwrap().errors,
+                });
+            }
         }
 
         Ok(results)
     }
 
     /// Rip a single track
-    async fn rip_track(&self, track_num: u8) -> Result<RipResult, RipError> {
+    async fn rip_track(
+        &self,
+        track_num: u8,
+        _progress_tx: Option<&mpsc::UnboundedSender<RipProgress>>,
+    ) -> Result<RipResult, RipError> {
         // 1. Read raw audio bytes from CD via libcdio-paranoia (with error correction)
         // 2. Convert bytes to interleaved i32 samples (CD audio is 16-bit stereo)
         // 3. Stream samples through FLAC encoder
