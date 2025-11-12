@@ -13,7 +13,7 @@ use crate::ui::Route;
 use dioxus::prelude::*;
 use std::path::PathBuf;
 use std::rc::Rc;
-use tracing::info;
+use tracing::{error, info};
 
 #[component]
 pub fn FolderDetectionPage() -> Element {
@@ -621,10 +621,10 @@ pub fn FolderDetectionPage() -> Element {
                                             });
                                         }
                                         Err(e) => {
-                                            import_error_message.set(Some(format!(
-                                                "Failed to start import: {}",
-                                                e
-                                            )));
+                                            let error_msg =
+                                                format!("Failed to start import: {}", e);
+                                            error!("{}", error_msg);
+                                            import_error_message.set(Some(error_msg));
                                         }
                                     }
                                 }
@@ -661,8 +661,9 @@ pub fn FolderDetectionPage() -> Element {
                                     });
                                 }
                                 Err(e) => {
-                                    import_error_message
-                                        .set(Some(format!("Failed to start import: {}", e)));
+                                    let error_msg = format!("Failed to start import: {}", e);
+                                    error!("{}", error_msg);
+                                    import_error_message.set(Some(error_msg));
                                 }
                             }
                         }
@@ -712,10 +713,10 @@ pub fn FolderDetectionPage() -> Element {
                                             });
                                         }
                                         Err(e) => {
-                                            import_error_message.set(Some(format!(
-                                                "Failed to start import: {}",
-                                                e
-                                            )));
+                                            let error_msg =
+                                                format!("Failed to start import: {}", e);
+                                            error!("{}", error_msg);
+                                            import_error_message.set(Some(error_msg));
                                         }
                                     }
                                 }
@@ -751,8 +752,9 @@ pub fn FolderDetectionPage() -> Element {
                                     });
                                 }
                                 Err(e) => {
-                                    import_error_message
-                                        .set(Some(format!("Failed to start import: {}", e)));
+                                    let error_msg = format!("Failed to start import: {}", e);
+                                    error!("{}", error_msg);
+                                    import_error_message.set(Some(error_msg));
                                 }
                             }
                         }
@@ -1154,7 +1156,10 @@ pub fn FolderDetectionPage() -> Element {
                     // Error messages
                     if let Some(ref error) = import_error_message.read().as_ref() {
                         div { class: "bg-red-50 border border-red-200 rounded-lg p-4",
-                            p { class: "text-sm text-red-700", "Error: {error}" }
+                            p {
+                                class: "text-sm text-red-700 select-text break-words font-mono",
+                                "Error: {error}"
+                            }
                             {
                                 let dup_id_opt = duplicate_album_id.read().clone();
                                 if let Some(dup_id) = dup_id_opt {

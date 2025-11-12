@@ -150,7 +150,19 @@ impl CueFlacProcessor {
 
     /// Parse a CUE sheet file
     pub fn parse_cue_sheet(cue_path: &Path) -> Result<CueSheet, CueFlacError> {
-        let content = fs::read_to_string(cue_path)?;
+        use tracing::{debug, error};
+        debug!("Attempting to parse CUE sheet: {:?}", cue_path);
+        debug!("CUE path exists: {}", cue_path.exists());
+        debug!("CUE path absolute: {:?}", cue_path.canonicalize().ok());
+        let content = fs::read_to_string(cue_path).map_err(|e| {
+            error!(
+                "Failed to read CUE file {:?}: {} (os error {})",
+                cue_path,
+                e,
+                e.raw_os_error().unwrap_or(-1)
+            );
+            e
+        })?;
 
         match Self::parse_cue_content(&content) {
             Ok((_, cue_sheet)) => Ok(cue_sheet),

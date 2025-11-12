@@ -327,10 +327,15 @@ impl ImportHandle {
                     .map_err(|e| format!("Failed to get torrent file list: {}", e))?;
 
                 // Convert torrent files to DiscoveredFile format
+                // Torrent file paths from libtorrent already include the torrent name directory,
+                // so we just need to prepend the temp directory
+                let temp_dir = std::env::temp_dir();
                 let discovered_files: Vec<DiscoveredFile> = torrent_files
                     .iter()
                     .map(|tf| DiscoveredFile {
-                        path: tf.path.clone(),
+                        // libtorrent's file_path() returns paths that already include the torrent name,
+                        // so we only need to prepend the temp directory
+                        path: temp_dir.join(&tf.path),
                         size: tf.size as u64,
                     })
                     .collect();
