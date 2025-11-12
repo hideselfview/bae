@@ -114,12 +114,21 @@ impl LogGenerator {
 
             if result.errors > 0 {
                 writeln!(file, "     There were errors")?;
+                writeln!(file, "     Errors: {}", result.errors)?;
                 writeln!(file, "")?;
             }
         }
 
         writeln!(file, "")?;
-        writeln!(file, "No errors occurred")?;
+
+        // Check if any errors occurred
+        let total_errors: u32 = rip_results.iter().map(|r| r.errors).sum();
+        if total_errors > 0 {
+            writeln!(file, "There were errors during extraction")?;
+            writeln!(file, "Total errors: {}", total_errors)?;
+        } else {
+            writeln!(file, "No errors occurred")?;
+        }
         writeln!(file, "")?;
         writeln!(file, "End of status report")?;
 
