@@ -28,7 +28,7 @@ use crate::import::pipeline;
 use crate::import::progress::ImportProgressTracker;
 use crate::import::types::ImportProgress;
 use crate::library::SharedLibraryManager;
-use crate::torrent::BaeStorage;
+use crate::torrent::{BaeStorage, TorrentClient};
 use futures::stream::StreamExt;
 use tokio::sync::mpsc;
 use tracing::{error, info};
@@ -62,6 +62,8 @@ pub struct ImportService {
     library_manager: SharedLibraryManager,
     /// Cache manager for chunk storage
     cache_manager: CacheManager,
+    /// Shared torrent client for reuse across imports
+    torrent_client: TorrentClient,
 }
 
 impl ImportService {
@@ -90,8 +92,12 @@ impl ImportService {
         std::thread::spawn(move || {
             // Create a new tokio runtime for this thread
             let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
+            let worker_runtime_handle = rt.handle().clone();
 
             rt.block_on(async move {
+                let torrent_client = TorrentClient::new(worker_runtime_handle)
+                    .expect("Failed to create shared torrent client for import service");
+
                 let service = ImportService {
                     config,
                     requests_rx,
@@ -100,6 +106,7 @@ impl ImportService {
                     encryption_service,
                     cloud_storage,
                     cache_manager: cache_manager_for_worker,
+                    torrent_client,
                 };
 
                 service.run_import_worker().await;
@@ -218,15 +225,12 @@ impl ImportService {
         let piece_mappings_result: Option<Result<HashMap<usize, (Vec<String>, i64, i64)>, String>> =
             if let (Some(torrent_source), Some(torrent_meta)) = (torrent_source, &torrent_metadata)
             {
-                // Torrent import: recreate torrent client and handle
+                // Torrent import: use shared torrent client and create handle
                 use crate::torrent::TorrentPieceMapper;
-                use tokio::runtime::Handle;
 
-                // Create torrent client and handle, then register storage
+                // Use shared torrent client and create handle, then register storage
                 let torrent_handle = {
-                    let runtime_handle = Handle::current();
-                    let torrent_client = crate::torrent::TorrentClient::new(runtime_handle)
-                        .map_err(|e| format!("Failed to create torrent client: {}", e))?;
+                    let torrent_client = self.torrent_client.clone();
 
                     let torrent_handle = match torrent_source {
                         crate::import::types::TorrentSource::File(path) => torrent_client

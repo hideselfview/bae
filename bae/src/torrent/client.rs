@@ -80,12 +80,45 @@ pub struct TorrentClient {
     storage_index_map: StorageIndexMap,
 }
 
-// SAFETY: TorrentClient contains UniquePtr which isn't Send, but we only use it
-// from a single task context. The Arc ensures the session is reference-counted
-// and can be safely moved between tasks as long as we don't actually use it
-// concurrently. In our use case, we create the client in one task and use it
-// sequentially in that same task, so this is safe.
+// SAFETY: TorrentClient contains UniquePtr which isn't Send, but it can be safely
+// moved between tasks/threads because:
+//
+// 1. The session is wrapped in Arc<RwLock<UniquePtr<Session>>> (see SendSafeSession
+//    at line 57), which provides thread-safe reference-counting and synchronization.
+//
+// 2. All operations acquire a write lock before using the session (see RwLock usage
+//    at lines 407, 463), ensuring safe access even when moved between threads.
+//
+// 3. While TorrentClient can be used from multiple threads (via ImportHandle in
+//    AppContext), access is serialized by the RwLock, making it safe to Send.
+//
+// The Arc ensures reference-counting is safe across thread boundaries, and the
+// RwLock ensures that even if multiple threads hold TorrentClient references,
+// only one can use the session at a time.
 unsafe impl Send for TorrentClient {}
+
+// SAFETY: TorrentClient can be safely shared across threads (Sync) because:
+//
+// 1. Libtorrent's session is thread-safe: The libtorrent session object is designed
+//    to be thread-safe and manages its own internal thread for network operations.
+//    Multiple threads can safely call session methods concurrently.
+//
+// 2. We serialize access with RwLock: The session is wrapped in RwLock<UniquePtr<Session>>
+//    (see SendSafeSession at line 57). All operations acquire a write lock before using
+//    the session (e.g., add_torrent_file at line 407, add_magnet_link at line 463).
+//    This serializes access even though libtorrent supports concurrent access.
+//
+// 3. Safe concurrent references: Multiple threads can hold &TorrentClient references
+//    simultaneously. When they use it, they serialize via the RwLock, ensuring only
+//    one operation happens at a time. This is safe because:
+//    - Libtorrent's session is thread-safe
+//    - Our RwLock ensures sequential access
+//    - The internal Arc ensures reference-counting is safe
+//
+// This approach is more efficient than thread-local storage, which would create one
+// session per thread (potentially 8+ sessions on multi-core systems). With a shared
+// instance, we create only one session that all threads can use safely.
+unsafe impl Sync for TorrentClient {}
 
 impl Clone for TorrentClient {
     fn clone(&self) -> Self {

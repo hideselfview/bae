@@ -24,9 +24,11 @@ pub struct ImportHandle {
     pub progress_handle: ImportProgressHandle,
     pub library_manager: SharedLibraryManager,
     pub runtime_handle: tokio::runtime::Handle,
+    torrent_client: TorrentClient,
 }
 
 /// Validated import ready for pipeline execution
+/// TODO Rename to ImportCommand
 pub struct ImportRequest {
     pub db_album: DbAlbum,
     pub db_release: DbRelease,
@@ -64,12 +66,15 @@ impl ImportHandle {
         runtime_handle: tokio::runtime::Handle,
     ) -> Self {
         let progress_handle = ImportProgressHandle::new(progress_rx, runtime_handle.clone());
+        let torrent_client = TorrentClient::new(runtime_handle.clone())
+            .expect("Failed to create shared torrent client");
 
         Self {
             requests_tx,
             progress_handle,
             library_manager,
             runtime_handle,
+            torrent_client,
         }
     }
 
@@ -224,9 +229,8 @@ impl ImportHandle {
 
                 // ========== TORRENT SETUP ==========
 
-                // Create torrent client
-                let torrent_client = TorrentClient::new(self.runtime_handle.clone())
-                    .map_err(|e| format!("Failed to create torrent client: {}", e))?;
+                // Use shared torrent client
+                let torrent_client = self.torrent_client.clone();
 
                 // Extract magnet link before moving torrent_source
                 let magnet_link_opt = match &torrent_source {
