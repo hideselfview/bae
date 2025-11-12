@@ -20,6 +20,7 @@ use tracing::{debug, info, warn};
 #[derive(Clone)]
 pub struct ImportHandle {
     pub requests_tx: mpsc::UnboundedSender<ImportCommand>,
+    progress_tx: mpsc::UnboundedSender<ImportProgress>,
     pub progress_handle: ImportProgressHandle,
     pub library_manager: SharedLibraryManager,
     pub runtime_handle: tokio::runtime::Handle,
@@ -42,6 +43,7 @@ impl ImportHandle {
     /// Create a new ImportHandle with the given dependencies
     pub fn new(
         requests_tx: mpsc::UnboundedSender<ImportCommand>,
+        progress_tx: mpsc::UnboundedSender<ImportProgress>,
         progress_rx: mpsc::UnboundedReceiver<ImportProgress>,
         library_manager: SharedLibraryManager,
         runtime_handle: tokio::runtime::Handle,
@@ -52,6 +54,7 @@ impl ImportHandle {
 
         Self {
             requests_tx,
+            progress_tx,
             progress_handle,
             library_manager,
             runtime_handle,
@@ -455,7 +458,7 @@ impl ImportHandle {
 
                 let library_manager = self.library_manager.get();
 
-                // ========== CD RIPPING ==========
+                // ========== READ CD TOC ==========
 
                 use crate::cd::{CdDrive, CdRipper, CueGenerator, LogGenerator};
 
@@ -469,6 +472,27 @@ impl ImportHandle {
                 let toc = drive
                     .read_toc()
                     .map_err(|e| format!("Failed to read CD TOC: {}", e))?;
+
+                // ========== PARSE RELEASE INTO DATABASE MODELS ==========
+                // Parse release BEFORE ripping so we have release_id for progress updates
+
+                let (db_album, db_release, db_tracks, artists, album_artists) =
+                    if let Some(ref discogs_rel) = discogs_release {
+                        use crate::import::discogs_parser::parse_discogs_release;
+                        parse_discogs_release(discogs_rel, master_year)?
+                    } else if let Some(ref mb_rel) = mb_release {
+                        use crate::import::musicbrainz_parser::fetch_and_parse_mb_release;
+                        fetch_and_parse_mb_release(&mb_rel.release_id, master_year).await?
+                    } else {
+                        return Err("No release provided".to_string());
+                    };
+
+                // Send started progress
+                let _ = self.progress_tx.send(ImportProgress::Started {
+                    id: db_release.id.clone(),
+                });
+
+                // ========== CD RIPPING ==========
 
                 // Create temporary directory for ripped files
                 let temp_dir =
@@ -485,19 +509,17 @@ impl ImportHandle {
                 let (rip_progress_tx, mut rip_progress_rx) =
                     mpsc::unbounded_channel::<crate::cd::RipProgress>();
 
-                // Spawn task to forward ripping progress (we'll handle UI integration later)
+                let release_id = db_release.id.clone();
+                let progress_tx_for_ripping = self.progress_tx.clone();
+
+                // Spawn task to forward ripping progress to UI
                 tokio::spawn(async move {
                     while let Some(rip_progress) = rip_progress_rx.recv().await {
-                        info!(
-                            "CD ripping progress: track {}/{} - {}% - {} bytes - {} errors",
-                            rip_progress.track,
-                            rip_progress.total_tracks,
-                            rip_progress.percent,
-                            rip_progress.bytes_read,
-                            rip_progress.errors
-                        );
-                        // TODO: Convert to ImportProgress and send once release_id is available
-                        // For now, just log it
+                        // Convert RipProgress to ImportProgress
+                        let _ = progress_tx_for_ripping.send(ImportProgress::Progress {
+                            id: release_id.clone(),
+                            percent: rip_progress.percent,
+                        });
                     }
                 });
 
@@ -505,19 +527,6 @@ impl ImportHandle {
                     .rip_all_tracks(Some(rip_progress_tx))
                     .await
                     .map_err(|e| format!("Failed to rip CD: {}", e))?;
-
-                // ========== PARSE RELEASE INTO DATABASE MODELS ==========
-
-                let (db_album, db_release, db_tracks, artists, album_artists) =
-                    if let Some(ref discogs_rel) = discogs_release {
-                        use crate::import::discogs_parser::parse_discogs_release;
-                        parse_discogs_release(discogs_rel, master_year)?
-                    } else if let Some(ref mb_rel) = mb_release {
-                        use crate::import::musicbrainz_parser::fetch_and_parse_mb_release;
-                        fetch_and_parse_mb_release(&mb_rel.release_id, master_year).await?
-                    } else {
-                        return Err("No release provided".to_string());
-                    };
 
                 // ========== GENERATE CUE SHEET AND LOG FILE ==========
 
