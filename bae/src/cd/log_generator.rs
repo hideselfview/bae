@@ -108,8 +108,8 @@ impl LogGenerator {
             writeln!(file, "     Pre-gap length : 00:00:00")?;
             writeln!(file, "")?;
             writeln!(file, "     Track quality : 100.0 %")?;
-            writeln!(file, "         Test CRC : {:08X}", 0)?; // TODO: Calculate CRC
-            writeln!(file, "         Copy CRC : {:08X}", 0)?; // TODO: Calculate CRC
+            writeln!(file, "         Test CRC : {:08X}", result.crc32)?;
+            writeln!(file, "         Copy CRC : {:08X}", result.crc32)?;
             writeln!(file, "")?;
 
             if result.errors > 0 {

@@ -40,6 +40,7 @@ pub struct RipResult {
     pub bytes_written: u64,
     pub errors: u32,
     pub duration_ms: u64,
+    pub crc32: u32,
 }
 
 /// CD ripper that streams audio directly to FLAC encoder
@@ -125,6 +126,9 @@ impl CdRipper {
         // Encode to FLAC
         let flac_data = self.encode_to_flac(&samples, sample_rate, channels, bits_per_sample)?;
 
+        // Calculate CRC32 of FLAC data (for EAC-style log file)
+        let crc32 = crc32fast::hash(&flac_data);
+
         // Write to file
         tokio::fs::write(&output_path, &flac_data)
             .await
@@ -139,6 +143,7 @@ impl CdRipper {
             bytes_written: flac_data.len() as u64,
             errors, // Error count from paranoia reader
             duration_ms,
+            crc32,
         })
     }
 

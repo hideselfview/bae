@@ -829,6 +829,7 @@ dependencies = [
  "chrono",
  "cocoa 0.25.0",
  "cpal",
+ "crc32fast",
  "cxx",
  "cxx-build",
  "dioxus",
