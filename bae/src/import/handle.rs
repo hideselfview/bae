@@ -517,7 +517,7 @@ impl ImportHandle {
                 );
 
                 let cue_path = temp_dir.join(format!("{}.cue", db_album.title.replace("/", "_")));
-                CueGenerator::write_cue_file(&cue_sheet, &cue_path)
+                CueGenerator::write_cue_file(&cue_sheet, &toc.disc_id, &flac_filename, &cue_path)
                     .map_err(|e| format!("Failed to write CUE file: {}", e))?;
 
                 let log_path = temp_dir.join(format!("{}.log", db_album.title.replace("/", "_")));

@@ -55,6 +55,8 @@ impl CueGenerator {
     /// Write CUE sheet to file
     pub fn write_cue_file(
         cue_sheet: &CueSheet,
+        disc_id: &str,
+        flac_filename: &str,
         output_path: &PathBuf,
     ) -> Result<(), std::io::Error> {
         use std::fs::File;
@@ -63,11 +65,11 @@ impl CueGenerator {
         let mut file = File::create(output_path)?;
         writeln!(file, "REM GENRE \"\"")?;
         writeln!(file, "REM DATE \"\"")?;
-        writeln!(file, "REM DISCID")?; // TODO: Add DiscID
+        writeln!(file, "REM DISCID {}", disc_id)?;
         writeln!(file, "REM COMMENT \"\"")?;
         writeln!(file, "PERFORMER \"{}\"", cue_sheet.performer)?;
         writeln!(file, "TITLE \"{}\"", cue_sheet.title)?;
-        writeln!(file, "FILE \"\" WAVE")?; // TODO: Add FLAC filename
+        writeln!(file, "FILE \"{}\" WAVE", flac_filename)?;
 
         for track in &cue_sheet.tracks {
             writeln!(file, "  TRACK {:02} AUDIO", track.number)?;
