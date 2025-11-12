@@ -480,8 +480,29 @@ impl ImportHandle {
                 // Rip tracks to FLAC (clone drive for ripper)
                 let drive_for_ripper = drive.clone();
                 let ripper = CdRipper::new(drive_for_ripper, toc.clone(), temp_dir.clone());
+
+                // Create progress channel for ripping
+                let (rip_progress_tx, mut rip_progress_rx) =
+                    mpsc::unbounded_channel::<crate::cd::RipProgress>();
+
+                // Spawn task to forward ripping progress (we'll handle UI integration later)
+                tokio::spawn(async move {
+                    while let Some(rip_progress) = rip_progress_rx.recv().await {
+                        info!(
+                            "CD ripping progress: track {}/{} - {}% - {} bytes - {} errors",
+                            rip_progress.track,
+                            rip_progress.total_tracks,
+                            rip_progress.percent,
+                            rip_progress.bytes_read,
+                            rip_progress.errors
+                        );
+                        // TODO: Convert to ImportProgress and send once release_id is available
+                        // For now, just log it
+                    }
+                });
+
                 let rip_results = ripper
-                    .rip_all_tracks(None)
+                    .rip_all_tracks(Some(rip_progress_tx))
                     .await
                     .map_err(|e| format!("Failed to rip CD: {}", e))?;
 

@@ -226,7 +226,7 @@ pub fn detect_drives() -> Result<Vec<PathBuf>, LibcdioError> {
                 let path = PathBuf::from(*path_str);
                 if path.exists() {
                     // Try to open it to verify it's a CD drive
-                    if let Ok(drive) = LibcdioDrive::open(&path) {
+                    if LibcdioDrive::open(&path).is_ok() {
                         // Accept drive even if no disc is present
                         if !drives.contains(&path) {
                             drives.push(path);
@@ -246,7 +246,7 @@ pub fn detect_drives() -> Result<Vec<PathBuf>, LibcdioError> {
                     if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                         if name.starts_with("disk") && name.len() > 4 {
                             // Try to open it
-                            if let Ok(drive) = LibcdioDrive::open(&path) {
+                            if LibcdioDrive::open(&path).is_ok() {
                                 if !drives.contains(&path) {
                                     drives.push(path);
                                 }
