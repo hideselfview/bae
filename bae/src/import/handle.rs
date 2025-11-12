@@ -4,11 +4,10 @@
 // Provides the public API for interacting with the import service.
 
 use crate::cue_flac::CueFlacProcessor;
-use crate::db::{DbAlbum, DbRelease};
 use crate::import::progress::ImportProgressHandle;
 use crate::import::track_to_file_mapper::map_tracks_to_files;
 use crate::import::types::{
-    CueFlacMetadata, DiscoveredFile, ImportProgress, ImportRequestParams, TorrentSource, TrackFile,
+    DiscoveredFile, ImportCommand, ImportProgress, ImportRequestParams, TorrentSource, TrackFile,
 };
 use crate::library::SharedLibraryManager;
 use crate::playback::symphonia_decoder::TrackDecoder;
@@ -20,33 +19,15 @@ use tracing::{debug, info, warn};
 /// Handle for sending import requests and subscribing to progress updates
 #[derive(Clone)]
 pub struct ImportHandle {
-    pub requests_tx: mpsc::UnboundedSender<ImportRequest>,
+    pub requests_tx: mpsc::UnboundedSender<ImportCommand>,
     pub progress_handle: ImportProgressHandle,
     pub library_manager: SharedLibraryManager,
     pub runtime_handle: tokio::runtime::Handle,
     torrent_client: TorrentClient,
 }
 
-/// Validated import ready for pipeline execution
-/// TODO Rename to ImportCommand
-pub struct ImportRequest {
-    pub db_album: DbAlbum,
-    pub db_release: DbRelease,
-    pub tracks_to_files: Vec<TrackFile>,
-    pub discovered_files: Vec<DiscoveredFile>,
-    /// Pre-parsed CUE/FLAC metadata (for CUE/FLAC imports only).
-    /// Validated during track mapping, passed through to avoid re-parsing.
-    pub cue_flac_metadata: Option<std::collections::HashMap<std::path::PathBuf, CueFlacMetadata>>,
-    /// Torrent metadata (for torrent imports only)
-    pub torrent_metadata: Option<TorrentImportMetadata>,
-    /// Torrent source (for torrent imports only, stored to recreate handle in import service)
-    /// We can't send TorrentClient/TorrentHandle through channels as they contain UniquePtr
-    pub torrent_source: Option<TorrentSource>,
-    /// Whether to start seeding after download completes (for torrent imports only)
-    pub seed_after_download: bool,
-}
-
 /// Torrent-specific metadata for import
+#[derive(Debug, Clone)]
 pub struct TorrentImportMetadata {
     pub info_hash: String,
     pub magnet_link: Option<String>,
@@ -60,7 +41,7 @@ pub struct TorrentImportMetadata {
 impl ImportHandle {
     /// Create a new ImportHandle with the given dependencies
     pub fn new(
-        requests_tx: mpsc::UnboundedSender<ImportRequest>,
+        requests_tx: mpsc::UnboundedSender<ImportCommand>,
         progress_rx: mpsc::UnboundedReceiver<ImportProgress>,
         library_manager: SharedLibraryManager,
         runtime_handle: tokio::runtime::Handle,
@@ -199,15 +180,12 @@ impl ImportHandle {
                 let release_id = db_release.id.clone();
 
                 self.requests_tx
-                    .send(ImportRequest {
+                    .send(ImportCommand::FolderImport {
                         db_album,
                         db_release,
                         tracks_to_files,
                         discovered_files,
                         cue_flac_metadata,
-                        torrent_metadata: None,
-                        torrent_source: None,
-                        seed_after_download: false,
                     })
                     .map_err(|_| "Failed to queue validated album for import".to_string())?;
 
@@ -349,7 +327,7 @@ impl ImportHandle {
                 // For now, this is a simplified version that assumes files match by name
                 let mapping_result = map_tracks_to_files(&db_tracks, &discovered_files).await?;
                 let tracks_to_files = mapping_result.track_files.clone();
-                let cue_flac_metadata = mapping_result.cue_flac_metadata.clone();
+                // Note: cue_flac_metadata will be re-parsed after torrent download completes
 
                 // ========== INSERT ARTISTS ==========
 
@@ -452,14 +430,12 @@ impl ImportHandle {
                 let release_id = db_release.id.clone();
 
                 self.requests_tx
-                    .send(ImportRequest {
+                    .send(ImportCommand::TorrentImport {
                         db_album,
                         db_release,
                         tracks_to_files,
-                        discovered_files,
-                        cue_flac_metadata,
-                        torrent_metadata: Some(torrent_metadata),
-                        torrent_source: Some(torrent_source_for_request),
+                        torrent_source: torrent_source_for_request,
+                        torrent_metadata,
                         seed_after_download,
                     })
                     .map_err(|_| "Failed to queue validated torrent for import".to_string())?;

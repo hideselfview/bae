@@ -122,7 +122,7 @@ pub struct CueFlacMetadata {
 ///
 /// Used in Phase 2 to calculate the chunk layout by treating all files
 /// as a single concatenated byte stream.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DiscoveredFile {
     pub path: PathBuf,
     pub size: u64,
@@ -168,4 +168,42 @@ pub struct CueFlacLayoutData {
     /// Seektable mapping sample positions to byte positions in the original FLAC file
     /// Used for accurate seeking during playback
     pub seektable: Option<std::collections::HashMap<u64, u64>>,
+}
+
+/// Validated import command ready for pipeline execution.
+///
+/// Split into folder and torrent variants since they have fundamentally different
+/// control flows: folder imports compute layout upfront, torrent imports stream
+/// first and compute layout after download completes.
+#[derive(Debug)]
+pub enum ImportCommand {
+    /// Folder-based import: all files available upfront
+    FolderImport {
+        /// Database album record
+        db_album: crate::db::DbAlbum,
+        /// Database release record
+        db_release: crate::db::DbRelease,
+        /// Logical track → physical file mappings
+        tracks_to_files: Vec<TrackFile>,
+        /// Files discovered during folder scan
+        discovered_files: Vec<DiscoveredFile>,
+        /// Pre-parsed CUE/FLAC metadata (for CUE/FLAC imports only)
+        cue_flac_metadata: Option<HashMap<PathBuf, CueFlacMetadata>>,
+    },
+    /// Torrent-based import: files arrive incrementally
+    TorrentImport {
+        /// Database album record
+        db_album: crate::db::DbAlbum,
+        /// Database release record
+        db_release: crate::db::DbRelease,
+        /// Logical track → physical file mappings
+        tracks_to_files: Vec<TrackFile>,
+        /// Torrent source (stored to recreate handle in import service)
+        /// We can't send TorrentClient/TorrentHandle through channels as they contain UniquePtr
+        torrent_source: TorrentSource,
+        /// Torrent-specific metadata
+        torrent_metadata: crate::import::handle::TorrentImportMetadata,
+        /// Whether to start seeding after download completes
+        seed_after_download: bool,
+    },
 }
