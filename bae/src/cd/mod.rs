@@ -7,10 +7,12 @@ pub mod cue_generator;
 pub mod drive;
 pub mod ffi;
 pub mod log_generator;
+pub mod paranoia;
 pub mod ripper;
 
 pub use cue_generator::CueGenerator;
 pub use drive::{CdDrive, CdDriveError, CdToc};
 pub use ffi::{detect_drives, LibcdioDrive, LibcdioError};
 pub use log_generator::LogGenerator;
+pub use paranoia::{ParanoiaError, ParanoiaReader};
 pub use ripper::{CdRipper, RipProgress, RipResult};
