@@ -43,10 +43,21 @@ impl LibcdioDrive {
             let device =
                 libcdio_sys::cdio_open(c_path.as_ptr(), libcdio_sys::driver_id_t_DRIVER_DEVICE);
             if device.is_null() {
-                return Err(LibcdioError::Libcdio(format!(
-                    "Failed to open device: {}",
-                    path_str
-                )));
+                // On macOS, permission errors are common without Full Disk Access
+                #[cfg(target_os = "macos")]
+                {
+                    return Err(LibcdioError::Libcdio(format!(
+                        "Failed to open device: {} (may need Full Disk Access permission in System Settings)",
+                        path_str
+                    )));
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    return Err(LibcdioError::Libcdio(format!(
+                        "Failed to open device: {}",
+                        path_str
+                    )));
+                }
             }
 
             Ok(Self {
@@ -238,18 +249,41 @@ pub fn detect_drives() -> Result<Vec<PathBuf>, LibcdioError> {
 
         #[cfg(target_os = "macos")]
         {
-            // macOS uses /dev/disk* for CD drives
+            // macOS uses /dev/rdisk* (raw disk) for CD drives
+            // Prefer rdisk* over disk* as raw devices are required for CD access
             use std::fs;
             if let Ok(entries) = fs::read_dir("/dev") {
+                let mut rdisk_paths = Vec::new();
+                let mut disk_paths = Vec::new();
+
                 for entry in entries.flatten() {
                     let path = entry.path();
                     if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        if name.starts_with("disk") && name.len() > 4 {
-                            // Try to open it
-                            if LibcdioDrive::open(&path).is_ok() {
-                                if !drives.contains(&path) {
-                                    drives.push(path);
-                                }
+                        // Prefer rdisk* devices (raw disk)
+                        if name.starts_with("rdisk") && name.len() > 5 {
+                            rdisk_paths.push(path);
+                        } else if name.starts_with("disk") && name.len() > 4 {
+                            disk_paths.push(path);
+                        }
+                    }
+                }
+
+                // Try rdisk* first (raw devices work better for CD access)
+                for path in rdisk_paths {
+                    // Silently try to open - permission errors are expected without Full Disk Access
+                    if LibcdioDrive::open(&path).is_ok() {
+                        if !drives.contains(&path) {
+                            drives.push(path);
+                        }
+                    }
+                }
+
+                // Fall back to disk* if no rdisk* devices worked
+                if drives.is_empty() {
+                    for path in disk_paths {
+                        if LibcdioDrive::open(&path).is_ok() {
+                            if !drives.contains(&path) {
+                                drives.push(path);
                             }
                         }
                     }

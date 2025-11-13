@@ -22,7 +22,21 @@ pub fn CdRipper(on_drive_select: EventHandler<PathBuf>, on_error: EventHandler<S
                     drives.set(detected_drives);
                 }
                 Err(e) => {
-                    on_error.call(format!("Failed to detect CD drives: {}", e));
+                    #[cfg(target_os = "macos")]
+                    {
+                        let error_msg = if e.to_string().contains("Permission denied")
+                            || e.to_string().contains("Operation not permitted")
+                        {
+                            format!("Failed to access CD drive: {}\n\nOn macOS, you may need to grant Full Disk Access permission:\n1. Open System Settings → Privacy & Security → Full Disk Access\n2. Add this application to the list", e)
+                        } else {
+                            format!("Failed to detect CD drives: {}", e)
+                        };
+                        on_error.call(error_msg);
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        on_error.call(format!("Failed to detect CD drives: {}", e));
+                    }
                 }
             }
             is_scanning.set(false);
