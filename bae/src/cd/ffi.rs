@@ -251,6 +251,7 @@ pub fn detect_drives() -> Result<Vec<PathBuf>, LibcdioError> {
         {
             // macOS uses /dev/rdisk* (raw disk) for CD drives
             // Prefer rdisk* over disk* as raw devices are required for CD access
+            // Filter out partition devices (rdisk8s1, rdisk8s2, etc.) - only try base devices
             use std::fs;
             if let Ok(entries) = fs::read_dir("/dev") {
                 let mut rdisk_paths = Vec::new();
@@ -259,10 +260,11 @@ pub fn detect_drives() -> Result<Vec<PathBuf>, LibcdioError> {
                 for entry in entries.flatten() {
                     let path = entry.path();
                     if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        // Prefer rdisk* devices (raw disk)
-                        if name.starts_with("rdisk") && name.len() > 5 {
+                        // Prefer rdisk* devices (raw disk), but exclude partitions (rdisk8s1, etc.)
+                        if name.starts_with("rdisk") && name.len() > 5 && !name.contains('s') {
                             rdisk_paths.push(path);
-                        } else if name.starts_with("disk") && name.len() > 4 {
+                        } else if name.starts_with("disk") && name.len() > 4 && !name.contains('s')
+                        {
                             disk_paths.push(path);
                         }
                     }
