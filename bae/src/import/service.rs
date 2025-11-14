@@ -95,9 +95,6 @@ impl ImportService {
         let (commands_tx, commands_rx) = mpsc::unbounded_channel();
         let (progress_tx, progress_rx) = mpsc::unbounded_channel();
 
-        // Clone progress_tx for the handle (before moving it into the service)
-        let progress_tx_for_handle = progress_tx.clone();
-
         // Clone library_manager and cache_manager for the thread
         let library_manager_for_worker = library_manager.clone();
         let cache_manager_for_worker = cache_manager.clone();
@@ -141,13 +138,7 @@ impl ImportService {
             });
         });
 
-        ImportHandle::new(
-            commands_tx,
-            progress_tx_for_handle,
-            progress_rx,
-            library_manager,
-            runtime_handle,
-        )
+        ImportHandle::new(commands_tx, progress_rx, library_manager, runtime_handle)
     }
 
     async fn do_import(&self, command: ImportCommand) {

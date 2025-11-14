@@ -20,7 +20,6 @@ use tracing::{debug, info, warn};
 #[derive(Clone)]
 pub struct ImportHandle {
     pub requests_tx: mpsc::UnboundedSender<ImportCommand>,
-    progress_tx: mpsc::UnboundedSender<ImportProgress>,
     pub progress_handle: ImportProgressHandle,
     pub library_manager: SharedLibraryManager,
     pub runtime_handle: tokio::runtime::Handle,
@@ -43,7 +42,6 @@ impl ImportHandle {
     /// Create a new ImportHandle with the given dependencies
     pub fn new(
         requests_tx: mpsc::UnboundedSender<ImportCommand>,
-        progress_tx: mpsc::UnboundedSender<ImportProgress>,
         progress_rx: mpsc::UnboundedReceiver<ImportProgress>,
         library_manager: SharedLibraryManager,
         runtime_handle: tokio::runtime::Handle,
@@ -54,7 +52,6 @@ impl ImportHandle {
 
         Self {
             requests_tx,
-            progress_tx,
             progress_handle,
             library_manager,
             runtime_handle,
