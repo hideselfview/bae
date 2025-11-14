@@ -78,7 +78,7 @@ impl ImportHandle {
                 folder,
                 master_year,
             } => {
-                self.handle_folder_request(discogs_release, mb_release, folder, master_year)
+                self.send_folder_request(discogs_release, mb_release, folder, master_year)
                     .await
             }
             ImportRequest::Torrent {
@@ -88,7 +88,7 @@ impl ImportHandle {
                 master_year,
                 seed_after_download,
             } => {
-                self.handle_torrent_request(
+                self.send_torrent_request(
                     torrent_source,
                     discogs_release,
                     mb_release,
@@ -103,13 +103,13 @@ impl ImportHandle {
                 drive_path,
                 master_year,
             } => {
-                self.handle_cd_request(discogs_release, mb_release, drive_path, master_year)
+                self.send_cd_request(discogs_release, mb_release, drive_path, master_year)
                     .await
             }
         }
     }
 
-    async fn handle_folder_request(
+    async fn send_folder_request(
         &self,
         discogs_release: Option<DiscogsRelease>,
         mb_release: Option<MbRelease>,
@@ -227,7 +227,7 @@ impl ImportHandle {
         Ok((album_id, release_id))
     }
 
-    async fn handle_torrent_request(
+    async fn send_torrent_request(
         &self,
         torrent_source: TorrentSource,
         discogs_release: Option<DiscogsRelease>,
@@ -477,7 +477,7 @@ impl ImportHandle {
         Ok((album_id, release_id))
     }
 
-    async fn handle_cd_request(
+    async fn send_cd_request(
         &self,
         discogs_release: Option<DiscogsRelease>,
         mb_release: Option<MbRelease>,
