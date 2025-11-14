@@ -17,40 +17,25 @@ pub fn TorrentImport() -> Element {
     let import_service = use_import_service();
     let navigator = use_navigator();
 
-    // Copy signals out of Rc (signals are Copy)
-    let folder_path = import_context.folder_path;
-    let detected_metadata = import_context.detected_metadata;
-    let import_phase = import_context.import_phase;
-    let exact_match_candidates = import_context.exact_match_candidates;
-    let selected_match_index = import_context.selected_match_index;
-    let confirmed_candidate = import_context.confirmed_candidate;
-    let is_detecting = import_context.is_detecting;
-    let is_looking_up = import_context.is_looking_up;
-    let import_error_message = import_context.import_error_message;
-    let duplicate_album_id = import_context.duplicate_album_id;
-    let search_query = import_context.search_query;
-    let folder_files = import_context.folder_files;
-    let torrent_source = use_signal(|| None::<crate::import::TorrentSource>);
-    let seed_after_download = use_signal(|| true);
-
     let on_torrent_file_select = {
-        let import_context_for_metadata = import_context.clone();
-        let mut folder_path = folder_path;
-        let mut detected_metadata = detected_metadata;
-        let mut exact_match_candidates = exact_match_candidates;
-        let mut selected_match_index = selected_match_index;
-        let mut confirmed_candidate = confirmed_candidate;
-        let mut import_error_message = import_error_message;
-        let mut duplicate_album_id = duplicate_album_id;
-        let mut import_phase = import_phase;
-        let mut is_detecting = is_detecting;
-        let mut torrent_source_signal = torrent_source;
-        let mut seed_after_download_signal = seed_after_download;
-
+        let import_context = import_context.clone();
         move |(path, seed_flag): (PathBuf, bool)| {
+            // Extract signals from cloned context (signals are Copy)
+            let mut torrent_source = import_context.torrent_source;
+            let mut seed_after_download = import_context.seed_after_download;
+            let mut folder_path = import_context.folder_path;
+            let mut detected_metadata = import_context.detected_metadata;
+            let mut exact_match_candidates = import_context.exact_match_candidates;
+            let mut selected_match_index = import_context.selected_match_index;
+            let mut confirmed_candidate = import_context.confirmed_candidate;
+            let mut import_error_message = import_context.import_error_message;
+            let mut duplicate_album_id = import_context.duplicate_album_id;
+            let mut import_phase = import_context.import_phase;
+            let mut is_detecting = import_context.is_detecting;
+
             // Store torrent source and seed flag
-            torrent_source_signal.set(Some(crate::import::TorrentSource::File(path.clone())));
-            seed_after_download_signal.set(seed_flag);
+            torrent_source.set(Some(crate::import::TorrentSource::File(path.clone())));
+            seed_after_download.set(seed_flag);
 
             // Reset state
             folder_path.set(path.to_string_lossy().to_string());
@@ -64,12 +49,9 @@ pub fn TorrentImport() -> Element {
             is_detecting.set(true);
 
             // Clone everything needed for spawn (to keep closure FnMut)
-            let mut is_detecting = is_detecting;
-            let mut import_phase = import_phase;
-            let mut import_error_message = import_error_message;
-            let mut folder_files = folder_files;
-            let import_context_for_async = import_context_for_metadata.clone();
-            let client_for_torrent = import_context_for_metadata.torrent_client_default();
+            let mut folder_files = import_context.folder_files;
+            let import_context_for_async = import_context.clone();
+            let client_for_torrent = import_context.torrent_client_default();
             let path = path.clone();
 
             spawn(async move {
@@ -85,7 +67,7 @@ pub fn TorrentImport() -> Element {
                     }
                 };
 
-                // Wait for metadata (should be immediate for torrent files, but needed for consistency)
+                // Wait for metadata (immediate for torrent files, but keeps code path consistent with magnet links)
                 if let Err(e) = torrent_handle.wait_for_metadata().await {
                     import_error_message
                         .set(Some(format!("Failed to get torrent metadata: {}", e)));
@@ -209,27 +191,26 @@ pub fn TorrentImport() -> Element {
     };
 
     let on_torrent_error = {
-        let mut import_error_message = import_error_message;
+        let import_context = import_context.clone();
         move |error: String| {
+            let mut import_error_message = import_context.import_error_message;
             import_error_message.set(Some(error));
         }
     };
 
     let on_confirm_from_manual = {
-        let import_context_for_reset = import_context.clone();
+        let import_context = import_context.clone();
         let library_manager = library_manager.clone();
         let import_service = import_service.clone();
-        let torrent_source_signal = torrent_source;
-        let seed_after_download_signal = seed_after_download;
         move |candidate: MatchCandidate| {
-            let folder = folder_path.read().clone();
-            let metadata = detected_metadata.read().clone();
-            let torrent_source_opt = torrent_source_signal.read().clone();
-            let seed_flag = *seed_after_download_signal.read();
+            let folder = import_context.folder_path.read().clone();
+            let metadata = import_context.detected_metadata.read().clone();
+            let torrent_source_opt = import_context.torrent_source.read().clone();
+            let seed_flag = *import_context.seed_after_download.read();
             let import_service = import_service.clone();
-            let duplicate_album_id = duplicate_album_id;
-            let import_error_message = import_error_message;
-            let import_context_for_reset = import_context_for_reset.clone();
+            let duplicate_album_id = import_context.duplicate_album_id;
+            let import_error_message = import_context.import_error_message;
+            let import_context_for_reset = import_context.clone();
             let library_manager = library_manager.clone();
 
             spawn(async move {
@@ -261,7 +242,7 @@ pub fn TorrentImport() -> Element {
 
     // Check if there are .cue files available for metadata detection (computed before rsx!)
     let has_cue_files_for_manual = {
-        let files = folder_files.read();
+        let files = import_context.folder_files.read();
         let result = files
             .iter()
             .any(|f| f.format.to_lowercase() == "cue" || f.format.to_lowercase() == "log");
@@ -272,7 +253,7 @@ pub fn TorrentImport() -> Element {
     rsx! {
         div { class: "space-y-6",
             // Phase 1: Torrent Selection
-            if *import_phase.read() == ImportPhase::FolderSelection {
+            if *import_context.import_phase.read() == ImportPhase::FolderSelection {
                 div { class: "bg-white rounded-lg shadow p-6",
                     TorrentInput {
                         on_file_select: on_torrent_file_select,
@@ -298,21 +279,23 @@ pub fn TorrentImport() -> Element {
                             div { class: "inline-block px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-full border border-gray-300 transition-colors",
                                 p {
                                     class: "text-sm text-gray-900 font-mono select-text cursor-text break-all",
-                                    "{folder_path.read()}"
+                                    "{import_context.folder_path.read()}"
                                 }
                             }
                         }
 
-                        if *is_detecting.read() {
+                        if *import_context.is_detecting.read() {
                             div { class: "text-center py-8",
                                 p { class: "text-gray-600 mb-4", "Downloading metadata files (CUE/log)..." }
                                 button {
                                     class: "px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded transition-colors",
                                     onclick: {
-                                        let mut is_detecting = is_detecting;
-                                        let mut search_query = search_query;
-                                        let mut import_phase = import_phase;
+                                        let import_context = import_context.clone();
                                         move |_| {
+                                            let mut is_detecting = import_context.is_detecting;
+                                            let mut search_query = import_context.search_query;
+                                            let mut import_phase = import_context.import_phase;
+                                            let folder_path = import_context.folder_path;
                                             is_detecting.set(false);
                                             // Use current search query (already set to torrent name) or folder path
                                             if search_query.read().is_empty() {
@@ -327,31 +310,34 @@ pub fn TorrentImport() -> Element {
                                     "Skip and search manually"
                                 }
                             }
-                        } else if !folder_files.read().is_empty() {
+                        } else if !import_context.folder_files.read().is_empty() {
                             div { class: "mt-4",
                                 h4 { class: "text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3", "Files" }
                                 FileList {
-                                    files: folder_files.read().clone(),
+                                    files: import_context.folder_files.read().clone(),
                                 }
                             }
                         }
                     }
 
                     // Phase 2: Exact Lookup
-                    if *import_phase.read() == ImportPhase::ExactLookup {
+                    if *import_context.import_phase.read() == ImportPhase::ExactLookup {
                         ExactLookup {
-                            is_looking_up: is_looking_up,
-                            exact_match_candidates: exact_match_candidates,
-                            selected_match_index: selected_match_index,
+                            is_looking_up: import_context.is_looking_up,
+                            exact_match_candidates: import_context.exact_match_candidates,
+                            selected_match_index: import_context.selected_match_index,
                             on_select: {
-                                let mut selected_match_index_local = selected_match_index;
-                                let mut confirmed_candidate_local = confirmed_candidate;
-                                let mut import_phase_local = import_phase;
+                                let import_context = import_context.clone();
                                 move |index| {
-                                    selected_match_index_local.set(Some(index));
-                                    if let Some(candidate) = exact_match_candidates.read().get(index) {
-                                        confirmed_candidate_local.set(Some(candidate.clone()));
-                                        import_phase_local.set(ImportPhase::Confirmation);
+                                    let mut selected_match_index = import_context.selected_match_index;
+                                    let mut confirmed_candidate = import_context.confirmed_candidate;
+                                    let mut import_phase = import_context.import_phase;
+                                    let exact_match_candidates = import_context.exact_match_candidates;
+                                    selected_match_index.set(Some(index));
+                                    let candidate_opt = exact_match_candidates.read().get(index).cloned();
+                                    if let Some(candidate) = candidate_opt {
+                                        confirmed_candidate.set(Some(candidate));
+                                        import_phase.set(ImportPhase::Confirmation);
                                     }
                                 }
                             },
@@ -359,8 +345,8 @@ pub fn TorrentImport() -> Element {
                     }
 
                     // Phase 3: Manual Search
-                    if *import_phase.read() == ImportPhase::ManualSearch {
-                        if has_cue_files_for_manual && detected_metadata.read().is_none() && !*is_detecting.read() {
+                    if *import_context.import_phase.read() == ImportPhase::ManualSearch {
+                        if has_cue_files_for_manual && import_context.detected_metadata.read().is_none() && !*import_context.is_detecting.read() {
                             div { class: "bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4",
                                 div { class: "flex items-center justify-between",
                                     div { class: "flex-1",
@@ -374,15 +360,16 @@ pub fn TorrentImport() -> Element {
                                     button {
                                         class: "px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition-colors",
                                         onclick: {
+                                            let import_context = import_context.clone();
                                             move |_| {
-                                                let path = folder_path.read().clone();
-                                                let mut is_detecting_for_async = is_detecting;
-                                                let detected_metadata_for_async = detected_metadata;
-                                                let is_looking_up_for_async = is_looking_up;
-                                                let exact_match_candidates_for_async = exact_match_candidates;
-                                                let search_query_for_async = search_query;
-                                                let import_phase_for_async = import_phase;
-                                                let confirmed_candidate_for_async = confirmed_candidate;
+                                                let path = import_context.folder_path.read().clone();
+                                                let mut is_detecting_for_async = import_context.is_detecting;
+                                                let detected_metadata_for_async = import_context.detected_metadata;
+                                                let is_looking_up_for_async = import_context.is_looking_up;
+                                                let exact_match_candidates_for_async = import_context.exact_match_candidates;
+                                                let search_query_for_async = import_context.search_query;
+                                                let import_phase_for_async = import_context.import_phase;
+                                                let confirmed_candidate_for_async = import_context.confirmed_candidate;
                                                 let client_for_manual = import_context.torrent_client_default();
 
                                                 is_detecting_for_async.set(true);
@@ -436,14 +423,15 @@ pub fn TorrentImport() -> Element {
                             }
                         }
 
-                        if *is_detecting.read() {
+                        if *import_context.is_detecting.read() {
                             div { class: "bg-white rounded-lg shadow p-6 text-center mb-4",
                                 p { class: "text-gray-600 mb-4", "Downloading and analyzing metadata files (CUE/log)..." }
                                 button {
                                     class: "px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded transition-colors",
                                     onclick: {
-                                        let mut is_detecting = is_detecting;
+                                        let import_context = import_context.clone();
                                         move |_| {
+                                            let mut is_detecting = import_context.is_detecting;
                                             is_detecting.set(false);
                                         }
                                     },
@@ -453,39 +441,44 @@ pub fn TorrentImport() -> Element {
                         }
 
                         ManualSearch {
-                            detected_metadata: detected_metadata,
-                            selected_match_index: selected_match_index,
+                            detected_metadata: import_context.detected_metadata,
+                            selected_match_index: import_context.selected_match_index,
                             on_match_select: {
-                                let mut selected_match_index_local = selected_match_index;
+                                let import_context = import_context.clone();
                                 move |index| {
-                                    selected_match_index_local.set(Some(index));
+                                    let mut selected_match_index = import_context.selected_match_index;
+                                    selected_match_index.set(Some(index));
                                 }
                             },
                             on_confirm: {
-                                let mut confirmed_candidate_local = confirmed_candidate;
-                                let mut import_phase_local = import_phase;
+                                let import_context = import_context.clone();
                                 move |candidate: MatchCandidate| {
-                                    confirmed_candidate_local.set(Some(candidate.clone()));
-                                    import_phase_local.set(ImportPhase::Confirmation);
+                                    let mut confirmed_candidate = import_context.confirmed_candidate;
+                                    let mut import_phase = import_context.import_phase;
+                                    confirmed_candidate.set(Some(candidate.clone()));
+                                    import_phase.set(ImportPhase::Confirmation);
                                 }
                             },
                         }
                     }
 
                     // Phase 4: Confirmation
-                    if *import_phase.read() == ImportPhase::Confirmation {
+                    if *import_context.import_phase.read() == ImportPhase::Confirmation {
                         Confirmation {
-                            confirmed_candidate: confirmed_candidate,
+                            confirmed_candidate: import_context.confirmed_candidate,
                             on_edit: {
-                                let mut confirmed_candidate_local = confirmed_candidate;
-                                let mut selected_match_index_local = selected_match_index;
-                                let mut import_phase_local = import_phase;
-                                let mut search_query_local = search_query;
+                                let import_context = import_context.clone();
                                 move || {
-                                    confirmed_candidate_local.set(None);
-                                    selected_match_index_local.set(None);
+                                    let mut confirmed_candidate = import_context.confirmed_candidate;
+                                    let mut selected_match_index = import_context.selected_match_index;
+                                    let mut import_phase = import_context.import_phase;
+                                    let mut search_query = import_context.search_query;
+                                    let exact_match_candidates = import_context.exact_match_candidates;
+                                    let detected_metadata = import_context.detected_metadata;
+                                    confirmed_candidate.set(None);
+                                    selected_match_index.set(None);
                                     if !exact_match_candidates.read().is_empty() {
-                                        import_phase_local.set(ImportPhase::ExactLookup);
+                                        import_phase.set(ImportPhase::ExactLookup);
                                     } else {
                                         // Initialize search query from detected metadata when transitioning to manual search
                                         if let Some(metadata) = detected_metadata.read().as_ref() {
@@ -497,17 +490,18 @@ pub fn TorrentImport() -> Element {
                                                 query_parts.push(album.clone());
                                             }
                                             if !query_parts.is_empty() {
-                                                search_query_local.set(query_parts.join(" "));
+                                                search_query.set(query_parts.join(" "));
                                             }
                                         }
-                                        import_phase_local.set(ImportPhase::ManualSearch);
+                                        import_phase.set(ImportPhase::ManualSearch);
                                     }
                                 }
                             },
                             on_confirm: {
                                 let on_confirm_from_manual_local = on_confirm_from_manual;
+                                let import_context = import_context.clone();
                                 move || {
-                                    if let Some(candidate) = confirmed_candidate.read().as_ref().cloned() {
+                                    if let Some(candidate) = import_context.confirmed_candidate.read().as_ref().cloned() {
                                         on_confirm_from_manual_local(candidate);
                                     }
                                 }
@@ -517,8 +511,8 @@ pub fn TorrentImport() -> Element {
 
                     // Error messages
                     ErrorDisplay {
-                        error_message: import_error_message,
-                        duplicate_album_id: duplicate_album_id,
+                        error_message: import_context.import_error_message,
+                        duplicate_album_id: import_context.duplicate_album_id,
                     }
                 }
             }

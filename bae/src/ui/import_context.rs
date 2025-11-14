@@ -46,6 +46,9 @@ pub struct ImportContext {
     pub import_error_message: Signal<Option<String>>,
     pub duplicate_album_id: Signal<Option<String>>,
     pub folder_files: Signal<Vec<FileInfo>>,
+    // Torrent-specific state
+    pub torrent_source: Signal<Option<crate::import::TorrentSource>>,
+    pub seed_after_download: Signal<bool>,
     client: DiscogsClient,
     /// Shared torrent client with default storage for metadata detection
     /// Sessions are heavy, so we create one and reuse it for all metadata detection operations
@@ -77,6 +80,8 @@ impl ImportContext {
             import_error_message: Signal::new(None),
             duplicate_album_id: Signal::new(None),
             folder_files: Signal::new(Vec::new()),
+            torrent_source: Signal::new(None),
+            seed_after_download: Signal::new(true),
             client: DiscogsClient::new(config.discogs_api_key.clone()),
             torrent_client_default: {
                 use tokio::runtime::Handle;
@@ -124,6 +129,8 @@ impl ImportContext {
         let mut import_error_message = self.import_error_message;
         let mut duplicate_album_id = self.duplicate_album_id;
         let mut folder_files = self.folder_files;
+        let mut torrent_source = self.torrent_source;
+        let mut seed_after_download = self.seed_after_download;
 
         folder_path.set(String::new());
         detected_metadata.set(None);
@@ -136,6 +143,8 @@ impl ImportContext {
         import_error_message.set(None);
         duplicate_album_id.set(None);
         folder_files.set(Vec::new());
+        torrent_source.set(None);
+        seed_after_download.set(true);
     }
 
     pub async fn detect_folder_metadata(
