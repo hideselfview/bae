@@ -151,18 +151,53 @@ impl ImportService {
     }
 
     async fn do_import(&self, command: ImportCommand) {
-        let result = match &command {
-            ImportCommand::Folder { db_album, .. } => {
+        let result = match command {
+            ImportCommand::Folder {
+                db_album,
+                db_release,
+                tracks_to_files,
+                discovered_files,
+                cue_flac_metadata,
+            } => {
                 info!("Starting folder import pipeline for '{}'", db_album.title);
-                self.import_album_from_folder(command).await
+                self.import_album_from_folder(
+                    db_album,
+                    db_release,
+                    tracks_to_files,
+                    discovered_files,
+                    cue_flac_metadata,
+                )
+                .await
             }
-            ImportCommand::Torrent { db_album, .. } => {
+            ImportCommand::Torrent {
+                db_album,
+                db_release,
+                tracks_to_files,
+                torrent_source,
+                torrent_metadata,
+                seed_after_download,
+            } => {
                 info!("Starting torrent import pipeline for '{}'", db_album.title);
-                self.import_album_from_torrent(command).await
+                self.import_album_from_torrent(
+                    db_album,
+                    db_release,
+                    tracks_to_files,
+                    torrent_source,
+                    torrent_metadata,
+                    seed_after_download,
+                )
+                .await
             }
-            ImportCommand::CD { db_album, .. } => {
+            ImportCommand::CD {
+                db_album,
+                db_release,
+                db_tracks,
+                drive_path,
+                toc,
+            } => {
                 info!("Starting CD import pipeline for '{}'", db_album.title);
-                self.import_album_from_cd(command).await
+                self.import_album_from_cd(db_album, db_release, db_tracks, drive_path, toc)
+                    .await
             }
         };
 
@@ -178,19 +213,17 @@ impl ImportService {
     /// 1. Marks the album as 'importing'
     /// 2. Streams files → encrypts → uploads (no upfront layout computation)
     /// 3. After upload: computes layout, persists metadata, marks complete
-    async fn import_album_from_folder(&self, command: ImportCommand) -> Result<(), String> {
+    async fn import_album_from_folder(
+        &self,
+        db_album: crate::db::DbAlbum,
+        db_release: crate::db::DbRelease,
+        tracks_to_files: Vec<crate::import::types::TrackFile>,
+        discovered_files: Vec<crate::import::types::DiscoveredFile>,
+        cue_flac_metadata: Option<
+            std::collections::HashMap<std::path::PathBuf, crate::import::types::CueFlacMetadata>,
+        >,
+    ) -> Result<(), String> {
         let library_manager = self.library_manager.get();
-
-        let ImportCommand::Folder {
-            db_album,
-            db_release,
-            tracks_to_files,
-            discovered_files,
-            cue_flac_metadata,
-        } = command
-        else {
-            return Err("Expected FolderImport command".to_string());
-        };
 
         // Mark release as importing now that pipeline is starting
         library_manager
@@ -233,20 +266,16 @@ impl ImportService {
     /// 2. Streams torrent pieces → chunks → encrypts → uploads (no upfront layout computation)
     /// 3. After torrent completes: extracts FLAC headers, builds seektable, computes layout
     /// 4. Persists metadata and marks album complete.
-    async fn import_album_from_torrent(&self, command: ImportCommand) -> Result<(), String> {
+    async fn import_album_from_torrent(
+        &self,
+        db_album: crate::db::DbAlbum,
+        db_release: crate::db::DbRelease,
+        tracks_to_files: Vec<crate::import::types::TrackFile>,
+        torrent_source: crate::import::types::TorrentSource,
+        torrent_metadata: crate::import::handle::TorrentImportMetadata,
+        _seed_after_download: bool,
+    ) -> Result<(), String> {
         let library_manager = self.library_manager.get();
-
-        let ImportCommand::Torrent {
-            db_album,
-            db_release,
-            tracks_to_files,
-            torrent_source,
-            torrent_metadata,
-            seed_after_download: _,
-        } = command
-        else {
-            return Err("Expected TorrentImport command".to_string());
-        };
 
         // Mark release as importing now that pipeline is starting
         library_manager
@@ -604,19 +633,15 @@ impl ImportService {
     /// 3. **Chunk phase**: Stream ripped files → encrypts → uploads
     /// 4. After upload: persists metadata, marks complete
     /// 5. Cleans up temporary directory
-    async fn import_album_from_cd(&self, command: ImportCommand) -> Result<(), String> {
+    async fn import_album_from_cd(
+        &self,
+        db_album: crate::db::DbAlbum,
+        db_release: crate::db::DbRelease,
+        db_tracks: Vec<crate::db::DbTrack>,
+        drive_path: std::path::PathBuf,
+        toc: crate::cd::drive::CdToc,
+    ) -> Result<(), String> {
         let library_manager = self.library_manager.get();
-
-        let ImportCommand::CD {
-            db_album,
-            db_release,
-            db_tracks,
-            drive_path,
-            toc,
-        } = command
-        else {
-            return Err("Expected CdImport command".to_string());
-        };
 
         // Mark release as importing now that pipeline is starting
         library_manager
