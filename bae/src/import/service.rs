@@ -447,184 +447,6 @@ impl ImportService {
         Ok(())
     }
 
-    /// Run the chunk phase: compute layout, stream chunks, upload, and persist metadata.
-    ///
-    /// This is the common chunk upload phase used by all import types after data acquisition.
-    /// For folder imports, this runs immediately (no acquire phase).
-    /// For CD/torrent imports, this runs after the acquire phase completes.
-    async fn run_chunk_phase(
-        &self,
-        db_release: &crate::db::DbRelease,
-        tracks_to_files: &[crate::import::types::TrackFile],
-        discovered_files: &[crate::import::types::DiscoveredFile],
-        cue_flac_metadata: Option<
-            std::collections::HashMap<std::path::PathBuf, crate::import::types::CueFlacMetadata>,
-        >,
-    ) -> Result<(), String> {
-        let library_manager = self.library_manager.get();
-
-        // ========== COMPUTE LAYOUT FIRST ==========
-        // Compute the layout before streaming so we have accurate progress tracking
-
-        let chunk_layout = AlbumChunkLayout::build(
-            discovered_files.to_vec(),
-            tracks_to_files,
-            self.config.chunk_size_bytes,
-            cue_flac_metadata.clone(),
-        )?;
-
-        // ========== STREAMING PIPELINE ==========
-        // Stream chunks with accurate progress tracking
-
-        let progress_tracker = ImportProgressTracker::new(
-            db_release.id.clone(),
-            chunk_layout.total_chunks,
-            chunk_layout.chunk_to_track.clone(),
-            chunk_layout.track_chunk_counts.clone(),
-            self.progress_tx.clone(),
-        );
-
-        let (pipeline, chunk_tx) = pipeline::build_import_pipeline(
-            self.config.clone(),
-            db_release.id.clone(),
-            self.encryption_service.clone(),
-            self.cloud_storage.clone(),
-            library_manager.clone(),
-            progress_tracker,
-            tracks_to_files.to_vec(),
-            chunk_layout.files_to_chunks.clone(),
-            self.config.chunk_size_bytes,
-            chunk_layout.cue_flac_data.clone(),
-        );
-
-        // Use file producer
-        let files_to_chunks_for_producer: Vec<crate::import::types::FileToChunks> =
-            discovered_files
-                .iter()
-                .map(|f| crate::import::types::FileToChunks {
-                    file_path: f.path.clone(),
-                    start_chunk_index: 0, // Unused by producer
-                    end_chunk_index: 0,   // Unused by producer
-                    start_byte_offset: 0, // Unused by producer
-                    end_byte_offset: 0,   // Unused by producer
-                })
-                .collect();
-
-        tokio::spawn(pipeline::chunk_producer::produce_chunk_stream_from_files(
-            files_to_chunks_for_producer,
-            self.config.chunk_size_bytes,
-            chunk_tx,
-        ));
-
-        // Wait for the pipeline to complete
-        let results: Vec<_> = pipeline.collect().await;
-
-        // Check for errors
-        for result in results {
-            result?;
-        }
-
-        info!("All chunks uploaded successfully, persisting metadata...");
-
-        // ========== PERSIST METADATA ==========
-        // Layout already computed at the beginning, just persist it now
-
-        self.persist_metadata_from_layout(
-            library_manager,
-            &db_release.id,
-            tracks_to_files,
-            &chunk_layout.files_to_chunks,
-            &chunk_layout.cue_flac_data,
-        )
-        .await?;
-
-        Ok(())
-    }
-
-    /// Persist metadata from an already-computed chunk layout.
-    ///
-    /// Used by folder imports where layout is computed upfront for accurate progress tracking.
-    async fn persist_metadata_from_layout(
-        &self,
-        library_manager: &crate::library::LibraryManager,
-        release_id: &str,
-        tracks_to_files: &[crate::import::types::TrackFile],
-        files_to_chunks: &[crate::import::types::FileToChunks],
-        cue_flac_data: &std::collections::HashMap<
-            std::path::PathBuf,
-            crate::import::types::CueFlacLayoutData,
-        >,
-    ) -> Result<(), String> {
-        // Persist track metadata for all tracks
-        let persister = MetadataPersister::new(library_manager);
-        for track_file in tracks_to_files {
-            persister
-                .persist_track_metadata(
-                    release_id,
-                    &track_file.db_track_id,
-                    tracks_to_files,
-                    files_to_chunks,
-                    self.config.chunk_size_bytes,
-                    cue_flac_data,
-                )
-                .await
-                .map_err(|e| format!("Failed to persist track metadata: {}", e))?;
-
-            // Mark track complete
-            library_manager
-                .mark_track_complete(&track_file.db_track_id)
-                .await
-                .map_err(|e| format!("Failed to mark track complete: {}", e))?;
-        }
-
-        // Persist release-level metadata
-        persister
-            .persist_release_metadata(release_id, tracks_to_files, files_to_chunks)
-            .await?;
-
-        // Mark release complete
-        library_manager
-            .mark_release_complete(release_id)
-            .await
-            .map_err(|e| format!("Failed to mark release complete: {}", e))?;
-
-        Ok(())
-    }
-
-    /// Compute chunk layout and persist all metadata after chunk upload completes.
-    ///
-    /// Used by torrent imports where layout can't be computed upfront.
-    /// Called after all chunks have been uploaded to cloud storage. Computes layout,
-    /// persists track metadata, persists release metadata, and marks the release complete.
-    async fn compute_layout_and_persist_metadata(
-        &self,
-        library_manager: &crate::library::LibraryManager,
-        release_id: &str,
-        tracks_to_files: &[crate::import::types::TrackFile],
-        discovered_files: &[crate::import::types::DiscoveredFile],
-        cue_flac_metadata: Option<
-            std::collections::HashMap<std::path::PathBuf, crate::import::types::CueFlacMetadata>,
-        >,
-    ) -> Result<(), String> {
-        // Compute chunk layout
-        let chunk_layout = AlbumChunkLayout::build(
-            discovered_files.to_vec(),
-            tracks_to_files,
-            self.config.chunk_size_bytes,
-            cue_flac_metadata,
-        )?;
-
-        // Persist using the computed layout
-        self.persist_metadata_from_layout(
-            library_manager,
-            release_id,
-            tracks_to_files,
-            &chunk_layout.files_to_chunks,
-            &chunk_layout.cue_flac_data,
-        )
-        .await
-    }
-
     /// Executes the streaming import pipeline for a CD-based import.
     ///
     /// Orchestrates the entire import workflow:
@@ -817,6 +639,184 @@ impl ImportService {
 
         info!("CD import completed successfully for {}", db_album.title);
         Ok(())
+    }
+
+    /// Run the chunk phase: compute layout, stream chunks, upload, and persist metadata.
+    ///
+    /// This is the common chunk upload phase used by all import types after data acquisition.
+    /// For folder imports, this runs immediately (no acquire phase).
+    /// For CD/torrent imports, this runs after the acquire phase completes.
+    async fn run_chunk_phase(
+        &self,
+        db_release: &crate::db::DbRelease,
+        tracks_to_files: &[crate::import::types::TrackFile],
+        discovered_files: &[crate::import::types::DiscoveredFile],
+        cue_flac_metadata: Option<
+            std::collections::HashMap<std::path::PathBuf, crate::import::types::CueFlacMetadata>,
+        >,
+    ) -> Result<(), String> {
+        let library_manager = self.library_manager.get();
+
+        // ========== COMPUTE LAYOUT FIRST ==========
+        // Compute the layout before streaming so we have accurate progress tracking
+
+        let chunk_layout = AlbumChunkLayout::build(
+            discovered_files.to_vec(),
+            tracks_to_files,
+            self.config.chunk_size_bytes,
+            cue_flac_metadata.clone(),
+        )?;
+
+        // ========== STREAMING PIPELINE ==========
+        // Stream chunks with accurate progress tracking
+
+        let progress_tracker = ImportProgressTracker::new(
+            db_release.id.clone(),
+            chunk_layout.total_chunks,
+            chunk_layout.chunk_to_track.clone(),
+            chunk_layout.track_chunk_counts.clone(),
+            self.progress_tx.clone(),
+        );
+
+        let (pipeline, chunk_tx) = pipeline::build_import_pipeline(
+            self.config.clone(),
+            db_release.id.clone(),
+            self.encryption_service.clone(),
+            self.cloud_storage.clone(),
+            library_manager.clone(),
+            progress_tracker,
+            tracks_to_files.to_vec(),
+            chunk_layout.files_to_chunks.clone(),
+            self.config.chunk_size_bytes,
+            chunk_layout.cue_flac_data.clone(),
+        );
+
+        // Use file producer
+        let files_to_chunks_for_producer: Vec<crate::import::types::FileToChunks> =
+            discovered_files
+                .iter()
+                .map(|f| crate::import::types::FileToChunks {
+                    file_path: f.path.clone(),
+                    start_chunk_index: 0, // Unused by producer
+                    end_chunk_index: 0,   // Unused by producer
+                    start_byte_offset: 0, // Unused by producer
+                    end_byte_offset: 0,   // Unused by producer
+                })
+                .collect();
+
+        tokio::spawn(pipeline::chunk_producer::produce_chunk_stream_from_files(
+            files_to_chunks_for_producer,
+            self.config.chunk_size_bytes,
+            chunk_tx,
+        ));
+
+        // Wait for the pipeline to complete
+        let results: Vec<_> = pipeline.collect().await;
+
+        // Check for errors
+        for result in results {
+            result?;
+        }
+
+        info!("All chunks uploaded successfully, persisting metadata...");
+
+        // ========== PERSIST METADATA ==========
+        // Layout already computed at the beginning, just persist it now
+
+        self.persist_metadata_from_layout(
+            library_manager,
+            &db_release.id,
+            tracks_to_files,
+            &chunk_layout.files_to_chunks,
+            &chunk_layout.cue_flac_data,
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    /// Persist metadata from an already-computed chunk layout.
+    ///
+    /// Used by folder imports where layout is computed upfront for accurate progress tracking.
+    async fn persist_metadata_from_layout(
+        &self,
+        library_manager: &crate::library::LibraryManager,
+        release_id: &str,
+        tracks_to_files: &[crate::import::types::TrackFile],
+        files_to_chunks: &[crate::import::types::FileToChunks],
+        cue_flac_data: &std::collections::HashMap<
+            std::path::PathBuf,
+            crate::import::types::CueFlacLayoutData,
+        >,
+    ) -> Result<(), String> {
+        // Persist track metadata for all tracks
+        let persister = MetadataPersister::new(library_manager);
+        for track_file in tracks_to_files {
+            persister
+                .persist_track_metadata(
+                    release_id,
+                    &track_file.db_track_id,
+                    tracks_to_files,
+                    files_to_chunks,
+                    self.config.chunk_size_bytes,
+                    cue_flac_data,
+                )
+                .await
+                .map_err(|e| format!("Failed to persist track metadata: {}", e))?;
+
+            // Mark track complete
+            library_manager
+                .mark_track_complete(&track_file.db_track_id)
+                .await
+                .map_err(|e| format!("Failed to mark track complete: {}", e))?;
+        }
+
+        // Persist release-level metadata
+        persister
+            .persist_release_metadata(release_id, tracks_to_files, files_to_chunks)
+            .await?;
+
+        // Mark release complete
+        library_manager
+            .mark_release_complete(release_id)
+            .await
+            .map_err(|e| format!("Failed to mark release complete: {}", e))?;
+
+        Ok(())
+    }
+
+    /// Compute chunk layout and persist all metadata after chunk upload completes.
+    ///
+    /// Used by torrent imports where layout can't be computed upfront.
+    /// Called after all chunks have been uploaded to cloud storage. Computes layout,
+    /// persists track metadata, persists release metadata, and marks the release complete.
+    async fn compute_layout_and_persist_metadata(
+        &self,
+        library_manager: &crate::library::LibraryManager,
+        release_id: &str,
+        tracks_to_files: &[crate::import::types::TrackFile],
+        discovered_files: &[crate::import::types::DiscoveredFile],
+        cue_flac_metadata: Option<
+            std::collections::HashMap<std::path::PathBuf, crate::import::types::CueFlacMetadata>,
+        >,
+    ) -> Result<(), String> {
+        // Compute chunk layout
+        let chunk_layout = AlbumChunkLayout::build(
+            discovered_files.to_vec(),
+            tracks_to_files,
+            self.config.chunk_size_bytes,
+            cue_flac_metadata,
+        )?;
+
+        // Persist using the computed layout
+        self.persist_metadata_from_layout(
+            library_manager,
+            release_id,
+            tracks_to_files,
+            &chunk_layout.files_to_chunks,
+            &chunk_layout.cue_flac_data,
+        )
+        .await
     }
 }
 
