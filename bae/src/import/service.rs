@@ -30,16 +30,25 @@
 // - ImportProgressTracker: Tracks chunk completion, emits progress events
 // - MetadataPersister: Saves file/chunk metadata to DB
 
+use std::collections::HashMap;
+use std::path::PathBuf;
+
 use crate::cache::CacheManager;
+use crate::cd::drive::CdToc;
+use crate::cd::RipProgress;
 use crate::cloud_storage::CloudStorageManager;
+use crate::db::{DbAlbum, DbRelease, DbTrack};
 use crate::encryption::EncryptionService;
 use crate::import::album_chunk_layout::AlbumChunkLayout;
-use crate::import::handle::ImportHandle;
+use crate::import::handle::{ImportHandle, TorrentImportMetadata};
 use crate::import::metadata_persister::MetadataPersister;
 use crate::import::pipeline;
 use crate::import::progress::ImportProgressTracker;
-use crate::import::types::{ImportCommand, ImportProgress};
-use crate::library::SharedLibraryManager;
+use crate::import::types::{
+    CueFlacLayoutData, CueFlacMetadata, DiscoveredFile, FileToChunks, ImportCommand,
+    ImportProgress, TorrentSource, TrackFile,
+};
+use crate::library::{LibraryManager, SharedLibraryManager};
 use crate::torrent::{BaeStorage, TorrentClient};
 use futures::stream::StreamExt;
 use tokio::sync::mpsc;
@@ -206,13 +215,11 @@ impl ImportService {
     /// 3. After upload: computes layout, persists metadata, marks complete
     async fn import_album_from_folder(
         &self,
-        db_album: crate::db::DbAlbum,
-        db_release: crate::db::DbRelease,
-        tracks_to_files: Vec<crate::import::types::TrackFile>,
-        discovered_files: Vec<crate::import::types::DiscoveredFile>,
-        cue_flac_metadata: Option<
-            std::collections::HashMap<std::path::PathBuf, crate::import::types::CueFlacMetadata>,
-        >,
+        db_album: DbAlbum,
+        db_release: DbRelease,
+        tracks_to_files: Vec<TrackFile>,
+        discovered_files: Vec<DiscoveredFile>,
+        cue_flac_metadata: Option<HashMap<PathBuf, CueFlacMetadata>>,
     ) -> Result<(), String> {
         let library_manager = self.library_manager.get();
 
@@ -259,11 +266,11 @@ impl ImportService {
     /// 4. Persists metadata and marks album complete.
     async fn import_album_from_torrent(
         &self,
-        db_album: crate::db::DbAlbum,
-        db_release: crate::db::DbRelease,
-        tracks_to_files: Vec<crate::import::types::TrackFile>,
-        torrent_source: crate::import::types::TorrentSource,
-        torrent_metadata: crate::import::handle::TorrentImportMetadata,
+        db_album: DbAlbum,
+        db_release: DbRelease,
+        tracks_to_files: Vec<TrackFile>,
+        torrent_source: TorrentSource,
+        torrent_metadata: TorrentImportMetadata,
         _seed_after_download: bool,
     ) -> Result<(), String> {
         let library_manager = self.library_manager.get();
@@ -288,11 +295,11 @@ impl ImportService {
         // Use shared torrent client and create handle
         let torrent_client = self.torrent_client.clone();
         let torrent_handle = match torrent_source {
-            crate::import::types::TorrentSource::File(path) => torrent_client
+            TorrentSource::File(path) => torrent_client
                 .add_torrent_file(&path)
                 .await
                 .map_err(|e| format!("Failed to add torrent file: {}", e))?,
-            crate::import::types::TorrentSource::MagnetLink(magnet) => torrent_client
+            TorrentSource::MagnetLink(magnet) => torrent_client
                 .add_magnet_link(&magnet)
                 .await
                 .map_err(|e| format!("Failed to add magnet link: {}", e))?,
@@ -367,27 +374,26 @@ impl ImportService {
 
         // Convert torrent files to DiscoveredFile format
         let temp_dir = std::env::temp_dir();
-        let discovered_files: Vec<crate::import::types::DiscoveredFile> = torrent_files
+        let discovered_files: Vec<DiscoveredFile> = torrent_files
             .iter()
-            .map(|tf| crate::import::types::DiscoveredFile {
+            .map(|tf| DiscoveredFile {
                 path: temp_dir.join(&tf.path),
                 size: tf.size as u64,
             })
             .collect();
 
         // Detect and parse CUE/FLAC files
-        let file_paths: Vec<std::path::PathBuf> =
-            discovered_files.iter().map(|f| f.path.clone()).collect();
+        let file_paths: Vec<PathBuf> = discovered_files.iter().map(|f| f.path.clone()).collect();
         let cue_flac_pairs =
             crate::cue_flac::CueFlacProcessor::detect_cue_flac_from_paths(&file_paths)
                 .map_err(|e| format!("Failed to detect CUE/FLAC files: {}", e))?;
 
-        let mut cue_flac_metadata = std::collections::HashMap::new();
+        let mut cue_flac_metadata = HashMap::new();
         for pair in cue_flac_pairs {
             let flac_path = pair.flac_path.clone();
             let cue_sheet = crate::cue_flac::CueFlacProcessor::parse_cue_sheet(&pair.cue_path)
                 .map_err(|e| format!("Failed to parse CUE sheet: {}", e))?;
-            let metadata = crate::import::types::CueFlacMetadata {
+            let metadata = CueFlacMetadata {
                 cue_sheet,
                 cue_path: pair.cue_path,
                 flac_path: flac_path.clone(),
@@ -448,11 +454,11 @@ impl ImportService {
     /// 5. Cleans up temporary directory
     async fn import_album_from_cd(
         &self,
-        db_album: crate::db::DbAlbum,
-        db_release: crate::db::DbRelease,
-        db_tracks: Vec<crate::db::DbTrack>,
-        drive_path: std::path::PathBuf,
-        toc: crate::cd::drive::CdToc,
+        db_album: DbAlbum,
+        db_release: DbRelease,
+        db_tracks: Vec<DbTrack>,
+        drive_path: PathBuf,
+        toc: CdToc,
     ) -> Result<(), String> {
         let library_manager = self.library_manager.get();
 
@@ -491,11 +497,10 @@ impl ImportService {
         let ripper = CdRipper::new(drive.clone(), toc.clone(), temp_dir.clone());
 
         // Create progress channel for ripping
-        let (rip_progress_tx, mut rip_progress_rx) =
-            tokio::sync::mpsc::unbounded_channel::<crate::cd::RipProgress>();
+        let (rip_progress_tx, mut rip_progress_rx) = mpsc::unbounded_channel::<RipProgress>();
 
         // Map track numbers (1-indexed) to track IDs
-        let track_number_to_id: std::collections::HashMap<u8, String> = db_tracks
+        let track_number_to_id: HashMap<u8, String> = db_tracks
             .iter()
             .enumerate()
             .map(|(idx, track)| {
@@ -565,7 +570,7 @@ impl ImportService {
             let metadata = tokio::fs::metadata(&result.output_path)
                 .await
                 .map_err(|e| format!("Failed to get file size: {}", e))?;
-            discovered_files.push(crate::import::types::DiscoveredFile {
+            discovered_files.push(DiscoveredFile {
                 path: result.output_path.clone(),
                 size: metadata.len(),
             });
@@ -575,7 +580,7 @@ impl ImportService {
         let cue_metadata = tokio::fs::metadata(&cue_path)
             .await
             .map_err(|e| format!("Failed to get CUE file size: {}", e))?;
-        discovered_files.push(crate::import::types::DiscoveredFile {
+        discovered_files.push(DiscoveredFile {
             path: cue_path.clone(),
             size: cue_metadata.len(),
         });
@@ -583,7 +588,7 @@ impl ImportService {
         let log_metadata = tokio::fs::metadata(&log_path)
             .await
             .map_err(|e| format!("Failed to get log file size: {}", e))?;
-        discovered_files.push(crate::import::types::DiscoveredFile {
+        discovered_files.push(DiscoveredFile {
             path: log_path.clone(),
             size: log_metadata.len(),
         });
@@ -639,12 +644,10 @@ impl ImportService {
     /// For CD/torrent imports, this runs after the acquire phase completes.
     async fn run_chunk_phase(
         &self,
-        db_release: &crate::db::DbRelease,
-        tracks_to_files: &[crate::import::types::TrackFile],
-        discovered_files: &[crate::import::types::DiscoveredFile],
-        cue_flac_metadata: Option<
-            std::collections::HashMap<std::path::PathBuf, crate::import::types::CueFlacMetadata>,
-        >,
+        db_release: &DbRelease,
+        tracks_to_files: &[TrackFile],
+        discovered_files: &[DiscoveredFile],
+        cue_flac_metadata: Option<HashMap<PathBuf, CueFlacMetadata>>,
     ) -> Result<(), String> {
         let library_manager = self.library_manager.get();
 
@@ -683,17 +686,16 @@ impl ImportService {
         );
 
         // Use file producer
-        let files_to_chunks_for_producer: Vec<crate::import::types::FileToChunks> =
-            discovered_files
-                .iter()
-                .map(|f| crate::import::types::FileToChunks {
-                    file_path: f.path.clone(),
-                    start_chunk_index: 0, // Unused by producer
-                    end_chunk_index: 0,   // Unused by producer
-                    start_byte_offset: 0, // Unused by producer
-                    end_byte_offset: 0,   // Unused by producer
-                })
-                .collect();
+        let files_to_chunks_for_producer: Vec<FileToChunks> = discovered_files
+            .iter()
+            .map(|f| FileToChunks {
+                file_path: f.path.clone(),
+                start_chunk_index: 0, // Unused by producer
+                end_chunk_index: 0,   // Unused by producer
+                start_byte_offset: 0, // Unused by producer
+                end_byte_offset: 0,   // Unused by producer
+            })
+            .collect();
 
         tokio::spawn(pipeline::chunk_producer::produce_chunk_stream_from_files(
             files_to_chunks_for_producer,
@@ -731,14 +733,11 @@ impl ImportService {
     /// Used by folder imports where layout is computed upfront for accurate progress tracking.
     async fn persist_metadata_from_layout(
         &self,
-        library_manager: &crate::library::LibraryManager,
+        library_manager: &LibraryManager,
         release_id: &str,
-        tracks_to_files: &[crate::import::types::TrackFile],
-        files_to_chunks: &[crate::import::types::FileToChunks],
-        cue_flac_data: &std::collections::HashMap<
-            std::path::PathBuf,
-            crate::import::types::CueFlacLayoutData,
-        >,
+        tracks_to_files: &[TrackFile],
+        files_to_chunks: &[FileToChunks],
+        cue_flac_data: &HashMap<PathBuf, CueFlacLayoutData>,
     ) -> Result<(), String> {
         // Persist track metadata for all tracks
         let persister = MetadataPersister::new(library_manager);

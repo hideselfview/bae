@@ -4,12 +4,15 @@
 // Provides the public API for interacting with the import service.
 
 use crate::cue_flac::CueFlacProcessor;
+use crate::db::DbTorrent;
+use crate::discogs::DiscogsRelease;
 use crate::import::progress::ImportProgressHandle;
 use crate::import::track_to_file_mapper::map_tracks_to_files;
 use crate::import::types::{
     DiscoveredFile, ImportCommand, ImportProgress, ImportRequest, TorrentSource, TrackFile,
 };
-use crate::library::SharedLibraryManager;
+use crate::library::{LibraryManager, SharedLibraryManager};
+use crate::musicbrainz::MbRelease;
 use crate::playback::symphonia_decoder::TrackDecoder;
 use crate::torrent::{SelectiveDownloader, TorrentClient};
 use std::path::Path;
@@ -108,8 +111,8 @@ impl ImportHandle {
 
     async fn handle_folder_request(
         &self,
-        discogs_release: Option<crate::discogs::DiscogsRelease>,
-        mb_release: Option<crate::musicbrainz::MbRelease>,
+        discogs_release: Option<DiscogsRelease>,
+        mb_release: Option<MbRelease>,
         folder: std::path::PathBuf,
         master_year: u32,
     ) -> Result<(String, String), String> {
@@ -227,8 +230,8 @@ impl ImportHandle {
     async fn handle_torrent_request(
         &self,
         torrent_source: TorrentSource,
-        discogs_release: Option<crate::discogs::DiscogsRelease>,
-        mb_release: Option<crate::musicbrainz::MbRelease>,
+        discogs_release: Option<DiscogsRelease>,
+        mb_release: Option<MbRelease>,
         master_year: u32,
         seed_after_download: bool,
     ) -> Result<(String, String), String> {
@@ -432,7 +435,7 @@ impl ImportHandle {
         };
 
         // Save torrent record (will be used for seeding later)
-        let db_torrent = crate::db::DbTorrent::new(
+        let db_torrent = DbTorrent::new(
             &db_release.id,
             &info_hash,
             torrent_metadata.magnet_link.clone(),
@@ -476,8 +479,8 @@ impl ImportHandle {
 
     async fn handle_cd_request(
         &self,
-        discogs_release: Option<crate::discogs::DiscogsRelease>,
-        mb_release: Option<crate::musicbrainz::MbRelease>,
+        discogs_release: Option<DiscogsRelease>,
+        mb_release: Option<MbRelease>,
         drive_path: std::path::PathBuf,
         master_year: u32,
     ) -> Result<(String, String), String> {
@@ -613,7 +616,7 @@ impl ImportHandle {
 
 /// Extract durations from audio files and update database immediately
 pub async fn extract_and_store_durations(
-    library_manager: &crate::library::LibraryManager,
+    library_manager: &LibraryManager,
     tracks_to_files: &[TrackFile],
 ) -> Result<(), String> {
     use std::collections::HashMap;
