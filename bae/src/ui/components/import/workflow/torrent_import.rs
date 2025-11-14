@@ -20,36 +20,18 @@ pub fn TorrentImport() -> Element {
     let on_torrent_file_select = {
         let import_context = import_context.clone();
         move |(path, seed_flag): (PathBuf, bool)| {
-            // Extract signals from cloned context (signals are Copy)
-            let mut torrent_source = import_context.torrent_source;
-            let mut seed_after_download = import_context.seed_after_download;
-            let mut folder_path = import_context.folder_path;
-            let mut detected_metadata = import_context.detected_metadata;
-            let mut exact_match_candidates = import_context.exact_match_candidates;
-            let mut selected_match_index = import_context.selected_match_index;
-            let mut confirmed_candidate = import_context.confirmed_candidate;
-            let mut import_error_message = import_context.import_error_message;
-            let mut duplicate_album_id = import_context.duplicate_album_id;
-            let mut import_phase = import_context.import_phase;
-            let mut is_detecting = import_context.is_detecting;
-
-            // Store torrent source and seed flag
-            torrent_source.set(Some(crate::import::TorrentSource::File(path.clone())));
-            seed_after_download.set(seed_flag);
-
-            // Reset state
-            folder_path.set(path.to_string_lossy().to_string());
-            detected_metadata.set(None);
-            exact_match_candidates.set(Vec::new());
-            selected_match_index.set(None);
-            confirmed_candidate.set(None);
-            import_error_message.set(None);
-            duplicate_album_id.set(None);
-            import_phase.set(ImportPhase::MetadataDetection);
-            is_detecting.set(true);
+            // Reset state for new torrent selection
+            import_context.select_torrent_file(
+                path.to_string_lossy().to_string(),
+                crate::import::TorrentSource::File(path.clone()),
+                seed_flag,
+            );
 
             // Clone everything needed for spawn (to keep closure FnMut)
             let mut folder_files = import_context.folder_files;
+            let mut is_detecting = import_context.is_detecting;
+            let mut import_phase = import_context.import_phase;
+            let mut import_error_message = import_context.import_error_message;
             let import_context_for_async = import_context.clone();
             let client_for_torrent = import_context.torrent_client_default();
             let path = path.clone();

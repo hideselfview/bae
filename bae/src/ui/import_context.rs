@@ -96,6 +96,41 @@ impl ImportContext {
         self.torrent_client_default.clone()
     }
 
+    /// Reset state for a new torrent selection
+    pub fn select_torrent_file(
+        &self,
+        path: String,
+        torrent_source: crate::import::TorrentSource,
+        seed_after_download: bool,
+    ) {
+        let mut torrent_source_signal = self.torrent_source;
+        let mut seed_after_download_signal = self.seed_after_download;
+        let mut folder_path = self.folder_path;
+        let mut detected_metadata = self.detected_metadata;
+        let mut exact_match_candidates = self.exact_match_candidates;
+        let mut selected_match_index = self.selected_match_index;
+        let mut confirmed_candidate = self.confirmed_candidate;
+        let mut import_error_message = self.import_error_message;
+        let mut duplicate_album_id = self.duplicate_album_id;
+        let mut import_phase = self.import_phase;
+        let mut is_detecting = self.is_detecting;
+
+        // Store torrent source and seed flag
+        torrent_source_signal.set(Some(torrent_source));
+        seed_after_download_signal.set(seed_after_download);
+
+        // Reset state for new selection
+        folder_path.set(path);
+        detected_metadata.set(None);
+        exact_match_candidates.set(Vec::new());
+        selected_match_index.set(None);
+        confirmed_candidate.set(None);
+        import_error_message.set(None);
+        duplicate_album_id.set(None);
+        import_phase.set(ImportPhase::MetadataDetection);
+        is_detecting.set(true);
+    }
+
     pub fn reset(&self) {
         let mut search_query = self.search_query;
         let mut search_results = self.search_results;
