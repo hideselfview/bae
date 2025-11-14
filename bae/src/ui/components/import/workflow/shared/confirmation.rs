@@ -64,4 +64,3 @@ pub fn Confirmation(
         rsx! { div {} }
     }
 }
-

@@ -7,4 +7,3 @@ pub use confirmation::Confirmation;
 pub use error_display::ErrorDisplay;
 pub use exact_lookup::ExactLookup;
 pub use manual_search::ManualSearch;
-

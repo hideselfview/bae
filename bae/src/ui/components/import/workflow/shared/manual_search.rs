@@ -11,8 +11,8 @@ pub fn ManualSearch(
 ) -> Element {
     // Convert ReadSignal to Signal for ManualSearchPanel
     let detected_metadata_signal = use_signal(|| detected_metadata.read().clone());
-    let selected_index_signal = use_signal(|| selected_match_index.read().clone());
-    
+    let selected_index_signal = use_signal(|| *selected_match_index.read());
+
     use_effect({
         let mut detected_metadata_signal = detected_metadata_signal;
         let detected_metadata = detected_metadata;
@@ -20,12 +20,12 @@ pub fn ManualSearch(
             detected_metadata_signal.set(detected_metadata.read().clone());
         }
     });
-    
+
     use_effect({
         let mut selected_index_signal = selected_index_signal;
         let selected_match_index = selected_match_index;
         move || {
-            selected_index_signal.set(selected_match_index.read().clone());
+            selected_index_signal.set(*selected_match_index.read());
         }
     });
 
@@ -38,4 +38,3 @@ pub fn ManualSearch(
         }
     }
 }
-

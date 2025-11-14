@@ -1,7 +1,7 @@
 use super::file_list::{FileInfo, FileList};
 use super::handlers::{handle_confirmation, handle_metadata_detection};
+use super::inputs::TorrentInput;
 use super::shared::{Confirmation, ErrorDisplay, ExactLookup, ManualSearch};
-use crate::ui::components::import::TorrentInput;
 use crate::import::MatchCandidate;
 use crate::library::{use_import_service, use_library_manager};
 use crate::ui::import_context::{ImportContext, ImportPhase};
@@ -215,7 +215,6 @@ pub fn TorrentImport() -> Element {
         }
     };
 
-
     let on_confirm_from_manual = {
         let import_context_for_reset = import_context.clone();
         let library_manager = library_manager.clone();
@@ -228,8 +227,8 @@ pub fn TorrentImport() -> Element {
             let torrent_source_opt = torrent_source_signal.read().clone();
             let seed_flag = *seed_after_download_signal.read();
             let import_service = import_service.clone();
-            let mut duplicate_album_id = duplicate_album_id;
-            let mut import_error_message = import_error_message;
+            let duplicate_album_id = duplicate_album_id;
+            let import_error_message = import_error_message;
             let import_context_for_reset = import_context_for_reset.clone();
             let library_manager = library_manager.clone();
 
@@ -252,7 +251,6 @@ pub fn TorrentImport() -> Element {
             });
         }
     };
-
 
     let on_change_folder = {
         let import_context = import_context.clone();
@@ -527,4 +525,3 @@ pub fn TorrentImport() -> Element {
         }
     }
 }
-

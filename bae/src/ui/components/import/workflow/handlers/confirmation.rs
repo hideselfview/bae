@@ -46,10 +46,7 @@ pub async fn handle_confirmation(
 
             if let Ok(Some(duplicate)) = library_manager
                 .get()
-                .find_duplicate_by_musicbrainz(
-                    release_id.as_deref(),
-                    release_group_id.as_deref(),
-                )
+                .find_duplicate_by_musicbrainz(release_id.as_deref(), release_group_id.as_deref())
                 .await
             {
                 duplicate_album_id.set(Some(duplicate.id));
@@ -152,10 +149,8 @@ pub async fn handle_confirmation(
                         }
                     }
                     Err(e) => {
-                        import_error_message.set(Some(format!(
-                            "Failed to fetch Discogs release: {}",
-                            e
-                        )));
+                        import_error_message
+                            .set(Some(format!("Failed to fetch Discogs release: {}", e)));
                     }
                 }
             }
@@ -237,10 +232,8 @@ pub async fn handle_confirmation(
                         }
                     }
                     Err(e) => {
-                        import_error_message.set(Some(format!(
-                            "Failed to fetch Discogs release: {}",
-                            e
-                        )));
+                        import_error_message
+                            .set(Some(format!("Failed to fetch Discogs release: {}", e)));
                     }
                 }
             }
@@ -277,4 +270,3 @@ pub async fn handle_confirmation(
         }
     }
 }
-

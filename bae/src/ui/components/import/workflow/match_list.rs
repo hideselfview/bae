@@ -1,5 +1,5 @@
+use super::match_item::MatchItem;
 use crate::import::MatchCandidate;
-use crate::ui::components::import::folder_detection::match_item::MatchItem;
 use dioxus::prelude::*;
 
 #[component]

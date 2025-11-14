@@ -5,10 +5,7 @@ use dioxus::prelude::*;
 use tracing::info;
 
 /// Initialize search query from metadata
-fn init_search_query_from_metadata(
-    metadata: &FolderMetadata,
-    mut search_query: Signal<String>,
-) {
+fn init_search_query_from_metadata(metadata: &FolderMetadata, mut search_query: Signal<String>) {
     let mut query_parts = Vec::new();
     if let Some(ref artist) = metadata.artist {
         query_parts.push(artist.clone());
@@ -99,10 +96,12 @@ pub async fn handle_metadata_detection(
         }
         None => {
             // No metadata detected, proceed with fallback query
-            info!("No metadata detected, using fallback query: {}", fallback_query);
+            info!(
+                "No metadata detected, using fallback query: {}",
+                fallback_query
+            );
             search_query.set(fallback_query);
             import_phase.set(ImportPhase::ManualSearch);
         }
     }
 }
-

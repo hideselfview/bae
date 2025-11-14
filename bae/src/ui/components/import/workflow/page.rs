@@ -1,13 +1,13 @@
-use crate::ui::components::import::folder_detection::cd_import::CdImport;
-use crate::ui::components::import::folder_detection::folder_import::FolderImport;
-use crate::ui::components::import::folder_detection::torrent_import::TorrentImport;
+use super::cd_import::CdImport;
+use super::folder_import::FolderImport;
+use super::torrent_import::TorrentImport;
 use crate::ui::components::import::{ImportSource, ImportSourceSelector};
 use crate::ui::import_context::ImportContext;
 use dioxus::prelude::*;
 use std::rc::Rc;
 
 #[component]
-pub fn FolderDetectionPage() -> Element {
+pub fn ImportPage() -> Element {
     let import_context = use_context::<Rc<ImportContext>>();
     let mut selected_source = use_signal(|| ImportSource::Folder);
 

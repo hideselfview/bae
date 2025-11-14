@@ -44,4 +44,3 @@ pub fn ErrorDisplay(
         rsx! { div {} }
     }
 }
-

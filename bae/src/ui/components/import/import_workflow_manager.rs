@@ -1,10 +1,10 @@
-use super::folder_detection::FolderDetectionPage;
+use super::workflow::ImportPage;
 use dioxus::prelude::*;
 
-/// Manages the import workflow - simplified to folder-based import only
+/// Manages the import workflow
 #[component]
 pub fn ImportWorkflowManager() -> Element {
     rsx! {
-        FolderDetectionPage {}
+        ImportPage {}
     }
 }
