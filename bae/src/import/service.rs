@@ -113,7 +113,7 @@ impl ImportService {
                 let torrent_client = TorrentClient::new(worker_runtime_handle)
                     .expect("Failed to create shared torrent client for import service");
 
-                let service = ImportService {
+                let mut service = ImportService {
                     config,
                     commands_rx,
                     progress_tx,
@@ -124,7 +124,20 @@ impl ImportService {
                     torrent_client,
                 };
 
-                service.receive_import_commands().await;
+                info!("Worker started");
+
+                // Import validated albums sequentially from the queue.
+                loop {
+                    match service.commands_rx.recv().await {
+                        Some(command) => {
+                            service.do_import(command).await;
+                        }
+                        None => {
+                            info!("Worker receive channel closed");
+                            break;
+                        }
+                    }
+                }
             });
         });
 
@@ -137,38 +150,25 @@ impl ImportService {
         )
     }
 
-    async fn receive_import_commands(mut self) {
-        info!("Worker started");
-
-        // Import validated albums sequentially from the queue.
-        loop {
-            match self.commands_rx.recv().await {
-                Some(command) => {
-                    let result = match &command {
-                        ImportCommand::Folder { db_album, .. } => {
-                            info!("Starting folder import pipeline for '{}'", db_album.title);
-                            self.import_album_from_folder(command).await
-                        }
-                        ImportCommand::Torrent { db_album, .. } => {
-                            info!("Starting torrent import pipeline for '{}'", db_album.title);
-                            self.import_album_from_torrent(command).await
-                        }
-                        ImportCommand::CD { db_album, .. } => {
-                            info!("Starting CD import pipeline for '{}'", db_album.title);
-                            self.import_album_from_cd(command).await
-                        }
-                    };
-
-                    if let Err(e) = result {
-                        error!("Pipeline failed: {}", e);
-                        // TODO: Mark album as failed
-                    }
-                }
-                None => {
-                    info!("Worker receive channel closed");
-                    break;
-                }
+    async fn do_import(&self, command: ImportCommand) {
+        let result = match &command {
+            ImportCommand::Folder { db_album, .. } => {
+                info!("Starting folder import pipeline for '{}'", db_album.title);
+                self.import_album_from_folder(command).await
             }
+            ImportCommand::Torrent { db_album, .. } => {
+                info!("Starting torrent import pipeline for '{}'", db_album.title);
+                self.import_album_from_torrent(command).await
+            }
+            ImportCommand::CD { db_album, .. } => {
+                info!("Starting CD import pipeline for '{}'", db_album.title);
+                self.import_album_from_cd(command).await
+            }
+        };
+
+        if let Err(e) = result {
+            error!("Pipeline failed: {}", e);
+            // TODO: Mark album as failed
         }
     }
 
