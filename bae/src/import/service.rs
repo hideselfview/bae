@@ -124,7 +124,7 @@ impl ImportService {
                     torrent_client,
                 };
 
-                service.run_import_worker().await;
+                service.receive_import_commands().await;
             });
         });
 
@@ -137,7 +137,7 @@ impl ImportService {
         )
     }
 
-    async fn run_import_worker(mut self) {
+    async fn receive_import_commands(mut self) {
         info!("Worker started");
 
         // Import validated albums sequentially from the queue.
