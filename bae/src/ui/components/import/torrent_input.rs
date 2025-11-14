@@ -54,24 +54,26 @@ pub fn TorrentInput(
     rsx! {
         div { class: "space-y-6",
             // Mode selector
-            div { class: "flex space-x-4 mb-4",
-                button {
-                    class: if *input_mode.read() == "file" {
-                        "px-4 py-2 rounded-lg transition-colors bg-blue-600 text-white"
-                    } else {
-                        "px-4 py-2 rounded-lg transition-colors bg-gray-200 text-gray-700"
-                    },
-                    onclick: move |_| input_mode.set("file"),
-                    "Torrent File"
-                }
-                button {
-                    class: if *input_mode.read() == "magnet" {
-                        "px-4 py-2 rounded-lg transition-colors bg-blue-600 text-white"
-                    } else {
-                        "px-4 py-2 rounded-lg transition-colors bg-gray-200 text-gray-700"
-                    },
-                    onclick: move |_| input_mode.set("magnet"),
-                    "Magnet Link"
+            div { class: "mb-4",
+                div { class: "flex space-x-3 border-b border-gray-300",
+                    button {
+                        class: if *input_mode.read() == "file" {
+                            "px-3 py-1.5 text-sm font-medium transition-colors text-gray-700 border-b-2 border-gray-500"
+                        } else {
+                            "px-3 py-1.5 text-sm font-medium transition-colors text-gray-500 hover:text-gray-700"
+                        },
+                        onclick: move |_| input_mode.set("file"),
+                        "Torrent File"
+                    }
+                    button {
+                        class: if *input_mode.read() == "magnet" {
+                            "px-3 py-1.5 text-sm font-medium transition-colors text-gray-700 border-b-2 border-gray-500"
+                        } else {
+                            "px-3 py-1.5 text-sm font-medium transition-colors text-gray-500 hover:text-gray-700"
+                        },
+                        onclick: move |_| input_mode.set("magnet"),
+                        "Magnet Link"
+                    }
                 }
             }
 
