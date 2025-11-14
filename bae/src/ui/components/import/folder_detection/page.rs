@@ -8,7 +8,7 @@ use crate::library::use_import_service;
 use crate::library::use_library_manager;
 use crate::musicbrainz::lookup_by_discid;
 use crate::ui::components::import::{CdRipper, ImportSource, ImportSourceSelector, TorrentInput};
-use crate::ui::import_context::ImportContext;
+use crate::ui::import_context::{ImportContext, ImportPhase};
 use crate::ui::Route;
 use dioxus::prelude::*;
 use std::path::PathBuf;
@@ -87,7 +87,7 @@ pub fn FolderDetectionPage() -> Element {
             confirmed_candidate.set(None);
             import_error_message.set(None);
             duplicate_album_id.set(None);
-            import_phase.set(crate::ui::import_context::ImportPhase::MetadataDetection);
+            import_phase.set(ImportPhase::MetadataDetection);
             is_detecting.set(true);
 
             // Clone everything needed for spawn (to keep closure FnMut)
@@ -108,7 +108,7 @@ pub fn FolderDetectionPage() -> Element {
                         import_error_message
                             .set(Some(format!("Failed to add torrent file: {}", e)));
                         is_detecting.set(false);
-                        import_phase.set(crate::ui::import_context::ImportPhase::FolderSelection);
+                        import_phase.set(ImportPhase::FolderSelection);
                         return;
                     }
                 };
@@ -118,7 +118,7 @@ pub fn FolderDetectionPage() -> Element {
                     import_error_message
                         .set(Some(format!("Failed to get torrent metadata: {}", e)));
                     is_detecting.set(false);
-                    import_phase.set(crate::ui::import_context::ImportPhase::FolderSelection);
+                    import_phase.set(ImportPhase::FolderSelection);
                     return;
                 }
 
@@ -129,7 +129,7 @@ pub fn FolderDetectionPage() -> Element {
                         import_error_message
                             .set(Some(format!("Failed to get torrent name: {}", e)));
                         is_detecting.set(false);
-                        import_phase.set(crate::ui::import_context::ImportPhase::FolderSelection);
+                        import_phase.set(ImportPhase::FolderSelection);
                         return;
                     }
                 };
@@ -141,7 +141,7 @@ pub fn FolderDetectionPage() -> Element {
                         import_error_message
                             .set(Some(format!("Failed to get torrent file list: {}", e)));
                         is_detecting.set(false);
-                        import_phase.set(crate::ui::import_context::ImportPhase::FolderSelection);
+                        import_phase.set(ImportPhase::FolderSelection);
                         return;
                     }
                 };
@@ -231,9 +231,7 @@ pub fn FolderDetectionPage() -> Element {
                                         if releases.is_empty() {
                                             info!("No exact matches found, proceeding to manual search");
                                             init_search_query(&metadata);
-                                            import_phase_for_async.set(
-                                                crate::ui::import_context::ImportPhase::ManualSearch,
-                                            );
+                                            import_phase_for_async.set(ImportPhase::ManualSearch);
                                         } else if releases.len() == 1 {
                                             // Single exact match - auto-proceed to confirmation
                                             info!("✅ Single exact match found, auto-proceeding");
@@ -248,9 +246,7 @@ pub fn FolderDetectionPage() -> Element {
                                                 ],
                                             };
                                             confirmed_candidate_for_async.set(Some(candidate));
-                                            import_phase_for_async.set(
-                                                crate::ui::import_context::ImportPhase::Confirmation,
-                                            );
+                                            import_phase_for_async.set(ImportPhase::Confirmation);
                                         } else {
                                             // Multiple exact matches - show for selection
                                             info!(
@@ -266,9 +262,7 @@ pub fn FolderDetectionPage() -> Element {
                                                 })
                                                 .collect();
                                             exact_match_candidates_for_async.set(candidates);
-                                            import_phase_for_async.set(
-                                                crate::ui::import_context::ImportPhase::ExactLookup,
-                                            );
+                                            import_phase_for_async.set(ImportPhase::ExactLookup);
                                         }
                                         is_looking_up_for_async.set(false);
                                     }
@@ -276,17 +270,14 @@ pub fn FolderDetectionPage() -> Element {
                                         info!("MB DiscID lookup failed: {}, proceeding to manual search", e);
                                         is_looking_up_for_async.set(false);
                                         init_search_query(&metadata);
-                                        import_phase_for_async.set(
-                                            crate::ui::import_context::ImportPhase::ManualSearch,
-                                        );
+                                        import_phase_for_async.set(ImportPhase::ManualSearch);
                                     }
                                 }
                             } else {
                                 // No MB DiscID, proceed to manual search with detected metadata
                                 info!("No MB DiscID found, proceeding to manual search");
                                 init_search_query(&metadata);
-                                import_phase_for_async
-                                    .set(crate::ui::import_context::ImportPhase::ManualSearch);
+                                import_phase_for_async.set(ImportPhase::ManualSearch);
                             }
                         }
                         Ok(None) => {
@@ -296,23 +287,21 @@ pub fn FolderDetectionPage() -> Element {
                             );
                             is_detecting_for_async.set(false);
                             search_query_for_async.set(torrent_name_for_metadata.clone());
-                            import_phase_for_async
-                                .set(crate::ui::import_context::ImportPhase::ManualSearch);
+                            import_phase_for_async.set(ImportPhase::ManualSearch);
                         }
                         Err(e) => {
                             warn!("Failed to detect metadata from torrent: {}", e);
                             // Fall back to torrent name
                             is_detecting_for_async.set(false);
                             search_query_for_async.set(torrent_name_for_metadata.clone());
-                            import_phase_for_async
-                                .set(crate::ui::import_context::ImportPhase::ManualSearch);
+                            import_phase_for_async.set(ImportPhase::ManualSearch);
                         }
                     }
                 });
 
                 // Initialize search query with torrent name (will be updated if metadata is detected)
                 search_query.set(torrent_name.clone());
-                import_phase.set(crate::ui::import_context::ImportPhase::ManualSearch);
+                import_phase.set(ImportPhase::ManualSearch);
             });
         }
     };
@@ -351,7 +340,7 @@ pub fn FolderDetectionPage() -> Element {
             confirmed_candidate.set(None);
             import_error_message.set(None);
             duplicate_album_id.set(None);
-            import_phase.set(crate::ui::import_context::ImportPhase::MetadataDetection);
+            import_phase.set(ImportPhase::MetadataDetection);
             is_detecting.set(true);
 
             // Read files from folder
@@ -427,9 +416,7 @@ pub fn FolderDetectionPage() -> Element {
                                             "No exact matches found, proceeding to manual search"
                                         );
                                         init_search_query(&metadata);
-                                        import_phase.set(
-                                            crate::ui::import_context::ImportPhase::ManualSearch,
-                                        );
+                                        import_phase.set(ImportPhase::ManualSearch);
                                     } else if releases.len() == 1 {
                                         // Single exact match - auto-proceed to confirmation
                                         info!("✅ Single exact match found, auto-proceeding");
@@ -440,9 +427,7 @@ pub fn FolderDetectionPage() -> Element {
                                             match_reasons: vec!["Exact DiscID match".to_string()],
                                         };
                                         confirmed_candidate.set(Some(candidate));
-                                        import_phase.set(
-                                            crate::ui::import_context::ImportPhase::Confirmation,
-                                        );
+                                        import_phase.set(ImportPhase::Confirmation);
                                     } else {
                                         // Multiple exact matches - show for selection
                                         info!(
@@ -460,9 +445,7 @@ pub fn FolderDetectionPage() -> Element {
                                             })
                                             .collect();
                                         exact_match_candidates.set(candidates);
-                                        import_phase.set(
-                                            crate::ui::import_context::ImportPhase::ExactLookup,
-                                        );
+                                        import_phase.set(ImportPhase::ExactLookup);
                                     }
                                     is_looking_up.set(false);
                                 }
@@ -473,21 +456,20 @@ pub fn FolderDetectionPage() -> Element {
                                     );
                                     is_looking_up.set(false);
                                     init_search_query(&metadata);
-                                    import_phase
-                                        .set(crate::ui::import_context::ImportPhase::ManualSearch);
+                                    import_phase.set(ImportPhase::ManualSearch);
                                 }
                             }
                         } else {
                             // No MB DiscID, proceed to manual search
                             info!("No MB DiscID found, proceeding to manual search");
                             init_search_query(&metadata);
-                            import_phase.set(crate::ui::import_context::ImportPhase::ManualSearch);
+                            import_phase.set(ImportPhase::ManualSearch);
                         }
                     }
                     Err(e) => {
                         import_error_message.set(Some(e));
                         is_detecting.set(false);
-                        import_phase.set(crate::ui::import_context::ImportPhase::FolderSelection);
+                        import_phase.set(ImportPhase::FolderSelection);
                     }
                 }
             });
@@ -502,7 +484,7 @@ pub fn FolderDetectionPage() -> Element {
             selected_match_index.set(Some(index));
             if let Some(candidate) = exact_match_candidates.read().get(index) {
                 confirmed_candidate.set(Some(candidate.clone()));
-                import_phase.set(crate::ui::import_context::ImportPhase::Confirmation);
+                import_phase.set(ImportPhase::Confirmation);
             }
         }
     };
@@ -816,7 +798,7 @@ pub fn FolderDetectionPage() -> Element {
             confirmed_candidate.set(None);
             selected_match_index.set(None);
             if !exact_match_candidates.read().is_empty() {
-                import_phase.set(crate::ui::import_context::ImportPhase::ExactLookup);
+                import_phase.set(ImportPhase::ExactLookup);
             } else {
                 // Initialize search query from detected metadata when transitioning to manual search
                 if let Some(metadata) = detected_metadata.read().as_ref() {
@@ -831,7 +813,7 @@ pub fn FolderDetectionPage() -> Element {
                         search_query.set(query_parts.join(" "));
                     }
                 }
-                import_phase.set(crate::ui::import_context::ImportPhase::ManualSearch);
+                import_phase.set(ImportPhase::ManualSearch);
             }
         }
     };
