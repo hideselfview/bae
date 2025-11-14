@@ -9,6 +9,11 @@ use dioxus::prelude::*;
 use std::path::PathBuf;
 use std::rc::Rc;
 
+// Helper function to reduce boilerplate when setting signals
+fn set_signal<T: 'static>(mut signal: Signal<T>, value: T) {
+    signal.set(value);
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ImportStep {
     FolderIdentification,
@@ -103,83 +108,50 @@ impl ImportContext {
         torrent_source: crate::import::TorrentSource,
         seed_after_download: bool,
     ) {
-        let mut torrent_source_signal = self.torrent_source;
-        let mut seed_after_download_signal = self.seed_after_download;
-        let mut folder_path = self.folder_path;
-        let mut detected_metadata = self.detected_metadata;
-        let mut exact_match_candidates = self.exact_match_candidates;
-        let mut selected_match_index = self.selected_match_index;
-        let mut confirmed_candidate = self.confirmed_candidate;
-        let mut import_error_message = self.import_error_message;
-        let mut duplicate_album_id = self.duplicate_album_id;
-        let mut import_phase = self.import_phase;
-        let mut is_detecting = self.is_detecting;
-
         // Store torrent source and seed flag
-        torrent_source_signal.set(Some(torrent_source));
-        seed_after_download_signal.set(seed_after_download);
+        set_signal(self.torrent_source, Some(torrent_source));
+        set_signal(self.seed_after_download, seed_after_download);
 
         // Reset state for new selection
-        folder_path.set(path);
-        detected_metadata.set(None);
-        exact_match_candidates.set(Vec::new());
-        selected_match_index.set(None);
-        confirmed_candidate.set(None);
-        import_error_message.set(None);
-        duplicate_album_id.set(None);
-        import_phase.set(ImportPhase::MetadataDetection);
-        is_detecting.set(true);
+        set_signal(self.folder_path, path);
+        set_signal(self.detected_metadata, None);
+        set_signal(self.exact_match_candidates, Vec::new());
+        set_signal(self.selected_match_index, None);
+        set_signal(self.confirmed_candidate, None);
+        set_signal(self.import_error_message, None);
+        set_signal(self.duplicate_album_id, None);
+        set_signal(self.import_phase, ImportPhase::MetadataDetection);
+        set_signal(self.is_detecting, true);
     }
 
     pub fn reset(&self) {
-        let mut search_query = self.search_query;
-        let mut search_results = self.search_results;
-        let mut is_searching_masters = self.is_searching_masters;
-        let mut is_loading_versions = self.is_loading_versions;
-        let mut error_message = self.error_message;
-        let mut navigation_stack = self.navigation_stack;
-        let mut mb_search_results = self.mb_search_results;
-        let mut is_searching_mb = self.is_searching_mb;
-        let mut mb_error_message = self.mb_error_message;
-
-        search_query.set(String::new());
-        search_results.set(Vec::new());
-        is_searching_masters.set(false);
-        is_loading_versions.set(false);
-        error_message.set(None);
-        mb_search_results.set(Vec::new());
-        is_searching_mb.set(false);
-        mb_error_message.set(None);
-        navigation_stack.set(vec![ImportStep::FolderIdentification]);
+        set_signal(self.search_query, String::new());
+        set_signal(self.search_results, Vec::new());
+        set_signal(self.is_searching_masters, false);
+        set_signal(self.is_loading_versions, false);
+        set_signal(self.error_message, None);
+        set_signal(self.mb_search_results, Vec::new());
+        set_signal(self.is_searching_mb, false);
+        set_signal(self.mb_error_message, None);
+        set_signal(
+            self.navigation_stack,
+            vec![ImportStep::FolderIdentification],
+        );
 
         // Also reset folder detection import state
-        let mut folder_path = self.folder_path;
-        let mut detected_metadata = self.detected_metadata;
-        let mut import_phase = self.import_phase;
-        let mut exact_match_candidates = self.exact_match_candidates;
-        let mut selected_match_index = self.selected_match_index;
-        let mut confirmed_candidate = self.confirmed_candidate;
-        let mut is_detecting = self.is_detecting;
-        let mut is_looking_up = self.is_looking_up;
-        let mut import_error_message = self.import_error_message;
-        let mut duplicate_album_id = self.duplicate_album_id;
-        let mut folder_files = self.folder_files;
-        let mut torrent_source = self.torrent_source;
-        let mut seed_after_download = self.seed_after_download;
-
-        folder_path.set(String::new());
-        detected_metadata.set(None);
-        import_phase.set(ImportPhase::FolderSelection);
-        exact_match_candidates.set(Vec::new());
-        selected_match_index.set(None);
-        confirmed_candidate.set(None);
-        is_detecting.set(false);
-        is_looking_up.set(false);
-        import_error_message.set(None);
-        duplicate_album_id.set(None);
-        folder_files.set(Vec::new());
-        torrent_source.set(None);
-        seed_after_download.set(true);
+        set_signal(self.folder_path, String::new());
+        set_signal(self.detected_metadata, None);
+        set_signal(self.import_phase, ImportPhase::FolderSelection);
+        set_signal(self.exact_match_candidates, Vec::new());
+        set_signal(self.selected_match_index, None);
+        set_signal(self.confirmed_candidate, None);
+        set_signal(self.is_detecting, false);
+        set_signal(self.is_looking_up, false);
+        set_signal(self.import_error_message, None);
+        set_signal(self.duplicate_album_id, None);
+        set_signal(self.folder_files, Vec::new());
+        set_signal(self.torrent_source, None);
+        set_signal(self.seed_after_download, true);
     }
 
     pub async fn detect_folder_metadata(
@@ -336,8 +308,7 @@ impl ImportContext {
         release_id: String,
         master_id: String,
     ) -> Result<DiscogsRelease, String> {
-        let mut error_message = self.error_message;
-        error_message.set(None);
+        set_signal(self.error_message, None);
 
         match self.client.get_release(&release_id).await {
             Ok(release) => {
@@ -349,7 +320,7 @@ impl ImportContext {
             }
             Err(e) => {
                 let error = format!("Failed to fetch release details: {}", e);
-                error_message.set(Some(error.clone()));
+                set_signal(self.error_message, Some(error.clone()));
                 Err(error)
             }
         }
