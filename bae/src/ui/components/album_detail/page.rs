@@ -209,7 +209,9 @@ fn use_release_progress(
 
                 while let Some(progress_event) = progress_rx.recv().await {
                     match progress_event {
-                        ImportProgress::Progress { percent, .. } => {
+                        ImportProgress::Progress { percent, phase, .. } => {
+                            // phase can be None (for backward compatibility) or Some(Rip/Chunk)
+                            // UI can display differently based on phase if needed
                             progress.set(Some(percent));
                         }
                         ImportProgress::Complete { .. } | ImportProgress::Failed { .. } => {

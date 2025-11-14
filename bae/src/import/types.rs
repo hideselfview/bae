@@ -70,10 +70,31 @@ pub enum TorrentSource {
 /// Progress updates during import
 #[derive(Debug, Clone)]
 pub enum ImportProgress {
-    Started { id: String },
-    Progress { id: String, percent: u8 },
-    Complete { id: String },
-    Failed { id: String, error: String },
+    Started {
+        id: String,
+    },
+    Progress {
+        id: String,
+        percent: u8,
+        /// Phase of import (Rip for CD ripping, Chunk for upload/encryption)
+        phase: Option<ImportPhase>,
+    },
+    Complete {
+        id: String,
+    },
+    Failed {
+        id: String,
+        error: String,
+    },
+}
+
+/// Phase of CD import process
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportPhase {
+    /// CD ripping phase - reading audio from CD
+    Rip,
+    /// Chunk upload/encryption phase - streaming to cloud storage
+    Chunk,
 }
 
 /// Maps a logical track to its physical audio file.

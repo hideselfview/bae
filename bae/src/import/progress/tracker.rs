@@ -97,19 +97,21 @@ impl ImportProgressTracker {
             progress_update.1
         );
 
-        // Emit release-level progress
+        // Emit release-level progress (Chunk phase)
         let _ = self.tx.send(ImportProgress::Progress {
             id: self.release_id.clone(),
             percent: progress_update.1,
+            phase: Some(crate::import::types::ImportPhase::Chunk),
         });
 
-        // Emit track-level progress for each track that's still importing
+        // Emit track-level progress for each track that's still importing (Chunk phase)
         for (track_id, percent) in track_progress_updates {
             trace!("Track {} progress: {}%", track_id, percent);
 
             let _ = self.tx.send(ImportProgress::Progress {
                 id: track_id.clone(),
                 percent,
+                phase: Some(crate::import::types::ImportPhase::Chunk),
             });
         }
 

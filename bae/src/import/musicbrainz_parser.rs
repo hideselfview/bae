@@ -20,40 +20,10 @@ pub async fn fetch_and_parse_mb_release(
     master_year: u32,
 ) -> Result<ParsedMbAlbum, String> {
     // Fetch full release with recordings and URL relationships
-    let (mb_release, external_urls) = lookup_release_by_id(release_id)
+    // The JSON is already included in the response, so we don't need a second HTTP request
+    let (mb_release, external_urls, json) = lookup_release_by_id(release_id)
         .await
         .map_err(|e| format!("Failed to fetch MusicBrainz release: {}", e))?;
-
-    // Fetch full release JSON to get tracklist
-    let url = format!("https://musicbrainz.org/ws/2/release/{}", release_id);
-    let url_with_params = format!(
-        "{}?inc=recordings+artist-credits+release-groups+labels+media",
-        url
-    );
-
-    let client = reqwest::Client::builder()
-        .user_agent("bae/1.0 +https://github.com/hideselfview/bae")
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-
-    let response = client
-        .get(&url_with_params)
-        .header("Accept", "application/json")
-        .send()
-        .await
-        .map_err(|e| format!("HTTP request failed: {}", e))?;
-
-    if !response.status().is_success() {
-        return Err(format!(
-            "MusicBrainz API returned status: {}",
-            response.status()
-        ));
-    }
-
-    let json: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse JSON: {}", e))?;
 
     // Optionally fetch Discogs data if URLs are available
     let discogs_release = if let Some(ref discogs_url) = external_urls.discogs_release_url {

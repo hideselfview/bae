@@ -38,6 +38,7 @@ pub fn FolderDetectionPage() -> Element {
     let mut selected_source = use_signal(|| ImportSource::Folder);
     let torrent_source = use_signal(|| None::<crate::import::TorrentSource>);
     let seed_after_download = use_signal(|| true);
+    let cd_toc_info: Signal<Option<(String, u8, u8)>> = use_signal(|| None); // (disc_id, first_track, last_track)
 
     let on_source_select = {
         let import_context = import_context.clone();
@@ -519,11 +520,13 @@ pub fn FolderDetectionPage() -> Element {
         let import_service = import_service.clone();
         let torrent_source_signal = torrent_source;
         let seed_after_download_signal = seed_after_download;
+        let selected_source_signal = selected_source;
         move |candidate: MatchCandidate| {
             let folder = folder_path.read().clone();
             let metadata = detected_metadata.read().clone();
             let torrent_source_opt = torrent_source_signal.read().clone();
             let seed_flag = *seed_after_download_signal.read();
+            let current_source = selected_source_signal.read().clone();
             let import_service = import_service.clone();
             let mut duplicate_album_id = duplicate_album_id;
             let mut import_error_message = import_error_message;
@@ -575,8 +578,49 @@ pub fn FolderDetectionPage() -> Element {
                 // Extract master_year from metadata or release date
                 let master_year = metadata.as_ref().and_then(|m| m.year).unwrap_or(1970);
 
+                // Check if this is a CD import
+                if current_source == ImportSource::Cd {
+                    match candidate.source.clone() {
+                        MatchSource::Discogs(_discogs_result) => {
+                            // CD imports currently only support MusicBrainz
+                            import_error_message
+                                .set(Some("CD imports require MusicBrainz metadata".to_string()));
+                            return;
+                        }
+                        MatchSource::MusicBrainz(mb_release) => {
+                            info!(
+                                "Starting CD import for MusicBrainz release: {}",
+                                mb_release.title
+                            );
+
+                            let request = ImportRequestParams::FromCd {
+                                discogs_release: None,
+                                mb_release: Some(mb_release.clone()),
+                                drive_path: PathBuf::from(folder),
+                                master_year,
+                            };
+
+                            match import_service.send_request(request).await {
+                                Ok((album_id, _release_id)) => {
+                                    info!("Import started, navigating to album: {}", album_id);
+                                    // Reset import state before navigating
+                                    import_context_for_reset.reset();
+                                    navigator.push(Route::AlbumDetail {
+                                        album_id,
+                                        release_id: String::new(),
+                                    });
+                                }
+                                Err(e) => {
+                                    let error_msg = format!("Failed to start import: {}", e);
+                                    error!("{}", error_msg);
+                                    import_error_message.set(Some(error_msg));
+                                }
+                            }
+                        }
+                    }
+                }
                 // Check if this is a torrent import
-                if let Some(torrent_source) = torrent_source_opt {
+                else if let Some(torrent_source) = torrent_source_opt {
                     match candidate.source.clone() {
                         MatchSource::Discogs(discogs_result) => {
                             let master_id = match discogs_result.master_id {
@@ -854,9 +898,89 @@ pub fn FolderDetectionPage() -> Element {
                             on_drive_select: {
                                 let mut folder_path = folder_path;
                                 let mut import_phase = import_phase;
+                                let mut cd_toc_info = cd_toc_info;
+                                // Extract signals from Rc before the closure (signals are Copy)
+                                let mut is_looking_up_signal = is_looking_up;
+                                let mut exact_match_candidates_signal = exact_match_candidates;
+                                let mut detected_metadata_signal = detected_metadata;
+                                let mut import_error_message_signal = import_error_message;
+                                let mut search_query_signal = search_query;
+                                let mut confirmed_candidate_signal = confirmed_candidate;
                                 move |drive_path: PathBuf| {
                                     folder_path.set(drive_path.to_string_lossy().to_string());
-                                    import_phase.set(crate::ui::import_context::ImportPhase::MetadataDetection);
+                                    import_phase.set(crate::ui::import_context::ImportPhase::ExactLookup);
+                                    is_looking_up_signal.set(true);
+                                    exact_match_candidates_signal.set(Vec::new());
+                                    detected_metadata_signal.set(None);
+                                    import_error_message_signal.set(None);
+
+                                    // Read TOC from CD and look up by DiscID
+                                    let drive_path_clone = drive_path.clone();
+                                    let mut cd_toc_info_async = cd_toc_info;
+                                    // Clone signals for async task (signals are Copy)
+                                    let mut is_looking_up_async = is_looking_up_signal;
+                                    let mut import_phase_async = import_phase;
+                                    let mut search_query_async = search_query_signal;
+                                    let mut confirmed_candidate_async = confirmed_candidate_signal;
+                                    let mut exact_match_candidates_async = exact_match_candidates_signal;
+                                    let mut import_error_message_async = import_error_message_signal;
+
+                                    spawn(async move {
+                                        use crate::cd::CdDrive;
+
+                                        let drive = CdDrive {
+                                            device_path: drive_path_clone.clone(),
+                                            name: drive_path_clone.to_string_lossy().to_string(),
+                                        };
+
+                                        match drive.read_toc() {
+                                            Ok(toc) => {
+                                                // Store CD info for display
+                                                cd_toc_info_async.set(Some((toc.disc_id.clone(), toc.first_track, toc.last_track)));
+
+                                                // Look up by DiscID
+                                                match lookup_by_discid(&toc.disc_id).await {
+                                                    Ok((matches, _external_urls)) => {
+                                                        is_looking_up_async.set(false);
+                                                        if matches.is_empty() {
+                                                            // No exact match, go to manual search
+                                                            import_phase_async.set(crate::ui::import_context::ImportPhase::ManualSearch);
+                                                            search_query_async.set(format!("DiscID: {}", toc.disc_id));
+                                                        } else if matches.len() == 1 {
+                                                            // Single exact match, convert to MatchCandidate and auto-confirm
+                                                            let mb_release = matches[0].clone();
+                                                            let candidate = MatchCandidate {
+                                                                source: MatchSource::MusicBrainz(mb_release),
+                                                                confidence: 100.0, // Exact DiscID match
+                                                                match_reasons: vec!["Exact DiscID match".to_string()],
+                                                            };
+                                                            confirmed_candidate_async.set(Some(candidate));
+                                                            import_phase_async.set(crate::ui::import_context::ImportPhase::Confirmation);
+                                                        } else {
+                                                            // Multiple matches, convert to MatchCandidates and show selection
+                                                            let candidates: Vec<MatchCandidate> = matches.into_iter().map(|mb_release| {
+                                                                MatchCandidate {
+                                                                    source: MatchSource::MusicBrainz(mb_release),
+                                                                    confidence: 100.0, // Exact DiscID match
+                                                                    match_reasons: vec!["Exact DiscID match".to_string()],
+                                                                }
+                                                            }).collect();
+                                                            exact_match_candidates_async.set(candidates);
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        is_looking_up_async.set(false);
+                                                        import_error_message_async.set(Some(format!("Failed to look up DiscID: {}", e)));
+                                                        import_phase_async.set(crate::ui::import_context::ImportPhase::ManualSearch);
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                is_looking_up_async.set(false);
+                                                import_error_message_async.set(Some(format!("Failed to read CD TOC: {}", e)));
+                                            }
+                                        }
+                                    });
                                 }
                             },
                             on_error: {
@@ -877,6 +1001,8 @@ pub fn FolderDetectionPage() -> Element {
                                 h3 { class: "text-sm font-semibold text-gray-700 uppercase tracking-wide",
                                     if torrent_source.read().is_some() {
                                         "Selected Torrent"
+                                    } else if *selected_source.read() == ImportSource::Cd {
+                                        "Selected CD"
                                     } else {
                                         "Selected Folder"
                                     }
@@ -891,6 +1017,28 @@ pub fn FolderDetectionPage() -> Element {
                                 p {
                                     class: "text-sm text-gray-900 font-mono select-text cursor-text break-all",
                                     "{folder_path.read()}"
+                                }
+                            }
+                            if *selected_source.read() == ImportSource::Cd {
+                                if let Some((disc_id, first_track, last_track)) = cd_toc_info.read().as_ref() {
+                                    div { class: "mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg",
+                                        div { class: "space-y-2",
+                                            div { class: "flex items-center",
+                                                span { class: "text-sm font-medium text-gray-700 w-24", "DiscID:" }
+                                                span { class: "text-sm text-gray-900 font-mono", "{disc_id}" }
+                                            }
+                                            div { class: "flex items-center",
+                                                span { class: "text-sm font-medium text-gray-700 w-24", "Tracks:" }
+                                                span { class: "text-sm text-gray-900",
+                                                    "{last_track - first_track + 1} tracks ({first_track}-{last_track})"
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else if *is_looking_up.read() {
+                                    div { class: "mt-4 p-4 bg-gray-50 border border-gray-200 rounded-lg text-center",
+                                        p { class: "text-sm text-gray-600", "Reading CD table of contents..." }
+                                    }
                                 }
                             }
                         }

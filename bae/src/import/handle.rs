@@ -12,9 +12,18 @@ use crate::import::types::{
 use crate::library::SharedLibraryManager;
 use crate::playback::symphonia_decoder::TrackDecoder;
 use crate::torrent::{SelectiveDownloader, TorrentClient};
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
+
+/// Active CD import information
+#[derive(Debug, Clone)]
+struct ActiveCdImport {
+    release_id: String,
+    album_id: String,
+}
 
 /// Handle for sending import requests and subscribing to progress updates
 #[derive(Clone)]
@@ -25,6 +34,8 @@ pub struct ImportHandle {
     pub library_manager: SharedLibraryManager,
     pub runtime_handle: tokio::runtime::Handle,
     torrent_client: TorrentClient,
+    /// Track active CD imports by drive path (drive_path -> ActiveCdImport)
+    active_cd_imports: Arc<Mutex<HashMap<PathBuf, ActiveCdImport>>>,
 }
 
 /// Torrent-specific metadata for import
@@ -59,6 +70,7 @@ impl ImportHandle {
             library_manager,
             runtime_handle,
             torrent_client,
+            active_cd_imports: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -487,118 +499,15 @@ impl ImportHandle {
                         return Err("No release provided".to_string());
                     };
 
-                // Send started progress
-                let _ = self.progress_tx.send(ImportProgress::Started {
-                    id: db_release.id.clone(),
-                });
+                // ========== INSERT ARTISTS, ALBUM, RELEASE, TRACKS ==========
+                // Insert into database BEFORE ripping so UI can navigate and show progress
 
-                // ========== CD RIPPING ==========
-
-                // Create temporary directory for ripped files
-                let temp_dir =
-                    std::env::temp_dir().join(format!("bae_cd_rip_{}", uuid::Uuid::new_v4()));
-                tokio::fs::create_dir_all(&temp_dir)
-                    .await
-                    .map_err(|e| format!("Failed to create temp directory: {}", e))?;
-
-                // Rip tracks to FLAC (clone drive for ripper)
-                let drive_for_ripper = drive.clone();
-                let ripper = CdRipper::new(drive_for_ripper, toc.clone(), temp_dir.clone());
-
-                // Create progress channel for ripping
-                let (rip_progress_tx, mut rip_progress_rx) =
-                    mpsc::unbounded_channel::<crate::cd::RipProgress>();
-
-                let release_id = db_release.id.clone();
-                let progress_tx_for_ripping = self.progress_tx.clone();
-
-                // Spawn task to forward ripping progress to UI
-                tokio::spawn(async move {
-                    while let Some(rip_progress) = rip_progress_rx.recv().await {
-                        // Convert RipProgress to ImportProgress
-                        let _ = progress_tx_for_ripping.send(ImportProgress::Progress {
-                            id: release_id.clone(),
-                            percent: rip_progress.percent,
-                        });
-                    }
-                });
-
-                let rip_results = ripper
-                    .rip_all_tracks(Some(rip_progress_tx))
-                    .await
-                    .map_err(|e| format!("Failed to rip CD: {}", e))?;
-
-                // ========== GENERATE CUE SHEET AND LOG FILE ==========
-
-                // Get artist name from album_artists (first artist)
-                let performer_name = if let Some(first_artist) = artists.first() {
-                    first_artist.name.clone()
-                } else {
-                    "Unknown Artist".to_string()
-                };
-
-                let flac_filename = format!("{}.flac", db_album.title.replace("/", "_"));
-                let cue_sheet = CueGenerator::generate_cue_sheet(
-                    &toc,
-                    &rip_results,
-                    &flac_filename,
-                    &performer_name,
-                    &db_album.title,
-                );
-
-                let cue_path = temp_dir.join(format!("{}.cue", db_album.title.replace("/", "_")));
-                CueGenerator::write_cue_file(&cue_sheet, &toc.disc_id, &flac_filename, &cue_path)
-                    .map_err(|e| format!("Failed to write CUE file: {}", e))?;
-
-                let log_path = temp_dir.join(format!("{}.log", db_album.title.replace("/", "_")));
-                LogGenerator::write_log_file(&toc, &rip_results, &drive.name, &log_path)
-                    .map_err(|e| format!("Failed to write log file: {}", e))?;
-
-                // ========== DISCOVER FILES ==========
-
-                let mut discovered_files = Vec::new();
-                for result in &rip_results {
-                    let size = tokio::fs::metadata(&result.output_path)
-                        .await
-                        .map_err(|e| format!("Failed to get file size: {}", e))?
-                        .len();
-                    discovered_files.push(DiscoveredFile {
-                        path: result.output_path.clone(),
-                        size,
-                    });
-                }
-
-                // Add CUE and log files
-                let cue_size = tokio::fs::metadata(&cue_path)
-                    .await
-                    .map_err(|e| format!("Failed to get CUE file size: {}", e))?
-                    .len();
-                discovered_files.push(DiscoveredFile {
-                    path: cue_path.clone(),
-                    size: cue_size,
-                });
-
-                let log_size = tokio::fs::metadata(&log_path)
-                    .await
-                    .map_err(|e| format!("Failed to get log file size: {}", e))?
-                    .len();
-                discovered_files.push(DiscoveredFile {
-                    path: log_path.clone(),
-                    size: log_size,
-                });
-
-                // ========== MAP TRACKS TO FILES ==========
-
-                let mapping_result = map_tracks_to_files(&db_tracks, &discovered_files).await?;
-                let tracks_to_files = mapping_result.track_files.clone();
-                let cue_flac_metadata = mapping_result.cue_flac_metadata.clone();
-
-                // ========== INSERT ARTISTS ==========
-
+                // Insert or lookup artists (deduplicate across imports)
                 let mut artist_id_map = std::collections::HashMap::new();
                 for artist in &artists {
                     let parsed_id = artist.id.clone();
 
+                    // Check if artist already exists by Discogs ID
                     let existing = if let Some(ref discogs_id) = artist.discogs_artist_id {
                         library_manager
                             .get_artist_by_discogs_id(discogs_id)
@@ -608,6 +517,7 @@ impl ImportHandle {
                         None
                     };
 
+                    // Insert only if artist doesn't exist
                     let actual_id = if let Some(existing_artist) = existing {
                         existing_artist.id
                     } else {
@@ -621,17 +531,13 @@ impl ImportHandle {
                     artist_id_map.insert(parsed_id, actual_id);
                 }
 
-                // ========== INSERT ALBUM + RELEASE + TRACKS ==========
-
+                // Insert album + release + tracks with status='queued'
                 library_manager
                     .insert_album_with_release_and_tracks(&db_album, &db_release, &db_tracks)
                     .await
                     .map_err(|e| format!("Database error: {}", e))?;
 
-                // Extract and store durations
-                extract_and_store_durations(library_manager, &tracks_to_files).await?;
-
-                // Insert album-artist relationships
+                // Insert album-artist relationships (using actual database artist IDs)
                 for album_artist in &album_artists {
                     let actual_artist_id =
                         artist_id_map.get(&album_artist.artist_id).ok_or_else(|| {
@@ -652,29 +558,316 @@ impl ImportHandle {
                         })?;
                 }
 
-                tracing::info!(
-                    "Validated and queued CD import '{}' (release: {}) with {} tracks",
-                    db_album.title,
-                    db_release.id,
-                    db_tracks.len()
-                );
+                // Send started progress
+                let _ = self.progress_tx.send(ImportProgress::Started {
+                    id: db_release.id.clone(),
+                });
 
-                // ========== QUEUE FOR PIPELINE ==========
-
+                // Return album_id immediately so UI can navigate and show progress
                 let album_id = db_album.id.clone();
                 let release_id = db_release.id.clone();
+                let release_id_for_spawn = release_id.clone();
 
-                self.requests_tx
-                    .send(ImportCommand::CdImport {
-                        db_album,
-                        db_release,
+                // ========== TRACK ACTIVE CD IMPORT ==========
+                // Store drive_path -> ActiveCdImport mapping before spawning background task
+                let drive_path_for_tracking = drive.device_path.clone();
+                let active_cd_imports_for_tracking = self.active_cd_imports.clone();
+                {
+                    let mut active_imports = active_cd_imports_for_tracking.lock().unwrap();
+                    active_imports.insert(
+                        drive_path_for_tracking.clone(),
+                        ActiveCdImport {
+                            release_id: release_id.clone(),
+                            album_id: album_id.clone(),
+                        },
+                    );
+                }
+
+                // ========== CD RIPPING (in background) ==========
+                // Spawn ripping in background task so UI can navigate immediately
+                let drive_for_ripper = drive.clone();
+                let toc_for_ripper = toc.clone();
+                let db_album_for_ripper = db_album.clone();
+                let db_release_for_ripper = db_release.clone();
+                let db_tracks_for_ripper = db_tracks.clone();
+                let artists_for_ripper = artists.clone();
+                let requests_tx_for_ripper = self.requests_tx.clone();
+                let progress_tx_for_ripper = self.progress_tx.clone();
+                let library_manager_for_ripper = self.library_manager.clone();
+                // Clone for cleanup
+                let active_cd_imports_for_cleanup = active_cd_imports_for_tracking.clone();
+                let drive_path_for_cleanup = drive_path_for_tracking.clone();
+
+                tokio::spawn(async move {
+                    let release_id = release_id_for_spawn;
+                    info!(
+                        "Starting CD ripping process for {} tracks",
+                        toc_for_ripper.last_track - toc_for_ripper.first_track + 1
+                    );
+
+                    // Helper closure to cleanup active import tracking on error
+                    let cleanup_on_error = || {
+                        let mut active_imports = active_cd_imports_for_cleanup.lock().unwrap();
+                        active_imports.remove(&drive_path_for_cleanup);
+                    };
+
+                    // Create temporary directory for ripped files
+                    let temp_dir =
+                        std::env::temp_dir().join(format!("bae_cd_rip_{}", uuid::Uuid::new_v4()));
+                    info!("Creating temp directory: {:?}", temp_dir);
+                    if let Err(e) = tokio::fs::create_dir_all(&temp_dir).await {
+                        let _ = progress_tx_for_ripper.send(ImportProgress::Failed {
+                            id: release_id.clone(),
+                            error: format!("Failed to create temp directory: {}", e),
+                        });
+                        cleanup_on_error();
+                        return;
+                    }
+                    info!("Temp directory created successfully");
+
+                    // Rip tracks to FLAC (clone drive name before moving drive)
+                    let drive_name_for_log = drive_for_ripper.name.clone();
+                    let ripper =
+                        CdRipper::new(drive_for_ripper, toc_for_ripper.clone(), temp_dir.clone());
+
+                    // Create progress channel for ripping
+                    let (rip_progress_tx, mut rip_progress_rx) =
+                        mpsc::unbounded_channel::<crate::cd::RipProgress>();
+
+                    let release_id_for_progress = release_id.clone();
+                    let progress_tx_for_ripping = progress_tx_for_ripper.clone();
+                    // Map track numbers (1-indexed) to track IDs
+                    let track_number_to_id: std::collections::HashMap<u8, String> =
+                        db_tracks_for_ripper
+                            .iter()
+                            .enumerate()
+                            .map(|(idx, track)| {
+                                // Track numbers are 1-indexed, enumerate is 0-indexed
+                                let track_num = (toc_for_ripper.first_track + idx as u8) as u8;
+                                (track_num, track.id.clone())
+                            })
+                            .collect();
+
+                    // Spawn task to forward ripping progress to UI
+                    // Note: We don't send Started events for tracks - just Progress events like folder imports
+                    tokio::spawn(async move {
+                        while let Some(rip_progress) = rip_progress_rx.recv().await {
+                            use crate::import::types::ImportPhase;
+
+                            // Send release-level progress (Rip phase)
+                            let _ = progress_tx_for_ripping.send(ImportProgress::Progress {
+                                id: release_id_for_progress.clone(),
+                                percent: rip_progress.percent,
+                                phase: Some(ImportPhase::Rip),
+                            });
+
+                            // Send track-level progress (Rip phase) for the current track
+                            // Like folder imports, we send progress for the active track
+                            if let Some(track_id) = track_number_to_id.get(&rip_progress.track) {
+                                // Use track_percent directly from RipProgress (already calculated in paranoia.rs)
+                                let _ = progress_tx_for_ripping.send(ImportProgress::Progress {
+                                    id: track_id.clone(),
+                                    percent: rip_progress.track_percent,
+                                    phase: Some(ImportPhase::Rip),
+                                });
+                            }
+                        }
+                    });
+
+                    info!("Calling rip_all_tracks...");
+                    let rip_results = match ripper.rip_all_tracks(Some(rip_progress_tx)).await {
+                        Ok(results) => {
+                            info!("CD ripping completed, {} tracks ripped", results.len());
+                            results
+                        }
+                        Err(e) => {
+                            info!("rip_all_tracks returned error: {}, sending Failed progress and cleaning up", e);
+                            let _ = progress_tx_for_ripper.send(ImportProgress::Failed {
+                                id: release_id.clone(),
+                                error: format!("Failed to rip CD: {}", e),
+                            });
+                            info!("Failed progress sent, cleaning up active import tracking");
+                            cleanup_on_error();
+                            info!("Cleanup complete, returning from ripping task");
+                            return;
+                        }
+                    };
+
+                    // ========== GENERATE CUE SHEET AND LOG FILE ==========
+
+                    // Get artist name from album_artists (first artist)
+                    let performer_name = if let Some(first_artist) = artists_for_ripper.first() {
+                        first_artist.name.clone()
+                    } else {
+                        "Unknown Artist".to_string()
+                    };
+
+                    let flac_filename =
+                        format!("{}.flac", db_album_for_ripper.title.replace("/", "_"));
+                    let cue_sheet = CueGenerator::generate_cue_sheet(
+                        &toc_for_ripper,
+                        &rip_results,
+                        &flac_filename,
+                        &performer_name,
+                        &db_album_for_ripper.title,
+                    );
+
+                    let cue_path = temp_dir.join(format!(
+                        "{}.cue",
+                        db_album_for_ripper.title.replace("/", "_")
+                    ));
+                    if let Err(e) = CueGenerator::write_cue_file(
+                        &cue_sheet,
+                        &toc_for_ripper.disc_id,
+                        &flac_filename,
+                        &cue_path,
+                    ) {
+                        let _ = progress_tx_for_ripper.send(ImportProgress::Failed {
+                            id: release_id.clone(),
+                            error: format!("Failed to write CUE file: {}", e),
+                        });
+                        cleanup_on_error();
+                        return;
+                    }
+
+                    let log_path = temp_dir.join(format!(
+                        "{}.log",
+                        db_album_for_ripper.title.replace("/", "_")
+                    ));
+                    if let Err(e) = LogGenerator::write_log_file(
+                        &toc_for_ripper,
+                        &rip_results,
+                        &drive_name_for_log,
+                        &log_path,
+                    ) {
+                        let _ = progress_tx_for_ripper.send(ImportProgress::Failed {
+                            id: release_id.clone(),
+                            error: format!("Failed to write log file: {}", e),
+                        });
+                        cleanup_on_error();
+                        return;
+                    }
+
+                    // ========== DISCOVER FILES ==========
+
+                    let mut discovered_files = Vec::new();
+                    for result in &rip_results {
+                        match tokio::fs::metadata(&result.output_path).await {
+                            Ok(metadata) => {
+                                discovered_files.push(DiscoveredFile {
+                                    path: result.output_path.clone(),
+                                    size: metadata.len(),
+                                });
+                            }
+                            Err(e) => {
+                                let _ = progress_tx_for_ripper.send(ImportProgress::Failed {
+                                    id: release_id.clone(),
+                                    error: format!("Failed to get file size: {}", e),
+                                });
+                                cleanup_on_error();
+                                return;
+                            }
+                        }
+                    }
+
+                    // Add CUE and log files
+                    match tokio::fs::metadata(&cue_path).await {
+                        Ok(metadata) => {
+                            discovered_files.push(DiscoveredFile {
+                                path: cue_path.clone(),
+                                size: metadata.len(),
+                            });
+                        }
+                        Err(e) => {
+                            let _ = progress_tx_for_ripper.send(ImportProgress::Failed {
+                                id: release_id.clone(),
+                                error: format!("Failed to get CUE file size: {}", e),
+                            });
+                            cleanup_on_error();
+                            return;
+                        }
+                    }
+
+                    match tokio::fs::metadata(&log_path).await {
+                        Ok(metadata) => {
+                            discovered_files.push(DiscoveredFile {
+                                path: log_path.clone(),
+                                size: metadata.len(),
+                            });
+                        }
+                        Err(e) => {
+                            let _ = progress_tx_for_ripper.send(ImportProgress::Failed {
+                                id: release_id.clone(),
+                                error: format!("Failed to get log file size: {}", e),
+                            });
+                            cleanup_on_error();
+                            return;
+                        }
+                    }
+
+                    // ========== MAP TRACKS TO FILES ==========
+
+                    let mapping_result =
+                        match map_tracks_to_files(&db_tracks_for_ripper, &discovered_files).await {
+                            Ok(result) => result,
+                            Err(e) => {
+                                let _ = progress_tx_for_ripper.send(ImportProgress::Failed {
+                                    id: release_id.clone(),
+                                    error: format!("Failed to map tracks to files: {}", e),
+                                });
+                                cleanup_on_error();
+                                return;
+                            }
+                        };
+                    let tracks_to_files = mapping_result.track_files.clone();
+                    let cue_flac_metadata = mapping_result.cue_flac_metadata.clone();
+
+                    // Extract and store durations
+                    if let Err(e) = extract_and_store_durations(
+                        library_manager_for_ripper.get(),
+                        &tracks_to_files,
+                    )
+                    .await
+                    {
+                        let _ = progress_tx_for_ripper.send(ImportProgress::Failed {
+                            id: release_id.clone(),
+                            error: format!("Failed to extract durations: {}", e),
+                        });
+                        cleanup_on_error();
+                        return;
+                    }
+
+                    tracing::info!(
+                        "CD ripping and validation complete, queuing import '{}' (release: {}) with {} tracks",
+                        db_album_for_ripper.title,
+                        release_id,
+                        db_tracks_for_ripper.len()
+                    );
+
+                    // ========== QUEUE FOR PIPELINE ==========
+
+                    if let Err(_) = requests_tx_for_ripper.send(ImportCommand::CdImport {
+                        db_album: db_album_for_ripper,
+                        db_release: db_release_for_ripper,
                         tracks_to_files,
                         discovered_files,
                         cue_flac_metadata,
                         temp_dir,
-                    })
-                    .map_err(|_| "Failed to queue validated CD import".to_string())?;
+                    }) {
+                        let _ = progress_tx_for_ripper.send(ImportProgress::Failed {
+                            id: release_id.clone(),
+                            error: "Failed to queue validated CD import".to_string(),
+                        });
+                        cleanup_on_error();
+                        return;
+                    }
 
+                    // Clean up active CD import tracking when ripping completes
+                    // (the import will continue in the pipeline, but ripping is done)
+                    cleanup_on_error();
+                });
+
+                // Return immediately so UI can navigate and show progress
                 Ok((album_id, release_id))
             }
         }
@@ -696,6 +889,15 @@ impl ImportHandle {
         track_id: String,
     ) -> tokio::sync::mpsc::UnboundedReceiver<ImportProgress> {
         self.progress_handle.subscribe_track(track_id)
+    }
+
+    /// Get the active CD import info for the given drive path, if any
+    /// Returns (release_id, album_id) for navigation
+    pub fn get_active_cd_import(&self, drive_path: &PathBuf) -> Option<(String, String)> {
+        let active_imports = self.active_cd_imports.lock().unwrap();
+        active_imports
+            .get(drive_path)
+            .map(|info| (info.release_id.clone(), info.album_id.clone()))
     }
 }
 

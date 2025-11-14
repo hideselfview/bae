@@ -52,8 +52,15 @@ pub fn use_track_progress(
                             trace!("Track {} started importing", track_id);
                             state.set(TrackImportState::Importing { percent: 0 });
                         }
-                        ImportProgress::Progress { percent, .. } => {
-                            trace!("Track {} progress: {}%", track_id, percent);
+                        ImportProgress::Progress { percent, phase, .. } => {
+                            // phase can be None (for backward compatibility) or Some(Rip/Chunk)
+                            // UI can display differently based on phase if needed
+                            trace!(
+                                "Track {} progress: {}% (phase: {:?})",
+                                track_id,
+                                percent,
+                                phase
+                            );
                             state.set(TrackImportState::Importing { percent });
                         }
                         ImportProgress::Complete { .. } => {

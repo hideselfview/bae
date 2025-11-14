@@ -35,4 +35,4 @@ pub use folder_metadata_detector::{
 };
 pub use handle::ImportHandle;
 pub use service::{ImportConfig, ImportService};
-pub use types::{ImportProgress, ImportRequestParams, TorrentSource};
+pub use types::{ImportPhase, ImportProgress, ImportRequestParams, TorrentSource};

@@ -271,9 +271,10 @@ async fn fetch_release_group_with_relations(
 }
 
 /// Lookup a specific release by MusicBrainz release ID and extract external URLs
+/// Returns the full JSON response for reuse by callers
 pub async fn lookup_release_by_id(
     release_id: &str,
-) -> Result<(MbRelease, ExternalUrls), MusicBrainzError> {
+) -> Result<(MbRelease, ExternalUrls, serde_json::Value), MusicBrainzError> {
     info!("🎵 MusicBrainz: Looking up release ID '{}'", release_id);
 
     let url = format!("https://musicbrainz.org/ws/2/release/{}", release_id);
@@ -503,7 +504,7 @@ pub async fn lookup_release_by_id(
         barcode,
     };
 
-    Ok((release, external_urls))
+    Ok((release, external_urls, json))
 }
 
 /// Search MusicBrainz for releases by artist, album, and optional year
