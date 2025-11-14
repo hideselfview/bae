@@ -14,7 +14,7 @@ pub fn CdRipper(on_drive_select: EventHandler<PathBuf>, on_error: EventHandler<S
     let mut is_scanning = use_signal(|| false);
     let import_service = use_import_service();
     let navigator = use_navigator();
-    
+
     // Track active import state
     let mut active_import_info = use_signal(|| None::<(String, String)>); // (release_id, album_id)
     let mut import_progress = use_signal(|| None::<u8>);
@@ -125,12 +125,12 @@ pub fn CdRipper(on_drive_select: EventHandler<PathBuf>, on_error: EventHandler<S
                                         let import_service_for_change = import_service_for_onchange.clone();
                                         selected_drive.set(Some(path.clone()));
                                         on_drive_select.call(path.clone());
-                                        
+
                                         // Check for active import on this drive
                                         if let Some((release_id, album_id)) = import_service_for_change.get_active_cd_import(&path) {
                                             active_import_info.set(Some((release_id.clone(), album_id.clone())));
                                             import_progress.set(Some(0));
-                                            
+
                                             // Subscribe to progress updates
                                             let mut progress_rx = import_service_for_change.subscribe_release(release_id);
                                             let mut active_import_info_for_progress = active_import_info;
@@ -171,7 +171,7 @@ pub fn CdRipper(on_drive_select: EventHandler<PathBuf>, on_error: EventHandler<S
                                     }
                                 }
                             }
-                            
+
                             // Display active import progress if any
                             if let Some((release_id, album_id)) = active_import_info.read().clone() {
                                 div { class: "mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg",
@@ -184,7 +184,7 @@ pub fn CdRipper(on_drive_select: EventHandler<PathBuf>, on_error: EventHandler<S
                                                 if let Some(phase) = import_phase.read().as_ref() {
                                                     span { class: "text-xs text-blue-600",
                                                         match phase {
-                                                            ImportPhase::Rip => "Ripping CD...",
+                                                            ImportPhase::Acquire => "Ripping CD...",
                                                             ImportPhase::Chunk => "Uploading...",
                                                         }
                                                     }

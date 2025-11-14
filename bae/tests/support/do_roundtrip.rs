@@ -5,7 +5,7 @@ use bae::cloud_storage::CloudStorageManager;
 use bae::db::Database;
 use bae::discogs::DiscogsRelease;
 use bae::encryption::EncryptionService;
-use bae::import::{ImportConfig, ImportRequestParams, ImportService};
+use bae::import::{ImportConfig, ImportRequest, ImportService};
 use bae::library::LibraryManager;
 use bae::playback::reassemble_track;
 use std::sync::Arc;
@@ -116,7 +116,7 @@ pub async fn do_roundtrip<F, G>(
 
     let master_year = discogs_release.year.unwrap_or(1970);
     let (_album_id, release_id) = import_handle
-        .send_request(ImportRequestParams::FromFolder {
+        .send_request(ImportRequest::Folder {
             discogs_release,
             folder: album_dir.clone(),
             master_year,

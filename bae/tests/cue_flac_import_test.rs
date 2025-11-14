@@ -19,7 +19,7 @@ use bae::config::Config;
 use bae::db::Database;
 use bae::discogs::client::DiscogsClient;
 use bae::encryption::EncryptionService;
-use bae::import::{ImportConfig, ImportRequestParams, ImportService};
+use bae::import::{ImportConfig, ImportRequest, ImportService};
 use bae::library::{LibraryManager, SharedLibraryManager};
 use bae::playback::reassembly::reassemble_track;
 use std::path::PathBuf;
@@ -110,7 +110,7 @@ async fn test_cue_flac_import() {
         .expect("Failed to fetch Discogs release");
 
     // Import
-    let params = ImportRequestParams::FromFolder {
+    let params = ImportRequest::Folder {
         discogs_release,
         folder: folder_path,
         master_year: 1970,

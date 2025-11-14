@@ -7,7 +7,7 @@ use crate::cue_flac::CueFlacProcessor;
 use crate::import::progress::ImportProgressHandle;
 use crate::import::track_to_file_mapper::map_tracks_to_files;
 use crate::import::types::{
-    DiscoveredFile, ImportCommand, ImportProgress, ImportRequestParams, TorrentSource, TrackFile,
+    DiscoveredFile, ImportCommand, ImportProgress, ImportRequest, TorrentSource, TrackFile,
 };
 use crate::library::SharedLibraryManager;
 use crate::playback::symphonia_decoder::TrackDecoder;
@@ -82,12 +82,9 @@ impl ImportHandle {
     /// request is sent to the import worker.  
     ///
     /// Returns (album_id, release_id) for navigation and progress subscription.
-    pub async fn send_request(
-        &self,
-        params: ImportRequestParams,
-    ) -> Result<(String, String), String> {
-        match params {
-            ImportRequestParams::FromFolder {
+    pub async fn send_request(&self, request: ImportRequest) -> Result<(String, String), String> {
+        match request {
+            ImportRequest::Folder {
                 discogs_release,
                 mb_release,
                 folder,
@@ -195,7 +192,7 @@ impl ImportHandle {
                 let release_id = db_release.id.clone();
 
                 self.requests_tx
-                    .send(ImportCommand::FolderImport {
+                    .send(ImportCommand::Folder {
                         db_album,
                         db_release,
                         tracks_to_files,
@@ -206,7 +203,7 @@ impl ImportHandle {
 
                 Ok((album_id, release_id))
             }
-            ImportRequestParams::FromTorrent {
+            ImportRequest::Torrent {
                 torrent_source,
                 discogs_release,
                 mb_release,
@@ -445,7 +442,7 @@ impl ImportHandle {
                 let release_id = db_release.id.clone();
 
                 self.requests_tx
-                    .send(ImportCommand::TorrentImport {
+                    .send(ImportCommand::Torrent {
                         db_album,
                         db_release,
                         tracks_to_files,
@@ -457,7 +454,7 @@ impl ImportHandle {
 
                 Ok((album_id, release_id))
             }
-            ImportRequestParams::FromCd {
+            ImportRequest::CD {
                 discogs_release,
                 mb_release,
                 drive_path,
@@ -643,7 +640,7 @@ impl ImportHandle {
                             .enumerate()
                             .map(|(idx, track)| {
                                 // Track numbers are 1-indexed, enumerate is 0-indexed
-                                let track_num = (toc_for_ripper.first_track + idx as u8) as u8;
+                                let track_num = toc_for_ripper.first_track + idx as u8;
                                 (track_num, track.id.clone())
                             })
                             .collect();
@@ -658,7 +655,7 @@ impl ImportHandle {
                             let _ = progress_tx_for_ripping.send(ImportProgress::Progress {
                                 id: release_id_for_progress.clone(),
                                 percent: rip_progress.percent,
-                                phase: Some(ImportPhase::Rip),
+                                phase: Some(ImportPhase::Acquire),
                             });
 
                             // Send track-level progress (Rip phase) for the current track
@@ -668,7 +665,7 @@ impl ImportHandle {
                                 let _ = progress_tx_for_ripping.send(ImportProgress::Progress {
                                     id: track_id.clone(),
                                     percent: rip_progress.track_percent,
-                                    phase: Some(ImportPhase::Rip),
+                                    phase: Some(ImportPhase::Acquire),
                                 });
                             }
                         }
@@ -846,14 +843,17 @@ impl ImportHandle {
 
                     // ========== QUEUE FOR PIPELINE ==========
 
-                    if let Err(_) = requests_tx_for_ripper.send(ImportCommand::CdImport {
-                        db_album: db_album_for_ripper,
-                        db_release: db_release_for_ripper,
-                        tracks_to_files,
-                        discovered_files,
-                        cue_flac_metadata,
-                        temp_dir,
-                    }) {
+                    if requests_tx_for_ripper
+                        .send(ImportCommand::CD {
+                            db_album: db_album_for_ripper,
+                            db_release: db_release_for_ripper,
+                            tracks_to_files,
+                            discovered_files,
+                            cue_flac_metadata,
+                            temp_dir,
+                        })
+                        .is_err()
+                    {
                         let _ = progress_tx_for_ripper.send(ImportProgress::Failed {
                             id: release_id.clone(),
                             error: "Failed to queue validated CD import".to_string(),

@@ -38,21 +38,21 @@ use std::{collections::HashMap, path::PathBuf};
 
 /// Request to import an album
 #[derive(Debug)]
-pub enum ImportRequestParams {
-    FromFolder {
+pub enum ImportRequest {
+    Folder {
         discogs_release: Option<DiscogsRelease>,
         mb_release: Option<MbRelease>,
         folder: PathBuf,
         master_year: u32,
     },
-    FromTorrent {
+    Torrent {
         torrent_source: TorrentSource,
         discogs_release: Option<DiscogsRelease>,
         mb_release: Option<MbRelease>,
         master_year: u32,
         seed_after_download: bool,
     },
-    FromCd {
+    CD {
         discogs_release: Option<DiscogsRelease>,
         mb_release: Option<MbRelease>,
         drive_path: PathBuf,
@@ -92,7 +92,7 @@ pub enum ImportProgress {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportPhase {
     /// CD ripping phase - reading audio from CD
-    Rip,
+    Acquire,
     /// Chunk upload/encryption phase - streaming to cloud storage
     Chunk,
 }
@@ -205,7 +205,7 @@ pub struct CueFlacLayoutData {
 #[derive(Debug)]
 pub enum ImportCommand {
     /// Folder-based import: all files available upfront
-    FolderImport {
+    Folder {
         /// Database album record
         db_album: crate::db::DbAlbum,
         /// Database release record
@@ -218,7 +218,7 @@ pub enum ImportCommand {
         cue_flac_metadata: Option<HashMap<PathBuf, CueFlacMetadata>>,
     },
     /// Torrent-based import: files arrive incrementally
-    TorrentImport {
+    Torrent {
         /// Database album record
         db_album: crate::db::DbAlbum,
         /// Database release record
@@ -234,7 +234,7 @@ pub enum ImportCommand {
         seed_after_download: bool,
     },
     /// CD-based import: tracks ripped from CD first, then processed like folder import
-    CdImport {
+    CD {
         /// Database album record
         db_album: crate::db::DbAlbum,
         /// Database release record

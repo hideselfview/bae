@@ -51,7 +51,7 @@ pub struct ImportService {
     /// Configuration for the import service
     config: ImportConfig,
     /// Channel for receiving import commands from clients
-    requests_rx: mpsc::UnboundedReceiver<ImportCommand>,
+    commands_rx: mpsc::UnboundedReceiver<ImportCommand>,
     /// Channel for sending progress updates to subscribers
     progress_tx: mpsc::UnboundedSender<ImportProgress>,
     /// Service for encrypting files before upload
@@ -80,7 +80,7 @@ impl ImportService {
         cloud_storage: CloudStorageManager,
         cache_manager: CacheManager,
     ) -> ImportHandle {
-        let (requests_tx, requests_rx) = mpsc::unbounded_channel();
+        let (commands_tx, commands_rx) = mpsc::unbounded_channel();
         let (progress_tx, progress_rx) = mpsc::unbounded_channel();
 
         // Clone progress_tx for the handle (before moving it into the service)
@@ -103,7 +103,7 @@ impl ImportService {
 
                 let service = ImportService {
                     config,
-                    requests_rx,
+                    commands_rx,
                     progress_tx,
                     library_manager: library_manager_for_worker,
                     encryption_service,
@@ -117,7 +117,7 @@ impl ImportService {
         });
 
         ImportHandle::new(
-            requests_tx,
+            commands_tx,
             progress_tx_for_handle,
             progress_rx,
             library_manager,
@@ -130,18 +130,18 @@ impl ImportService {
 
         // Import validated albums sequentially from the queue.
         loop {
-            match self.requests_rx.recv().await {
+            match self.commands_rx.recv().await {
                 Some(command) => {
                     let result = match &command {
-                        ImportCommand::FolderImport { db_album, .. } => {
+                        ImportCommand::Folder { db_album, .. } => {
                             info!("Starting folder import pipeline for '{}'", db_album.title);
                             self.import_album_from_folder(command).await
                         }
-                        ImportCommand::TorrentImport { db_album, .. } => {
+                        ImportCommand::Torrent { db_album, .. } => {
                             info!("Starting torrent import pipeline for '{}'", db_album.title);
                             self.import_album_from_torrent(command).await
                         }
-                        ImportCommand::CdImport { db_album, .. } => {
+                        ImportCommand::CD { db_album, .. } => {
                             info!("Starting CD import pipeline for '{}'", db_album.title);
                             self.import_album_from_cd(command).await
                         }
@@ -169,7 +169,7 @@ impl ImportService {
     async fn import_album_from_folder(&self, command: ImportCommand) -> Result<(), String> {
         let library_manager = self.library_manager.get();
 
-        let ImportCommand::FolderImport {
+        let ImportCommand::Folder {
             db_album,
             db_release,
             tracks_to_files,
@@ -287,7 +287,7 @@ impl ImportService {
     async fn import_album_from_torrent(&self, command: ImportCommand) -> Result<(), String> {
         let library_manager = self.library_manager.get();
 
-        let ImportCommand::TorrentImport {
+        let ImportCommand::Torrent {
             db_album,
             db_release,
             tracks_to_files,
@@ -678,7 +678,7 @@ impl ImportService {
     async fn import_album_from_cd(&self, command: ImportCommand) -> Result<(), String> {
         let library_manager = self.library_manager.get();
 
-        let ImportCommand::CdImport {
+        let ImportCommand::CD {
             db_album,
             db_release,
             tracks_to_files,

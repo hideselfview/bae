@@ -3,7 +3,7 @@ use super::{
     file_list::FileList, folder_selector::FolderSelector, manual_search_panel::ManualSearchPanel,
     match_list::MatchList,
 };
-use crate::import::{ImportRequestParams, MatchCandidate, MatchSource};
+use crate::import::{ImportRequest, MatchCandidate, MatchSource};
 use crate::library::use_import_service;
 use crate::library::use_library_manager;
 use crate::musicbrainz::lookup_by_discid;
@@ -593,7 +593,7 @@ pub fn FolderDetectionPage() -> Element {
                                 mb_release.title
                             );
 
-                            let request = ImportRequestParams::FromCd {
+                            let request = ImportRequest::CD {
                                 discogs_release: None,
                                 mb_release: Some(mb_release.clone()),
                                 drive_path: PathBuf::from(folder),
@@ -643,7 +643,7 @@ pub fn FolderDetectionPage() -> Element {
                                         discogs_release.title
                                     );
 
-                                    let request = ImportRequestParams::FromTorrent {
+                                    let request = ImportRequest::Torrent {
                                         torrent_source,
                                         discogs_release: Some(discogs_release),
                                         mb_release: None,
@@ -686,7 +686,7 @@ pub fn FolderDetectionPage() -> Element {
                                 mb_release.title
                             );
 
-                            let request = ImportRequestParams::FromTorrent {
+                            let request = ImportRequest::Torrent {
                                 torrent_source,
                                 discogs_release: None,
                                 mb_release: Some(mb_release.clone()),
@@ -736,7 +736,7 @@ pub fn FolderDetectionPage() -> Element {
                                         discogs_release.title
                                     );
 
-                                    let request = ImportRequestParams::FromFolder {
+                                    let request = ImportRequest::Folder {
                                         discogs_release: Some(discogs_release),
                                         mb_release: None,
                                         folder: PathBuf::from(folder),
@@ -778,7 +778,7 @@ pub fn FolderDetectionPage() -> Element {
                                 mb_release.title
                             );
 
-                            let request = ImportRequestParams::FromFolder {
+                            let request = ImportRequest::Folder {
                                 discogs_release: None,
                                 mb_release: Some(mb_release.clone()),
                                 folder: PathBuf::from(folder),

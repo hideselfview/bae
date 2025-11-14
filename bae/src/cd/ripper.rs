@@ -123,7 +123,6 @@ impl CdRipper {
         Ok(results)
     }
 
-
     /// Rip a single track
     async fn rip_track(
         &self,
@@ -215,10 +214,10 @@ impl CdRipper {
         //
         // XLD's solution: Trust the TOC, but check before each read if we'd extend past
         // the track boundary. If yes, truncate the read and zero-fill the rest.
-        
+
         let device_path_for_lba = self.drive.device_path.clone();
         let last_track = self.toc.last_track;
-        
+
         let (start_lba, end_lba) = tokio::task::spawn_blocking(move || {
             let drive = LibcdioDrive::open(&device_path_for_lba)
                 .map_err(|e| RipError::Drive(format!("Failed to open drive for LBA: {}", e)))?;
@@ -253,7 +252,7 @@ impl CdRipper {
                 );
                 leadout
             };
-            
+
             // Log the calculated range for debugging
             info!(
                 "Track {} LBA calculation: start={}, end={} (exclusive), will read {} sectors ({} to {} inclusive)",
@@ -275,7 +274,7 @@ impl CdRipper {
             start_lba,
             start_lba + num_sectors - 1
         );
-        
+
         // Verify we're not trying to read beyond the track boundary
         if num_sectors == 0 {
             return Err(RipError::Read(format!(
@@ -283,7 +282,7 @@ impl CdRipper {
                 track_num, start_lba, end_lba
             )));
         }
-        
+
         // For the last track, if the leadout seems to include unreadable sectors,
         // we might need to reduce the sector count. However, we'll try the full range first
         // and only reduce if we get a read error near the end.

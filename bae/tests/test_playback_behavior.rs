@@ -13,7 +13,7 @@ use bae::cloud_storage::CloudStorageManager;
 use bae::db::Database;
 use bae::discogs::models::{DiscogsArtist, DiscogsRelease, DiscogsTrack};
 use bae::encryption::EncryptionService;
-use bae::import::ImportRequestParams;
+use bae::import::ImportRequest;
 use bae::library::{LibraryManager, SharedLibraryManager};
 use bae::playback::{PlaybackProgress, PlaybackState};
 use bae::test_support::MockCloudStorage;
@@ -83,7 +83,7 @@ impl PlaybackTestFixture {
         // Send import request
         let master_year = discogs_release.year.unwrap_or(2024);
         let (_album_id, release_id) = import_handle
-            .send_request(ImportRequestParams::FromFolder {
+            .send_request(ImportRequest::Folder {
                 discogs_release,
                 folder: album_dir.clone(),
                 master_year,
