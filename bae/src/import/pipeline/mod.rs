@@ -12,7 +12,6 @@
 // The pipeline ensures bounded memory usage and fail-fast error handling.
 
 pub(super) mod chunk_producer;
-pub(super) mod torrent_producer;
 
 use std::collections::HashMap;
 use std::path::PathBuf;

@@ -16,8 +16,6 @@ pub enum ParanoiaError {
     Init(String),
     #[error("Read error: {0}")]
     Read(String),
-    #[error("Invalid track number")]
-    InvalidTrack,
 }
 
 /// Paranoia CDDA reader for error-corrected audio extraction
@@ -36,18 +34,6 @@ impl ParanoiaReader {
         }
 
         Ok(Self { drive })
-    }
-
-    /// Read audio sectors with paranoia error correction
-    ///
-    /// This uses libcdio's paranoia mode for accurate audio extraction
-    /// with error correction and jitter handling.
-    pub fn read_audio_sectors_paranoia(
-        &self,
-        start_lba: u32,
-        num_sectors: u32,
-    ) -> Result<(Vec<u8>, u32), ParanoiaError> {
-        self.read_audio_sectors_paranoia_with_progress(start_lba, num_sectors, None, 0, 0)
     }
 
     /// Read audio sectors with paranoia error correction and progress updates

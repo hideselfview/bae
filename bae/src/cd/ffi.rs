@@ -7,10 +7,9 @@
 //! - Linux: `apt-get install libcdio-dev` or `dnf install libcdio-devel`
 //! - Windows: Install libcdio from source or use vcpkg
 
-use libc;
 use libcdio_sys;
 use std::ffi::{CStr, CString};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -19,23 +18,18 @@ pub enum LibcdioError {
     Libcdio(String),
     #[error("Invalid device path")]
     InvalidPath,
-    #[error("No disc in drive")]
-    NoDisc,
-    #[error("Read error: {0}")]
-    Read(String),
 }
 
 /// Safe wrapper for libcdio drive
 pub struct LibcdioDrive {
     device: *mut libcdio_sys::CdIo_t,
-    device_path: PathBuf,
 }
 
 unsafe impl Send for LibcdioDrive {}
 
 impl LibcdioDrive {
     /// Open a CD drive by device path
-    pub fn open(device_path: &PathBuf) -> Result<Self, LibcdioError> {
+    pub fn open(device_path: &Path) -> Result<Self, LibcdioError> {
         let path_str = device_path.to_str().ok_or(LibcdioError::InvalidPath)?;
         let c_path = CString::new(path_str).map_err(|_| LibcdioError::InvalidPath)?;
 
@@ -60,16 +54,8 @@ impl LibcdioDrive {
                 }
             }
 
-            Ok(Self {
-                device,
-                device_path: device_path.clone(),
-            })
+            Ok(Self { device })
         }
-    }
-
-    /// Get the device path
-    pub fn device_path(&self) -> &PathBuf {
-        &self.device_path
     }
 
     /// Check if a disc is present
@@ -77,19 +63,6 @@ impl LibcdioDrive {
         unsafe {
             libcdio_sys::cdio_get_discmode(self.device)
                 != libcdio_sys::discmode_t_CDIO_DISC_MODE_NO_INFO
-        }
-    }
-
-    /// Get number of tracks
-    pub fn num_tracks(&self) -> Result<u8, LibcdioError> {
-        unsafe {
-            let num = libcdio_sys::cdio_get_num_tracks(self.device) as i32;
-            if num < 0 {
-                return Err(LibcdioError::Libcdio(
-                    "Failed to get track count".to_string(),
-                ));
-            }
-            Ok(num as u8)
         }
     }
 
@@ -148,48 +121,6 @@ impl LibcdioDrive {
                 ));
             }
             Ok(lba as u32)
-        }
-    }
-
-    /// Get track format (audio vs data)
-    pub fn track_format(&self, track_num: u8) -> Result<bool, LibcdioError> {
-        unsafe {
-            let format =
-                libcdio_sys::cdio_get_track_format(self.device, track_num as libcdio_sys::track_t);
-            Ok(format == libcdio_sys::track_format_t_TRACK_FORMAT_AUDIO)
-        }
-    }
-
-    /// Read audio sectors from CD
-    /// Returns raw PCM audio data (16-bit stereo, 44100 Hz)
-    /// Each sector is 2352 bytes (CD audio sector size)
-    pub fn read_audio_sectors(
-        &self,
-        start_lba: u32,
-        num_sectors: u32,
-    ) -> Result<Vec<u8>, LibcdioError> {
-        unsafe {
-            let sector_size = libcdio_sys::CDIO_CD_FRAMESIZE_RAW as usize;
-            let total_size = (num_sectors as usize) * sector_size;
-            let mut buffer = vec![0u8; total_size];
-
-            for i in 0..num_sectors {
-                let lba = (start_lba + i) as libcdio_sys::lba_t;
-                let result = libcdio_sys::cdio_read_audio_sector(
-                    self.device,
-                    buffer.as_mut_ptr().add((i as usize) * sector_size) as *mut libc::c_void,
-                    lba as libcdio_sys::lba_t,
-                );
-
-                if result != 0 {
-                    return Err(LibcdioError::Read(format!(
-                        "Failed to read sector at LBA {}",
-                        lba
-                    )));
-                }
-            }
-
-            Ok(buffer)
         }
     }
 

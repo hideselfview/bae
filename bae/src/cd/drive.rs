@@ -6,8 +6,6 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum CdDriveError {
-    #[error("No CD drive found")]
-    NoDrive,
     #[error("No disc in drive")]
     NoDisc,
     #[error("DiscID error: {0}")]
@@ -112,16 +110,5 @@ impl CdDrive {
             leadout_track,
             track_offsets,
         })
-    }
-
-    /// Check if a disc is present in the drive
-    pub fn has_disc(&self) -> Result<bool, CdDriveError> {
-        // TODO: Implement disc detection using libcdio
-        // For now, try to read TOC - if it fails, assume no disc
-        match self.read_toc() {
-            Ok(_) => Ok(true),
-            Err(CdDriveError::NoDisc) => Ok(false),
-            Err(e) => Err(e),
-        }
     }
 }

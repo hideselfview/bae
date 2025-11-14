@@ -51,4 +51,4 @@ pub use folder_metadata_detector::{
 };
 pub use handle::ImportHandle;
 pub use service::{ImportConfig, ImportService};
-pub use types::{ImportPhase, ImportProgress, ImportRequest, TorrentSource};
+pub use types::{ImportProgress, ImportRequest, TorrentSource};

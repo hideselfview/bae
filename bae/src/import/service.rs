@@ -775,40 +775,6 @@ impl ImportService {
 
         Ok(())
     }
-
-    /// Compute chunk layout and persist all metadata after chunk upload completes.
-    ///
-    /// Used by torrent imports where layout can't be computed upfront.
-    /// Called after all chunks have been uploaded to cloud storage. Computes layout,
-    /// persists track metadata, persists release metadata, and marks the release complete.
-    async fn compute_layout_and_persist_metadata(
-        &self,
-        library_manager: &crate::library::LibraryManager,
-        release_id: &str,
-        tracks_to_files: &[crate::import::types::TrackFile],
-        discovered_files: &[crate::import::types::DiscoveredFile],
-        cue_flac_metadata: Option<
-            std::collections::HashMap<std::path::PathBuf, crate::import::types::CueFlacMetadata>,
-        >,
-    ) -> Result<(), String> {
-        // Compute chunk layout
-        let chunk_layout = AlbumChunkLayout::build(
-            discovered_files.to_vec(),
-            tracks_to_files,
-            self.config.chunk_size_bytes,
-            cue_flac_metadata,
-        )?;
-
-        // Persist using the computed layout
-        self.persist_metadata_from_layout(
-            library_manager,
-            release_id,
-            tracks_to_files,
-            &chunk_layout.files_to_chunks,
-            &chunk_layout.cue_flac_data,
-        )
-        .await
-    }
 }
 
 // ============================================================================

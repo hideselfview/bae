@@ -169,7 +169,7 @@ impl CdRipper {
         // Write to file
         tokio::fs::write(&output_path, &flac_data)
             .await
-            .map_err(|e| RipError::Io(e))?;
+            .map_err(RipError::Io)?;
 
         // Calculate duration (samples / sample_rate / channels)
         let duration_ms = (samples.len() as u64 * 1000) / (sample_rate as u64 * channels as u64);

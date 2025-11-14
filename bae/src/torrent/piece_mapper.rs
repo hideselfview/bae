@@ -35,11 +35,6 @@ impl TorrentPieceMapper {
         self.piece_length
     }
 
-    /// Get the total size
-    pub fn total_size(&self) -> usize {
-        self.total_size
-    }
-
     /// Map a torrent piece to the bae chunks it spans
     pub fn map_piece_to_chunks(&self, piece_index: usize) -> Vec<ChunkMapping> {
         if piece_index >= self.total_pieces {

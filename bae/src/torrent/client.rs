@@ -10,7 +10,7 @@ use crate::torrent::ffi::{
     create_session_params_with_storage, create_session_with_params, get_session_ptr,
     load_torrent_file, parse_magnet_uri, session_add_torrent, torrent_get_file_list,
     torrent_get_name, torrent_get_num_pieces, torrent_get_piece_length, torrent_get_progress,
-    torrent_get_storage_index, torrent_get_total_size, torrent_has_metadata, torrent_have_piece,
+    torrent_get_storage_index, torrent_get_total_size, torrent_has_metadata,
     torrent_set_file_priorities, Session, TorrentFileInfo, TorrentHandle as FfiTorrentHandle,
 };
 use crate::torrent::storage::BaeStorage;
@@ -437,15 +437,11 @@ impl TorrentClient {
             ));
         }
 
-        // Get storage_index for this torrent (needed for read_piece)
-        let storage_index = unsafe { torrent_get_storage_index(handle_ptr) };
-
         // Store raw pointer directly (opaque type, can't use UniquePtr)
         // SAFETY: We own the handle_ptr returned from session_add_torrent
         // The handle will be valid as long as the session exists
         Ok(TorrentHandle {
             handle: SendSafeTorrentHandle(Arc::new(RwLock::new(handle_ptr))),
-            storage_index,
         })
     }
 
@@ -493,16 +489,11 @@ impl TorrentClient {
             ));
         }
 
-        // Get storage_index for this torrent (needed for read_piece)
-        let storage_index = unsafe { torrent_get_storage_index(handle_ptr) };
-
         // Store raw pointer directly (opaque type, can't use UniquePtr)
         // SAFETY: We own the handle_ptr returned from session_add_torrent
         // The handle will be valid as long as the session exists
         Ok(TorrentHandle {
             handle: SendSafeTorrentHandle(Arc::new(RwLock::new(handle_ptr))),
-            storage_index,
-            // torrent_id will be looked up in read_piece from storage_index_map
             // Don't store session reference - TorrentHandle doesn't need it
             // The handle is self-contained and can be used independently
         })
@@ -519,7 +510,6 @@ unsafe impl Sync for SendSafeTorrentHandle {}
 /// Handle to a torrent in the session
 pub struct TorrentHandle {
     handle: SendSafeTorrentHandle,
-    storage_index: i32,
     // Note: We don't store the session here to avoid Send issues
     // The handle is self-contained and doesn't need the session reference
 }
@@ -697,69 +687,6 @@ impl TorrentHandle {
 
     /// Read a piece of data from our custom storage
     ///
-    /// This reads from BaeStorage via the storage registry, which libtorrent
-    /// populated when pieces were downloaded.
-    pub async fn read_piece(&self, piece_index: usize) -> Result<Vec<u8>, TorrentError> {
-        // Access storage registry and index map from thread-local storage
-        let (registry, index_map) = STORAGE_REGISTRY
-            .with(|registry_tl| {
-                STORAGE_INDEX_MAP.with(|index_map_tl| {
-                    if let (Some(reg), Some(idx_map)) = (
-                        registry_tl.borrow().as_ref(),
-                        index_map_tl.borrow().as_ref(),
-                    ) {
-                        Some((Arc::clone(reg), Arc::clone(idx_map)))
-                    } else {
-                        None
-                    }
-                })
-            })
-            .ok_or_else(|| {
-                TorrentError::Libtorrent("Storage registry not initialized".to_string())
-            })?;
-
-        // Look up torrent_id from storage_index
-        let torrent_id = {
-            let map_guard = index_map.read().await;
-            map_guard
-                .get(&self.storage_index)
-                .ok_or_else(|| {
-                    TorrentError::Libtorrent(format!(
-                        "No torrent_id mapped for storage_index: {}",
-                        self.storage_index
-                    ))
-                })?
-                .clone()
-        };
-
-        // Look up storage and read piece asynchronously
-        let registry_guard = registry.read().await;
-        let storage = registry_guard.get(&torrent_id).ok_or_else(|| {
-            TorrentError::Libtorrent(format!("Storage not found for torrent_id: {}", torrent_id))
-        })?;
-
-        let storage_guard = storage.read().await;
-        storage_guard
-            .read_piece(piece_index as i32, 0, 0)
-            .await
-            .map_err(|e| {
-                TorrentError::Libtorrent(format!("Failed to read piece {}: {}", piece_index, e))
-            })
-    }
-
-    /// Check if a piece is ready to be read
-    pub async fn is_piece_ready(&self, piece_index: usize) -> Result<bool, TorrentError> {
-        let handle_guard = self.handle.0.read().await;
-        let handle_ptr = *handle_guard;
-        if handle_ptr.is_null() {
-            return Err(TorrentError::Libtorrent(
-                "Invalid torrent handle".to_string(),
-            ));
-        }
-        let available = unsafe { torrent_have_piece(handle_ptr, piece_index as i32) };
-        Ok(available)
-    }
-
     /// Wait for metadata to be available
     pub async fn wait_for_metadata(&self) -> Result<(), TorrentError> {
         // Poll until metadata is available

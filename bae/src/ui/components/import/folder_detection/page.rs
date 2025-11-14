@@ -898,14 +898,14 @@ pub fn FolderDetectionPage() -> Element {
                             on_drive_select: {
                                 let mut folder_path = folder_path;
                                 let mut import_phase = import_phase;
-                                let mut cd_toc_info = cd_toc_info;
+                                let cd_toc_info = cd_toc_info;
                                 // Extract signals from Rc before the closure (signals are Copy)
                                 let mut is_looking_up_signal = is_looking_up;
                                 let mut exact_match_candidates_signal = exact_match_candidates;
                                 let mut detected_metadata_signal = detected_metadata;
                                 let mut import_error_message_signal = import_error_message;
-                                let mut search_query_signal = search_query;
-                                let mut confirmed_candidate_signal = confirmed_candidate;
+                                let search_query_signal = search_query;
+                                let confirmed_candidate_signal = confirmed_candidate;
                                 move |drive_path: PathBuf| {
                                     folder_path.set(drive_path.to_string_lossy().to_string());
                                     import_phase.set(crate::ui::import_context::ImportPhase::ExactLookup);

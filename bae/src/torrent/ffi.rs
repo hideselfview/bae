@@ -112,12 +112,6 @@ mod ffi {
         /// `handle` must be a valid pointer to a TorrentHandle that outlives the call.
         unsafe fn torrent_get_num_pieces(handle: *mut TorrentHandle) -> i32;
 
-        /// Check if a piece is available (downloaded and verified)
-        ///
-        /// # Safety
-        /// `handle` must be a valid pointer to a TorrentHandle that outlives the call.
-        unsafe fn torrent_have_piece(handle: *mut TorrentHandle, piece_index: i32) -> bool;
-
         /// Get the list of files in the torrent
         ///
         /// # Safety
@@ -153,6 +147,6 @@ pub use ffi::{
     create_session_params_with_storage, create_session_with_params, get_session_ptr,
     load_torrent_file, parse_magnet_uri, session_add_torrent, torrent_get_file_list,
     torrent_get_name, torrent_get_num_pieces, torrent_get_piece_length, torrent_get_progress,
-    torrent_get_storage_index, torrent_get_total_size, torrent_has_metadata, torrent_have_piece,
+    torrent_get_storage_index, torrent_get_total_size, torrent_has_metadata,
     torrent_set_file_priorities, Session, TorrentFileInfo, TorrentHandle,
 };
