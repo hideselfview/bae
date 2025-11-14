@@ -585,7 +585,6 @@ pub fn FolderDetectionPage() -> Element {
                             // CD imports currently only support MusicBrainz
                             import_error_message
                                 .set(Some("CD imports require MusicBrainz metadata".to_string()));
-                            return;
                         }
                         MatchSource::MusicBrainz(mb_release) => {
                             info!(
@@ -898,7 +897,6 @@ pub fn FolderDetectionPage() -> Element {
                             on_drive_select: {
                                 let mut folder_path = folder_path;
                                 let mut import_phase = import_phase;
-                                let cd_toc_info = cd_toc_info;
                                 // Extract signals from Rc before the closure (signals are Copy)
                                 let mut is_looking_up_signal = is_looking_up;
                                 let mut exact_match_candidates_signal = exact_match_candidates;
