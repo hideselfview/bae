@@ -76,7 +76,10 @@ pub enum ImportProgress {
     Progress {
         id: String,
         percent: u8,
-        /// Phase of import (Rip for CD ripping, Chunk for upload/encryption)
+        /// Phase of import: Acquire (data fetching) or Chunk (upload/encryption)
+        /// - Folder imports: Only Chunk phase (acquire is instant)
+        /// - Torrent imports: Acquire phase (download), then Chunk phase (upload)
+        /// - CD imports: Acquire phase (rip), then Chunk phase (upload)
         phase: Option<ImportPhase>,
     },
     Complete {
@@ -88,12 +91,16 @@ pub enum ImportProgress {
     },
 }
 
-/// Phase of CD import process
+/// Phase of import process (applies to all import types)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportPhase {
-    /// CD ripping phase - reading audio from CD
+    /// Acquire phase: Get data ready for import
+    /// - Folder: No-op (files already available)
+    /// - Torrent: Download torrent to temporary folder
+    /// - CD: Rip CD tracks to FLAC files
     Acquire,
-    /// Chunk upload/encryption phase - streaming to cloud storage
+    /// Chunk phase: Upload and encrypt data to cloud storage
+    /// Same for all import types: stream files → encrypt → upload chunks
     Chunk,
 }
 
@@ -199,9 +206,11 @@ pub struct CueFlacLayoutData {
 
 /// Validated import command ready for pipeline execution.
 ///
-/// Split into folder, torrent, and CD variants since they have fundamentally different
-/// control flows: folder imports compute layout upfront, torrent imports stream
-/// first and compute layout after download completes, CD imports rip tracks first.
+/// All imports follow a two-phase model:
+/// - **Acquire phase**: Get data ready (folder: no-op, torrent: download, CD: rip)
+/// - **Chunk phase**: Upload and encrypt (same for all types)
+///
+/// Handle only validates and sends commands. Service executes both phases.
 #[derive(Debug)]
 pub enum ImportCommand {
     /// Folder-based import: all files available upfront
@@ -233,19 +242,17 @@ pub enum ImportCommand {
         /// Whether to start seeding after download completes
         seed_after_download: bool,
     },
-    /// CD-based import: tracks ripped from CD first, then processed like folder import
+    /// CD-based import: service will rip CD first (acquire phase), then process like folder import
     CD {
         /// Database album record
         db_album: crate::db::DbAlbum,
         /// Database release record
         db_release: crate::db::DbRelease,
-        /// Logical track → physical file mappings (to ripped FLAC files)
-        tracks_to_files: Vec<TrackFile>,
-        /// Files discovered after ripping (FLAC files, CUE sheet, log file)
-        discovered_files: Vec<DiscoveredFile>,
-        /// Pre-parsed CUE/FLAC metadata (CUE sheet generated during ripping)
-        cue_flac_metadata: Option<HashMap<PathBuf, CueFlacMetadata>>,
-        /// Temporary directory where ripped files are stored (will be cleaned up after import)
-        temp_dir: PathBuf,
+        /// Database tracks (for mapping after ripping)
+        db_tracks: Vec<crate::db::DbTrack>,
+        /// CD drive path
+        drive_path: PathBuf,
+        /// CD TOC (Table of Contents) - read during validation
+        toc: crate::cd::drive::CdToc,
     },
 }

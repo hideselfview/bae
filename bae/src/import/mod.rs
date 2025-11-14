@@ -1,18 +1,34 @@
 // # Import Module
 //
-// Stream-based import service with focused, testable components:
+// Two-phase import architecture with focused, testable components:
 //
+// ## Two-Phase Model
+//
+// All imports follow the same two-phase pattern:
+//
+// **Phase 1: Acquire** - Get data ready for import
+// - Folder: No-op (files already available)
+// - Torrent: Download torrent to temporary folder
+// - CD: Rip CD tracks to FLAC files
+//
+// **Phase 2: Chunk** - Upload and encrypt (same for all types)
+// - Stream files → encrypt → upload chunks → persist metadata
+//
+// ## Components
+//
+// - **ImportHandle**: Validates requests, inserts DB records, sends commands to service
+// - **ImportService**: Runs on dedicated thread, executes acquire + chunk phases
 // - **TrackFileMapper**: Validates track-to-file mapping before DB insertion
 // - **AlbumLayout**: Analyzes album's physical structure (files → chunks → tracks)
 // - **Pipeline**: Streaming read → encrypt → upload → persist stages
 // - **MetadataPersister**: Persists file/chunk metadata to database
-// - **ImportService**: Orchestrates the import workflow
 //
-// Public API:
+// ## Public API
+//
 // - `ImportService`: Create and start the service
-// - `ImportServiceHandle`: Send requests and subscribe to progress
+// - `ImportHandle`: Send requests and subscribe to progress
 // - `ImportRequest`: Album import requests
-// - `ImportProgress`: Real-time progress updates
+// - `ImportProgress`: Real-time progress updates with phase information
 
 mod album_chunk_layout;
 mod discogs_matcher;
