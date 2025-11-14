@@ -16,45 +16,32 @@ pub fn CdImport() -> Element {
     let import_service = use_import_service();
     let navigator = use_navigator();
 
-    // Copy signals out of Rc (signals are Copy)
-    let folder_path = import_context.folder_path;
-    let detected_metadata = import_context.detected_metadata;
-    let import_phase = import_context.import_phase;
-    let exact_match_candidates = import_context.exact_match_candidates;
-    let selected_match_index = import_context.selected_match_index;
-    let confirmed_candidate = import_context.confirmed_candidate;
-    let is_looking_up = import_context.is_looking_up;
-    let import_error_message = import_context.import_error_message;
-    let duplicate_album_id = import_context.duplicate_album_id;
-    let search_query = import_context.search_query;
+    // Get signals via getters (signals are Copy)
+    let folder_path = import_context.folder_path();
+    let detected_metadata = import_context.detected_metadata();
+    let import_phase = import_context.import_phase();
+    let exact_match_candidates = import_context.exact_match_candidates();
+    let selected_match_index = import_context.selected_match_index();
+    let confirmed_candidate = import_context.confirmed_candidate();
+    let is_looking_up = import_context.is_looking_up();
+    let import_error_message = import_context.import_error_message();
+    let duplicate_album_id = import_context.duplicate_album_id();
     let cd_toc_info: Signal<Option<(String, u8, u8)>> = use_signal(|| None); // (disc_id, first_track, last_track)
 
     let on_drive_select = {
-        let mut folder_path = folder_path;
-        let mut import_phase = import_phase;
-        let mut is_looking_up_signal = is_looking_up;
-        let mut exact_match_candidates_signal = exact_match_candidates;
-        let mut detected_metadata_signal = detected_metadata;
-        let mut import_error_message_signal = import_error_message;
-        let search_query_signal = search_query;
-        let confirmed_candidate_signal = confirmed_candidate;
+        let import_context = import_context.clone();
         move |drive_path: PathBuf| {
-            folder_path.set(drive_path.to_string_lossy().to_string());
-            import_phase.set(ImportPhase::ExactLookup);
-            is_looking_up_signal.set(true);
-            exact_match_candidates_signal.set(Vec::new());
-            detected_metadata_signal.set(None);
-            import_error_message_signal.set(None);
+            import_context.set_folder_path(drive_path.to_string_lossy().to_string());
+            import_context.set_import_phase(ImportPhase::ExactLookup);
+            import_context.set_is_looking_up(true);
+            import_context.set_exact_match_candidates(Vec::new());
+            import_context.set_detected_metadata(None);
+            import_context.set_import_error_message(None);
 
             // Read TOC from CD and look up by DiscID
             let drive_path_clone = drive_path.clone();
             let mut cd_toc_info_async = cd_toc_info;
-            let mut is_looking_up_async = is_looking_up_signal;
-            let mut import_phase_async = import_phase;
-            let mut search_query_async = search_query_signal;
-            let mut confirmed_candidate_async = confirmed_candidate_signal;
-            let mut exact_match_candidates_async = exact_match_candidates_signal;
-            let mut import_error_message_async = import_error_message_signal;
+            let import_context_async = import_context.clone();
 
             spawn(async move {
                 use crate::cd::CdDrive;
@@ -76,11 +63,13 @@ pub fn CdImport() -> Element {
                         // Look up by DiscID
                         match lookup_by_discid(&toc.disc_id).await {
                             Ok((matches, _external_urls)) => {
-                                is_looking_up_async.set(false);
+                                import_context_async.set_is_looking_up(false);
                                 if matches.is_empty() {
                                     // No exact match, go to manual search
-                                    import_phase_async.set(ImportPhase::ManualSearch);
-                                    search_query_async.set(format!("DiscID: {}", toc.disc_id));
+                                    import_context_async
+                                        .set_import_phase(ImportPhase::ManualSearch);
+                                    import_context_async
+                                        .set_search_query(format!("DiscID: {}", toc.disc_id));
                                 } else if matches.len() == 1 {
                                     // Single exact match, convert to MatchCandidate and auto-confirm
                                     let mb_release = matches[0].clone();
@@ -89,8 +78,9 @@ pub fn CdImport() -> Element {
                                         confidence: 100.0, // Exact DiscID match
                                         match_reasons: vec!["Exact DiscID match".to_string()],
                                     };
-                                    confirmed_candidate_async.set(Some(candidate));
-                                    import_phase_async.set(ImportPhase::Confirmation);
+                                    import_context_async.set_confirmed_candidate(Some(candidate));
+                                    import_context_async
+                                        .set_import_phase(ImportPhase::Confirmation);
                                 } else {
                                     // Multiple matches, convert to MatchCandidates and show selection
                                     let candidates: Vec<MatchCandidate> = matches
@@ -101,21 +91,25 @@ pub fn CdImport() -> Element {
                                             match_reasons: vec!["Exact DiscID match".to_string()],
                                         })
                                         .collect();
-                                    exact_match_candidates_async.set(candidates);
+                                    import_context_async.set_exact_match_candidates(candidates);
                                 }
                             }
                             Err(e) => {
-                                is_looking_up_async.set(false);
-                                import_error_message_async
-                                    .set(Some(format!("Failed to look up DiscID: {}", e)));
-                                import_phase_async.set(ImportPhase::ManualSearch);
+                                import_context_async.set_is_looking_up(false);
+                                import_context_async.set_import_error_message(Some(format!(
+                                    "Failed to look up DiscID: {}",
+                                    e
+                                )));
+                                import_context_async.set_import_phase(ImportPhase::ManualSearch);
                             }
                         }
                     }
                     Err(e) => {
-                        is_looking_up_async.set(false);
-                        import_error_message_async
-                            .set(Some(format!("Failed to read CD TOC: {}", e)));
+                        import_context_async.set_is_looking_up(false);
+                        import_context_async.set_import_error_message(Some(format!(
+                            "Failed to read CD TOC: {}",
+                            e
+                        )));
                     }
                 }
             });
@@ -171,9 +165,9 @@ pub fn CdImport() -> Element {
                     CdRipper {
                         on_drive_select: on_drive_select,
                         on_error: {
-                            let mut import_error_message = import_error_message;
+                            let import_context = import_context.clone();
                             move |e: String| {
-                                import_error_message.set(Some(e));
+                                import_context.set_import_error_message(Some(e));
                             }
                         }
                     }
@@ -229,14 +223,12 @@ pub fn CdImport() -> Element {
                             exact_match_candidates: exact_match_candidates,
                             selected_match_index: selected_match_index,
                             on_select: {
-                                let mut selected_match_index_local = selected_match_index;
-                                let mut confirmed_candidate_local = confirmed_candidate;
-                                let mut import_phase_local = import_phase;
+                                let import_context = import_context.clone();
                                 move |index| {
-                                    selected_match_index_local.set(Some(index));
-                                    if let Some(candidate) = exact_match_candidates.read().get(index) {
-                                        confirmed_candidate_local.set(Some(candidate.clone()));
-                                        import_phase_local.set(ImportPhase::Confirmation);
+                                    import_context.set_selected_match_index(Some(index));
+                                    if let Some(candidate) = import_context.exact_match_candidates().read().get(index) {
+                                        import_context.set_confirmed_candidate(Some(candidate.clone()));
+                                        import_context.set_import_phase(ImportPhase::Confirmation);
                                     }
                                 }
                             },
@@ -249,17 +241,16 @@ pub fn CdImport() -> Element {
                             detected_metadata: detected_metadata,
                             selected_match_index: selected_match_index,
                             on_match_select: {
-                                let mut selected_match_index_local = selected_match_index;
+                                let import_context = import_context.clone();
                                 move |index| {
-                                    selected_match_index_local.set(Some(index));
+                                    import_context.set_selected_match_index(Some(index));
                                 }
                             },
                             on_confirm: {
-                                let mut confirmed_candidate_local = confirmed_candidate;
-                                let mut import_phase_local = import_phase;
+                                let import_context = import_context.clone();
                                 move |candidate: MatchCandidate| {
-                                    confirmed_candidate_local.set(Some(candidate.clone()));
-                                    import_phase_local.set(ImportPhase::Confirmation);
+                                    import_context.set_confirmed_candidate(Some(candidate.clone()));
+                                    import_context.set_import_phase(ImportPhase::Confirmation);
                                 }
                             },
                         }
@@ -270,16 +261,14 @@ pub fn CdImport() -> Element {
                         Confirmation {
                             confirmed_candidate: confirmed_candidate,
                             on_edit: {
-                                let mut confirmed_candidate_local = confirmed_candidate;
-                                let mut selected_match_index_local = selected_match_index;
-                                let mut import_phase_local = import_phase;
+                                let import_context = import_context.clone();
                                 move || {
-                                    confirmed_candidate_local.set(None);
-                                    selected_match_index_local.set(None);
-                                    if !exact_match_candidates.read().is_empty() {
-                                        import_phase_local.set(ImportPhase::ExactLookup);
+                                    import_context.set_confirmed_candidate(None);
+                                    import_context.set_selected_match_index(None);
+                                    if !import_context.exact_match_candidates().read().is_empty() {
+                                        import_context.set_import_phase(ImportPhase::ExactLookup);
                                     } else {
-                                        import_phase_local.set(ImportPhase::ManualSearch);
+                                        import_context.set_import_phase(ImportPhase::ManualSearch);
                                     }
                                 }
                             },

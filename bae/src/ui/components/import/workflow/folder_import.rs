@@ -15,48 +15,36 @@ pub fn FolderImport() -> Element {
     let import_service = use_import_service();
     let navigator = use_navigator();
 
-    // Copy signals out of Rc (signals are Copy)
-    let folder_path = import_context.folder_path;
-    let detected_metadata = import_context.detected_metadata;
-    let import_phase = import_context.import_phase;
-    let exact_match_candidates = import_context.exact_match_candidates;
-    let selected_match_index = import_context.selected_match_index;
-    let confirmed_candidate = import_context.confirmed_candidate;
-    let is_detecting = import_context.is_detecting;
-    let is_looking_up = import_context.is_looking_up;
-    let import_error_message = import_context.import_error_message;
-    let duplicate_album_id = import_context.duplicate_album_id;
-    let search_query = import_context.search_query;
-    let folder_files = import_context.folder_files;
+    // Get signals via getters (signals are Copy)
+    let folder_path = import_context.folder_path();
+    let detected_metadata = import_context.detected_metadata();
+    let import_phase = import_context.import_phase();
+    let exact_match_candidates = import_context.exact_match_candidates();
+    let selected_match_index = import_context.selected_match_index();
+    let confirmed_candidate = import_context.confirmed_candidate();
+    let is_detecting = import_context.is_detecting();
+    let is_looking_up = import_context.is_looking_up();
+    let import_error_message = import_context.import_error_message();
+    let duplicate_album_id = import_context.duplicate_album_id();
+    let folder_files = import_context.folder_files();
 
     let on_folder_select = {
         let import_context_for_detect = import_context.clone();
 
-        let mut folder_path = folder_path;
-        let mut detected_metadata = detected_metadata;
-        let mut exact_match_candidates = exact_match_candidates;
-        let mut selected_match_index = selected_match_index;
-        let mut confirmed_candidate = confirmed_candidate;
-        let mut import_error_message = import_error_message;
-        let mut duplicate_album_id = duplicate_album_id;
-        let mut import_phase = import_phase;
-        let mut is_detecting = is_detecting;
-
         move |path: String| {
-            folder_path.set(path.clone());
-            detected_metadata.set(None);
-            exact_match_candidates.set(Vec::new());
-            selected_match_index.set(None);
-            confirmed_candidate.set(None);
-            import_error_message.set(None);
-            duplicate_album_id.set(None);
-            import_phase.set(ImportPhase::MetadataDetection);
-            is_detecting.set(true);
+            import_context_for_detect.set_folder_path(path.clone());
+            import_context_for_detect.set_detected_metadata(None);
+            import_context_for_detect.set_exact_match_candidates(Vec::new());
+            import_context_for_detect.set_selected_match_index(None);
+            import_context_for_detect.set_confirmed_candidate(None);
+            import_context_for_detect.set_import_error_message(None);
+            import_context_for_detect.set_duplicate_album_id(None);
+            import_context_for_detect.set_import_phase(ImportPhase::MetadataDetection);
+            import_context_for_detect.set_is_detecting(true);
 
             // Read files from folder
             let folder_path_clone = path.clone();
             let import_context_for_files = import_context_for_detect.clone();
-            let mut folder_files_for_read = import_context_for_files.folder_files;
             spawn(async move {
                 let mut files = Vec::new();
                 if let Ok(entries) = std::fs::read_dir(&folder_path_clone) {
@@ -79,18 +67,16 @@ pub fn FolderImport() -> Element {
                     }
                     files.sort_by(|a, b| a.name.cmp(&b.name));
                 }
-                folder_files_for_read.set(files);
+                import_context_for_files.set_folder_files(files);
             });
 
             let import_context_for_detect = import_context_for_detect.clone();
-            let detected_metadata = import_context_for_detect.detected_metadata;
-            let mut is_detecting = import_context_for_detect.is_detecting;
-            let is_looking_up = import_context_for_detect.is_looking_up;
-            let mut import_phase = import_context_for_detect.import_phase;
-            let confirmed_candidate = import_context_for_detect.confirmed_candidate;
-            let exact_match_candidates = import_context_for_detect.exact_match_candidates;
-            let mut import_error_message = import_context_for_detect.import_error_message;
-            let search_query = import_context_for_detect.search_query;
+            let detected_metadata = import_context_for_detect.detected_metadata();
+            let is_looking_up = import_context_for_detect.is_looking_up();
+            let confirmed_candidate = import_context_for_detect.confirmed_candidate();
+            let exact_match_candidates = import_context_for_detect.exact_match_candidates();
+            let search_query = import_context_for_detect.search_query();
+            let import_phase = import_context_for_detect.import_phase();
 
             spawn(async move {
                 // Detect metadata
@@ -100,7 +86,7 @@ pub fn FolderImport() -> Element {
 
                 match metadata_result {
                     Ok(metadata) => {
-                        is_detecting.set(false);
+                        import_context_for_detect.set_is_detecting(false);
                         handle_metadata_detection(
                             Some(metadata),
                             path.clone(),
@@ -114,9 +100,9 @@ pub fn FolderImport() -> Element {
                         .await;
                     }
                     Err(e) => {
-                        import_error_message.set(Some(e));
-                        is_detecting.set(false);
-                        import_phase.set(ImportPhase::FolderSelection);
+                        import_context_for_detect.set_import_error_message(Some(e));
+                        import_context_for_detect.set_is_detecting(false);
+                        import_context_for_detect.set_import_phase(ImportPhase::FolderSelection);
                     }
                 }
             });
@@ -171,9 +157,9 @@ pub fn FolderImport() -> Element {
                     FolderSelector {
                         on_select: on_folder_select,
                         on_error: {
-                            let mut import_error_message = import_error_message;
+                            let import_context = import_context.clone();
                             move |e: String| {
-                                import_error_message.set(Some(e));
+                                import_context.set_import_error_message(Some(e));
                             }
                         }
                     }
@@ -222,14 +208,12 @@ pub fn FolderImport() -> Element {
                             exact_match_candidates: exact_match_candidates,
                             selected_match_index: selected_match_index,
                             on_select: {
-                                let mut selected_match_index_local = selected_match_index;
-                                let mut confirmed_candidate_local = confirmed_candidate;
-                                let mut import_phase_local = import_phase;
+                                let import_context = import_context.clone();
                                 move |index| {
-                                    selected_match_index_local.set(Some(index));
-                                    if let Some(candidate) = exact_match_candidates.read().get(index) {
-                                        confirmed_candidate_local.set(Some(candidate.clone()));
-                                        import_phase_local.set(ImportPhase::Confirmation);
+                                    import_context.set_selected_match_index(Some(index));
+                                    if let Some(candidate) = import_context.exact_match_candidates().read().get(index) {
+                                        import_context.set_confirmed_candidate(Some(candidate.clone()));
+                                        import_context.set_import_phase(ImportPhase::Confirmation);
                                     }
                                 }
                             },
@@ -242,17 +226,16 @@ pub fn FolderImport() -> Element {
                             detected_metadata: detected_metadata,
                             selected_match_index: selected_match_index,
                             on_match_select: {
-                                let mut selected_match_index_local = selected_match_index;
+                                let import_context = import_context.clone();
                                 move |index| {
-                                    selected_match_index_local.set(Some(index));
+                                    import_context.set_selected_match_index(Some(index));
                                 }
                             },
                             on_confirm: {
-                                let mut confirmed_candidate_local = confirmed_candidate;
-                                let mut import_phase_local = import_phase;
+                                let import_context = import_context.clone();
                                 move |candidate: MatchCandidate| {
-                                    confirmed_candidate_local.set(Some(candidate.clone()));
-                                    import_phase_local.set(ImportPhase::Confirmation);
+                                    import_context.set_confirmed_candidate(Some(candidate.clone()));
+                                    import_context.set_import_phase(ImportPhase::Confirmation);
                                 }
                             },
                         }
@@ -263,18 +246,15 @@ pub fn FolderImport() -> Element {
                         Confirmation {
                             confirmed_candidate: confirmed_candidate,
                             on_edit: {
-                                let mut confirmed_candidate_local = confirmed_candidate;
-                                let mut selected_match_index_local = selected_match_index;
-                                let mut import_phase_local = import_phase;
-                                let mut search_query_local = search_query;
+                                let import_context = import_context.clone();
                                 move |_| {
-                                    confirmed_candidate_local.set(None);
-                                    selected_match_index_local.set(None);
-                                    if !exact_match_candidates.read().is_empty() {
-                                        import_phase_local.set(ImportPhase::ExactLookup);
+                                    import_context.set_confirmed_candidate(None);
+                                    import_context.set_selected_match_index(None);
+                                    if !import_context.exact_match_candidates().read().is_empty() {
+                                        import_context.set_import_phase(ImportPhase::ExactLookup);
                                     } else {
                                         // Initialize search query from detected metadata when transitioning to manual search
-                                        if let Some(metadata) = detected_metadata.read().as_ref() {
+                                        if let Some(metadata) = import_context.detected_metadata().read().as_ref() {
                                             let mut query_parts = Vec::new();
                                             if let Some(ref artist) = metadata.artist {
                                                 query_parts.push(artist.clone());
@@ -283,10 +263,10 @@ pub fn FolderImport() -> Element {
                                                 query_parts.push(album.clone());
                                             }
                                             if !query_parts.is_empty() {
-                                                search_query_local.set(query_parts.join(" "));
+                                                import_context.set_search_query(query_parts.join(" "));
                                             }
                                         }
-                                        import_phase_local.set(ImportPhase::ManualSearch);
+                                        import_context.set_import_phase(ImportPhase::ManualSearch);
                                     }
                                 }
                             },

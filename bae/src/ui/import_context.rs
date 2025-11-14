@@ -1,18 +1,13 @@
 use crate::config::use_config;
 use crate::discogs::client::DiscogsSearchResult;
 use crate::discogs::{DiscogsClient, DiscogsRelease};
-use crate::import::{detect_metadata, FolderMetadata, MatchCandidate};
+use crate::import::{detect_metadata, FolderMetadata, MatchCandidate, TorrentSource};
 use crate::musicbrainz::{lookup_by_discid, search_releases, MbRelease};
 use crate::torrent::client::TorrentClient;
 use crate::ui::components::import::FileInfo;
 use dioxus::prelude::*;
 use std::path::PathBuf;
 use std::rc::Rc;
-
-// Helper function to reduce boilerplate when setting signals
-fn set_signal<T: 'static>(mut signal: Signal<T>, value: T) {
-    signal.set(value);
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ImportStep {
@@ -29,31 +24,31 @@ pub enum ImportPhase {
 }
 
 pub struct ImportContext {
-    pub search_query: Signal<String>,
-    pub search_results: Signal<Vec<DiscogsSearchResult>>,
-    pub is_searching_masters: Signal<bool>,
-    pub is_loading_versions: Signal<bool>,
-    pub error_message: Signal<Option<String>>,
-    pub navigation_stack: Signal<Vec<ImportStep>>,
+    search_query: Signal<String>,
+    search_results: Signal<Vec<DiscogsSearchResult>>,
+    is_searching_masters: Signal<bool>,
+    is_loading_versions: Signal<bool>,
+    error_message: Signal<Option<String>>,
+    navigation_stack: Signal<Vec<ImportStep>>,
     // MusicBrainz search state
-    pub mb_search_results: Signal<Vec<MbRelease>>,
-    pub is_searching_mb: Signal<bool>,
-    pub mb_error_message: Signal<Option<String>>,
+    mb_search_results: Signal<Vec<MbRelease>>,
+    is_searching_mb: Signal<bool>,
+    mb_error_message: Signal<Option<String>>,
     // Folder detection import state (persists across navigation)
-    pub folder_path: Signal<String>,
-    pub detected_metadata: Signal<Option<FolderMetadata>>,
-    pub import_phase: Signal<ImportPhase>,
-    pub exact_match_candidates: Signal<Vec<MatchCandidate>>,
-    pub selected_match_index: Signal<Option<usize>>,
-    pub confirmed_candidate: Signal<Option<MatchCandidate>>,
-    pub is_detecting: Signal<bool>,
-    pub is_looking_up: Signal<bool>,
-    pub import_error_message: Signal<Option<String>>,
-    pub duplicate_album_id: Signal<Option<String>>,
-    pub folder_files: Signal<Vec<FileInfo>>,
+    folder_path: Signal<String>,
+    detected_metadata: Signal<Option<FolderMetadata>>,
+    import_phase: Signal<ImportPhase>,
+    exact_match_candidates: Signal<Vec<MatchCandidate>>,
+    selected_match_index: Signal<Option<usize>>,
+    confirmed_candidate: Signal<Option<MatchCandidate>>,
+    is_detecting: Signal<bool>,
+    is_looking_up: Signal<bool>,
+    import_error_message: Signal<Option<String>>,
+    duplicate_album_id: Signal<Option<String>>,
+    folder_files: Signal<Vec<FileInfo>>,
     // Torrent-specific state
-    pub torrent_source: Signal<Option<crate::import::TorrentSource>>,
-    pub seed_after_download: Signal<bool>,
+    torrent_source: Signal<Option<TorrentSource>>,
+    seed_after_download: Signal<bool>,
     client: DiscogsClient,
     /// Shared torrent client with default storage for metadata detection
     /// Sessions are heavy, so we create one and reuse it for all metadata detection operations
@@ -101,57 +96,221 @@ impl ImportContext {
         self.torrent_client_default.clone()
     }
 
+    // Getters - return Signal (which can be used as ReadSignal)
+    pub fn search_query(&self) -> Signal<String> {
+        self.search_query
+    }
+
+    pub fn folder_path(&self) -> Signal<String> {
+        self.folder_path
+    }
+
+    pub fn detected_metadata(&self) -> Signal<Option<FolderMetadata>> {
+        self.detected_metadata
+    }
+
+    pub fn import_phase(&self) -> Signal<ImportPhase> {
+        self.import_phase
+    }
+
+    pub fn exact_match_candidates(&self) -> Signal<Vec<MatchCandidate>> {
+        self.exact_match_candidates
+    }
+
+    pub fn selected_match_index(&self) -> Signal<Option<usize>> {
+        self.selected_match_index
+    }
+
+    pub fn confirmed_candidate(&self) -> Signal<Option<MatchCandidate>> {
+        self.confirmed_candidate
+    }
+
+    pub fn is_detecting(&self) -> Signal<bool> {
+        self.is_detecting
+    }
+
+    pub fn is_looking_up(&self) -> Signal<bool> {
+        self.is_looking_up
+    }
+
+    pub fn import_error_message(&self) -> Signal<Option<String>> {
+        self.import_error_message
+    }
+
+    pub fn duplicate_album_id(&self) -> Signal<Option<String>> {
+        self.duplicate_album_id
+    }
+
+    pub fn folder_files(&self) -> Signal<Vec<FileInfo>> {
+        self.folder_files
+    }
+
+    pub fn torrent_source(&self) -> Signal<Option<TorrentSource>> {
+        self.torrent_source
+    }
+
+    pub fn seed_after_download(&self) -> Signal<bool> {
+        self.seed_after_download
+    }
+
+    pub fn set_search_query(&self, value: String) {
+        let mut signal = self.search_query;
+        signal.set(value);
+    }
+
+    pub fn set_search_results(&self, value: Vec<DiscogsSearchResult>) {
+        let mut signal = self.search_results;
+        signal.set(value);
+    }
+
+    pub fn set_is_searching_masters(&self, value: bool) {
+        let mut signal = self.is_searching_masters;
+        signal.set(value);
+    }
+
+    pub fn set_is_loading_versions(&self, value: bool) {
+        let mut signal = self.is_loading_versions;
+        signal.set(value);
+    }
+
+    pub fn set_error_message(&self, value: Option<String>) {
+        let mut signal = self.error_message;
+        signal.set(value);
+    }
+
+    pub fn set_navigation_stack(&self, value: Vec<ImportStep>) {
+        let mut signal = self.navigation_stack;
+        signal.set(value);
+    }
+
+    pub fn set_mb_search_results(&self, value: Vec<MbRelease>) {
+        let mut signal = self.mb_search_results;
+        signal.set(value);
+    }
+
+    pub fn set_is_searching_mb(&self, value: bool) {
+        let mut signal = self.is_searching_mb;
+        signal.set(value);
+    }
+
+    pub fn set_mb_error_message(&self, value: Option<String>) {
+        let mut signal = self.mb_error_message;
+        signal.set(value);
+    }
+
+    pub fn set_folder_path(&self, value: String) {
+        let mut signal = self.folder_path;
+        signal.set(value);
+    }
+
+    pub fn set_detected_metadata(&self, value: Option<FolderMetadata>) {
+        let mut signal = self.detected_metadata;
+        signal.set(value);
+    }
+
+    pub fn set_import_phase(&self, value: ImportPhase) {
+        let mut signal = self.import_phase;
+        signal.set(value);
+    }
+
+    pub fn set_exact_match_candidates(&self, value: Vec<MatchCandidate>) {
+        let mut signal = self.exact_match_candidates;
+        signal.set(value);
+    }
+
+    pub fn set_selected_match_index(&self, value: Option<usize>) {
+        let mut signal = self.selected_match_index;
+        signal.set(value);
+    }
+
+    pub fn set_confirmed_candidate(&self, value: Option<MatchCandidate>) {
+        let mut signal = self.confirmed_candidate;
+        signal.set(value);
+    }
+
+    pub fn set_is_detecting(&self, value: bool) {
+        let mut signal = self.is_detecting;
+        signal.set(value);
+    }
+
+    pub fn set_is_looking_up(&self, value: bool) {
+        let mut signal = self.is_looking_up;
+        signal.set(value);
+    }
+
+    pub fn set_import_error_message(&self, value: Option<String>) {
+        let mut signal = self.import_error_message;
+        signal.set(value);
+    }
+
+    pub fn set_duplicate_album_id(&self, value: Option<String>) {
+        let mut signal = self.duplicate_album_id;
+        signal.set(value);
+    }
+
+    pub fn set_folder_files(&self, value: Vec<FileInfo>) {
+        let mut signal = self.folder_files;
+        signal.set(value);
+    }
+
+    pub fn set_torrent_source(&self, value: Option<TorrentSource>) {
+        let mut signal = self.torrent_source;
+        signal.set(value);
+    }
+
+    pub fn set_seed_after_download(&self, value: bool) {
+        let mut signal = self.seed_after_download;
+        signal.set(value);
+    }
+
     /// Reset state for a new torrent selection
     pub fn select_torrent_file(
         &self,
         path: String,
-        torrent_source: crate::import::TorrentSource,
+        torrent_source: TorrentSource,
         seed_after_download: bool,
     ) {
         // Store torrent source and seed flag
-        set_signal(self.torrent_source, Some(torrent_source));
-        set_signal(self.seed_after_download, seed_after_download);
+        self.set_torrent_source(Some(torrent_source));
+        self.set_seed_after_download(seed_after_download);
 
         // Reset state for new selection
-        set_signal(self.folder_path, path);
-        set_signal(self.detected_metadata, None);
-        set_signal(self.exact_match_candidates, Vec::new());
-        set_signal(self.selected_match_index, None);
-        set_signal(self.confirmed_candidate, None);
-        set_signal(self.import_error_message, None);
-        set_signal(self.duplicate_album_id, None);
-        set_signal(self.import_phase, ImportPhase::MetadataDetection);
-        set_signal(self.is_detecting, true);
+        self.set_folder_path(path);
+        self.set_detected_metadata(None);
+        self.set_exact_match_candidates(Vec::new());
+        self.set_selected_match_index(None);
+        self.set_confirmed_candidate(None);
+        self.set_import_error_message(None);
+        self.set_duplicate_album_id(None);
+        self.set_import_phase(ImportPhase::MetadataDetection);
+        self.set_is_detecting(true);
     }
 
     pub fn reset(&self) {
-        set_signal(self.search_query, String::new());
-        set_signal(self.search_results, Vec::new());
-        set_signal(self.is_searching_masters, false);
-        set_signal(self.is_loading_versions, false);
-        set_signal(self.error_message, None);
-        set_signal(self.mb_search_results, Vec::new());
-        set_signal(self.is_searching_mb, false);
-        set_signal(self.mb_error_message, None);
-        set_signal(
-            self.navigation_stack,
-            vec![ImportStep::FolderIdentification],
-        );
+        self.set_search_query(String::new());
+        self.set_search_results(Vec::new());
+        self.set_is_searching_masters(false);
+        self.set_is_loading_versions(false);
+        self.set_error_message(None);
+        self.set_mb_search_results(Vec::new());
+        self.set_is_searching_mb(false);
+        self.set_mb_error_message(None);
+        self.set_navigation_stack(vec![ImportStep::FolderIdentification]);
 
         // Also reset folder detection import state
-        set_signal(self.folder_path, String::new());
-        set_signal(self.detected_metadata, None);
-        set_signal(self.import_phase, ImportPhase::FolderSelection);
-        set_signal(self.exact_match_candidates, Vec::new());
-        set_signal(self.selected_match_index, None);
-        set_signal(self.confirmed_candidate, None);
-        set_signal(self.is_detecting, false);
-        set_signal(self.is_looking_up, false);
-        set_signal(self.import_error_message, None);
-        set_signal(self.duplicate_album_id, None);
-        set_signal(self.folder_files, Vec::new());
-        set_signal(self.torrent_source, None);
-        set_signal(self.seed_after_download, true);
+        self.set_folder_path(String::new());
+        self.set_detected_metadata(None);
+        self.set_import_phase(ImportPhase::FolderSelection);
+        self.set_exact_match_candidates(Vec::new());
+        self.set_selected_match_index(None);
+        self.set_confirmed_candidate(None);
+        self.set_is_detecting(false);
+        self.set_is_looking_up(false);
+        self.set_import_error_message(None);
+        self.set_duplicate_album_id(None);
+        self.set_folder_files(Vec::new());
+        self.set_torrent_source(None);
+        self.set_seed_after_download(true);
     }
 
     pub async fn detect_folder_metadata(
@@ -308,7 +467,7 @@ impl ImportContext {
         release_id: String,
         master_id: String,
     ) -> Result<DiscogsRelease, String> {
-        set_signal(self.error_message, None);
+        self.set_error_message(None);
 
         match self.client.get_release(&release_id).await {
             Ok(release) => {
@@ -320,7 +479,7 @@ impl ImportContext {
             }
             Err(e) => {
                 let error = format!("Failed to fetch release details: {}", e);
-                set_signal(self.error_message, Some(error.clone()));
+                self.set_error_message(Some(error.clone()));
                 Err(error)
             }
         }

@@ -13,7 +13,7 @@ pub fn ManualSearchPanel(
     selected_index: Signal<Option<usize>>,
 ) -> Element {
     let import_context = use_context::<Rc<ImportContext>>();
-    let mut search_query = import_context.search_query;
+    let mut search_query = import_context.search_query();
     let mut search_source = use_signal(|| SearchSource::MusicBrainz);
     let mut match_candidates = use_signal(Vec::<MatchCandidate>::new);
     let mut is_searching = use_signal(|| false);
