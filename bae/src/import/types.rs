@@ -33,7 +33,14 @@
 //! The key insight: Both import types use identical data structures. The only difference
 //! is how we calculate the byte positions and chunk ranges for each track.
 
-use crate::{cue_flac::CueSheet, discogs::DiscogsRelease, musicbrainz::MbRelease};
+use crate::{
+    cd::drive::CdToc,
+    cue_flac::{CueSheet, FlacHeaders},
+    db::{DbAlbum, DbRelease, DbTrack},
+    discogs::DiscogsRelease,
+    import::handle::TorrentImportMetadata,
+    musicbrainz::MbRelease,
+};
 use std::{collections::HashMap, path::PathBuf};
 
 /// Request to import an album
@@ -51,6 +58,7 @@ pub enum ImportRequest {
         mb_release: Option<MbRelease>,
         master_year: u32,
         seed_after_download: bool,
+        torrent_metadata: TorrentImportMetadata,
     },
     CD {
         discogs_release: Option<DiscogsRelease>,
@@ -194,14 +202,14 @@ pub struct CueFlacLayoutData {
     /// Parsed CUE sheet with track timing information
     pub cue_sheet: CueSheet,
     /// Extracted FLAC headers (needed for byte position estimation)
-    pub flac_headers: crate::cue_flac::FlacHeaders,
+    pub flac_headers: FlacHeaders,
     /// Per-track chunk ranges: track_id → (start_chunk_index, end_chunk_index)
     pub track_chunk_ranges: HashMap<String, (i32, i32)>,
     /// Per-track byte ranges: track_id → (start_byte, end_byte) in file
     pub track_byte_ranges: HashMap<String, (i64, i64)>,
     /// Seektable mapping sample positions to byte positions in the original FLAC file
     /// Used for accurate seeking during playback
-    pub seektable: Option<std::collections::HashMap<u64, u64>>,
+    pub seektable: Option<HashMap<u64, u64>>,
 }
 
 /// Validated import command ready for pipeline execution.
@@ -216,9 +224,9 @@ pub enum ImportCommand {
     /// Folder-based import: all files available upfront
     Folder {
         /// Database album record
-        db_album: crate::db::DbAlbum,
+        db_album: DbAlbum,
         /// Database release record
-        db_release: crate::db::DbRelease,
+        db_release: DbRelease,
         /// Logical track → physical file mappings
         tracks_to_files: Vec<TrackFile>,
         /// Files discovered during folder scan
@@ -229,30 +237,30 @@ pub enum ImportCommand {
     /// Torrent-based import: files arrive incrementally
     Torrent {
         /// Database album record
-        db_album: crate::db::DbAlbum,
+        db_album: DbAlbum,
         /// Database release record
-        db_release: crate::db::DbRelease,
+        db_release: DbRelease,
         /// Logical track → physical file mappings
         tracks_to_files: Vec<TrackFile>,
         /// Torrent source (stored to recreate handle in import service)
         /// We can't send TorrentClient/TorrentHandle through channels as they contain UniquePtr
         torrent_source: TorrentSource,
         /// Torrent-specific metadata
-        torrent_metadata: crate::import::handle::TorrentImportMetadata,
+        torrent_metadata: TorrentImportMetadata,
         /// Whether to start seeding after download completes
         seed_after_download: bool,
     },
     /// CD-based import: service will rip CD first (acquire phase), then process like folder import
     CD {
         /// Database album record
-        db_album: crate::db::DbAlbum,
+        db_album: DbAlbum,
         /// Database release record
-        db_release: crate::db::DbRelease,
+        db_release: DbRelease,
         /// Database tracks (for mapping after ripping)
-        db_tracks: Vec<crate::db::DbTrack>,
+        db_tracks: Vec<DbTrack>,
         /// CD drive path
         drive_path: PathBuf,
         /// CD TOC (Table of Contents) - read during validation
-        toc: crate::cd::drive::CdToc,
+        toc: CdToc,
     },
 }

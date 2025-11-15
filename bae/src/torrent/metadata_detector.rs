@@ -4,9 +4,8 @@
 //! from torrents for automatic release matching, separate from the main import flow.
 
 use crate::import::{detect_metadata, FolderMetadata};
-use crate::torrent::client::TorrentClient;
+use crate::torrent::client::{TorrentClient, TorrentHandle};
 use crate::torrent::selective_downloader::SelectiveDownloader;
-use std::path::Path;
 use thiserror::Error;
 use tracing::{info, warn};
 
@@ -22,25 +21,21 @@ pub enum TorrentMetadataError {
 
 /// Detect metadata from CUE/log files in a torrent
 ///
-/// Uses a shared torrent client with default storage (writes to disk),
+/// Uses the provided torrent handle (already added to client),
 /// downloads only CUE/log files, then runs metadata detection on them.
 ///
 /// This is separate from the main import flow and doesn't use custom storage.
 pub async fn detect_metadata_from_torrent_file(
-    torrent_file_path: &Path,
+    handle: &TorrentHandle,
     client: &TorrentClient,
 ) -> Result<Option<FolderMetadata>, TorrentMetadataError> {
     // Use system temp directory for downloads
     let temp_path = std::env::temp_dir();
 
-    // Add torrent to session
-    let temp_handle = client.add_torrent_file(torrent_file_path).await?;
-    temp_handle.wait_for_metadata().await?;
-
     // Prioritize and download metadata files
     let selective_downloader = SelectiveDownloader::new(client.clone());
     let metadata_files = selective_downloader
-        .prioritize_metadata_files(&temp_handle)
+        .prioritize_metadata_files(handle)
         .await?;
 
     if metadata_files.is_empty() {
@@ -55,14 +50,14 @@ pub async fn detect_metadata_from_torrent_file(
 
     // Wait for metadata files to download
     selective_downloader
-        .wait_for_metadata_files(&temp_handle, &metadata_files)
+        .wait_for_metadata_files(handle, &metadata_files)
         .await?;
 
     info!("Metadata files downloaded, extracting...");
 
     // Get torrent name to construct the full save directory path
     // With default storage, files are written to temp_path/torrent_name/
-    let torrent_name = temp_handle.name().await?;
+    let torrent_name = handle.name().await?;
     let save_dir = temp_path.join(&torrent_name);
 
     // Wait a bit for libtorrent to finish writing files

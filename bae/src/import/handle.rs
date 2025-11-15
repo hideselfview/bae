@@ -6,6 +6,8 @@
 use crate::cue_flac::CueFlacProcessor;
 use crate::db::DbTorrent;
 use crate::discogs::DiscogsRelease;
+use crate::import::discogs_parser::parse_discogs_release;
+use crate::import::musicbrainz_parser::fetch_and_parse_mb_release;
 use crate::import::progress::ImportProgressHandle;
 use crate::import::track_to_file_mapper::map_tracks_to_files;
 use crate::import::types::{
@@ -14,7 +16,6 @@ use crate::import::types::{
 use crate::library::{LibraryManager, SharedLibraryManager};
 use crate::musicbrainz::MbRelease;
 use crate::playback::symphonia_decoder::TrackDecoder;
-use crate::torrent::{SelectiveDownloader, TorrentClient};
 use std::path::Path;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -38,6 +39,14 @@ pub struct TorrentImportMetadata {
     pub piece_length: i32,
     pub num_pieces: i32,
     pub seed_after_download: bool,
+    pub file_list: Vec<TorrentFileMetadata>,
+}
+
+/// Metadata for a single file in a torrent
+#[derive(Debug, Clone)]
+pub struct TorrentFileMetadata {
+    pub path: std::path::PathBuf,
+    pub size: i64,
 }
 
 impl ImportHandle {
@@ -83,6 +92,7 @@ impl ImportHandle {
                 mb_release,
                 master_year,
                 seed_after_download,
+                torrent_metadata,
             } => {
                 self.send_torrent_request(
                     torrent_source,
@@ -90,6 +100,7 @@ impl ImportHandle {
                     mb_release,
                     master_year,
                     seed_after_download,
+                    torrent_metadata,
                 )
                 .await
             }
@@ -230,6 +241,7 @@ impl ImportHandle {
         mb_release: Option<MbRelease>,
         master_year: u32,
         seed_after_download: bool,
+        torrent_metadata: TorrentImportMetadata,
     ) -> Result<(String, String), String> {
         // Validate that at least one release is provided
         if discogs_release.is_none() && mb_release.is_none() {
@@ -238,82 +250,15 @@ impl ImportHandle {
 
         let library_manager = self.library_manager.get();
 
-        // ========== TORRENT SETUP ==========
-
-        // Create torrent client on current thread for metadata detection
-        // NOTE: This is safe because we're on the main UI thread and won't move it
-        let torrent_client = TorrentClient::new(self.runtime_handle.clone())
-            .map_err(|e| format!("Failed to create torrent client: {}", e))?;
-
-        // Extract magnet link before moving torrent_source
-        let magnet_link_opt = match &torrent_source {
-            TorrentSource::MagnetLink(m) => Some(m.clone()),
-            _ => None,
-        };
-
-        // Clone torrent_source for storing in ImportRequest
+        // Clone torrent_source for storing in ImportCommand
         let torrent_source_for_request = torrent_source.clone();
 
-        // Add torrent to client
-        let torrent_handle = match &torrent_source {
-            TorrentSource::File(path) => torrent_client
-                .add_torrent_file(path)
-                .await
-                .map_err(|e| format!("Failed to add torrent file: {}", e))?,
-            TorrentSource::MagnetLink(magnet) => torrent_client
-                .add_magnet_link(magnet)
-                .await
-                .map_err(|e| format!("Failed to add magnet link: {}", e))?,
-        };
-
-        // Wait for metadata to be available (for magnet links)
-        torrent_handle
-            .wait_for_metadata()
-            .await
-            .map_err(|e| format!("Failed to get torrent metadata: {}", e))?;
-
-        // Get torrent info
-        let info_hash = torrent_handle.info_hash().await;
-        let torrent_name = torrent_handle
-            .name()
-            .await
-            .map_err(|e| format!("Failed to get torrent name: {}", e))?;
-        let total_size = torrent_handle
-            .total_size()
-            .await
-            .map_err(|e| format!("Failed to get torrent size: {}", e))?;
-        let piece_length = torrent_handle
-            .piece_length()
-            .await
-            .map_err(|e| format!("Failed to get piece length: {}", e))?;
-        let num_pieces = torrent_handle
-            .num_pieces()
-            .await
-            .map_err(|e| format!("Failed to get piece count: {}", e))?;
-
         info!(
-            "Torrent added: {} ({} pieces, {} bytes)",
-            torrent_name, num_pieces, total_size
+            "Torrent import: {} ({} pieces, {} bytes)",
+            torrent_metadata.torrent_name,
+            torrent_metadata.num_pieces,
+            torrent_metadata.total_size_bytes
         );
-
-        // ========== METADATA FILE PRIORITIZATION ==========
-
-        let selective_downloader = SelectiveDownloader::new(torrent_client.clone());
-        let metadata_files = selective_downloader
-            .prioritize_metadata_files(&torrent_handle)
-            .await
-            .map_err(|e| format!("Failed to prioritize metadata files: {}", e))?;
-
-        if !metadata_files.is_empty() {
-            info!(
-                "Waiting for {} metadata files to download...",
-                metadata_files.len()
-            );
-            selective_downloader
-                .wait_for_metadata_files(&torrent_handle, &metadata_files)
-                .await
-                .map_err(|e| format!("Failed to wait for metadata files: {}", e))?;
-        }
 
         // ========== PARSE RELEASE INTO DATABASE MODELS ==========
 
@@ -328,26 +273,14 @@ impl ImportHandle {
                 return Err("No release provided".to_string());
             };
 
-        // ========== ENABLE ALL FILES FOR DOWNLOAD ==========
-
-        selective_downloader
-            .enable_remaining_files(&torrent_handle)
-            .await
-            .map_err(|e| format!("Failed to enable remaining files: {}", e))?;
-
         // ========== MAP TRACKS TO TORRENT FILES ==========
 
-        // Get file list from torrent
-        let torrent_files = torrent_handle
-            .get_file_list()
-            .await
-            .map_err(|e| format!("Failed to get torrent file list: {}", e))?;
-
-        // Convert torrent files to DiscoveredFile format
+        // Convert torrent metadata file list to DiscoveredFile format
         // Torrent file paths from libtorrent already include the torrent name directory,
         // so we just need to prepend the temp directory
         let temp_dir = std::env::temp_dir();
-        let discovered_files: Vec<DiscoveredFile> = torrent_files
+        let discovered_files: Vec<DiscoveredFile> = torrent_metadata
+            .file_list
             .iter()
             .map(|tf| DiscoveredFile {
                 // libtorrent's file_path() returns paths that already include the torrent name,
@@ -422,25 +355,15 @@ impl ImportHandle {
 
         // ========== SAVE TORRENT METADATA TO DATABASE ==========
 
-        let torrent_metadata = TorrentImportMetadata {
-            info_hash: info_hash.clone(),
-            magnet_link: magnet_link_opt,
-            torrent_name: torrent_name.clone(),
-            total_size_bytes: total_size,
-            piece_length,
-            num_pieces,
-            seed_after_download,
-        };
-
         // Save torrent record (will be used for seeding later)
         let db_torrent = DbTorrent::new(
             &db_release.id,
-            &info_hash,
+            &torrent_metadata.info_hash,
             torrent_metadata.magnet_link.clone(),
-            &torrent_name,
-            total_size,
-            piece_length,
-            num_pieces,
+            &torrent_metadata.torrent_name,
+            torrent_metadata.total_size_bytes,
+            torrent_metadata.piece_length,
+            torrent_metadata.num_pieces,
         );
 
         // Save torrent metadata to database
@@ -509,10 +432,8 @@ impl ImportHandle {
 
         let (db_album, db_release, db_tracks, artists, album_artists) =
             if let Some(ref discogs_rel) = discogs_release {
-                use crate::import::discogs_parser::parse_discogs_release;
                 parse_discogs_release(discogs_rel, master_year)?
             } else if let Some(ref mb_rel) = mb_release {
-                use crate::import::musicbrainz_parser::fetch_and_parse_mb_release;
                 fetch_and_parse_mb_release(&mb_rel.release_id, master_year).await?
             } else {
                 return Err("No release provided".to_string());
