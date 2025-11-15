@@ -17,6 +17,7 @@ use crate::torrent::storage::BaeStorage;
 use cxx::UniquePtr;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::RwLock;
@@ -40,20 +41,10 @@ pub enum FilePriority {
     Maximum = 7,
 }
 
-/// Wrapper around Arc that is Send-safe
-///
-/// SAFETY: This wraps Arc<RwLock<UniquePtr>> which isn't Send because UniquePtr isn't Send.
-/// However, we guarantee that the session is only used from a single task context.
-/// The Arc ensures reference-counting, and we only use it sequentially.
-struct SendSafeArc<T>(Arc<T>);
-
-unsafe impl<T> Send for SendSafeArc<T> {}
-
-/// Wrapper around libtorrent session that is Send-safe
+/// Type alias for the libtorrent session
 /// Uses our FFI Session type (custom storage backend)
-struct SendSafeSession(SendSafeArc<RwLock<UniquePtr<Session>>>);
-
-unsafe impl Send for SendSafeSession {}
+/// Uses Rc instead of Arc since TorrentClient is not Send/Sync and only used on a single thread
+type SessionArc = Rc<RwLock<UniquePtr<Session>>>;
 
 /// Storage registry for mapping torrent IDs to BaeStorage instances
 /// Used by sync callbacks to access async storage methods
@@ -71,56 +62,32 @@ thread_local! {
 
 /// Wrapper around libtorrent session
 pub struct TorrentClient {
-    session: SendSafeSession,
+    session: SessionArc,
     runtime_handle: tokio::runtime::Handle,
     storage_registry: StorageRegistry,
     storage_index_map: StorageIndexMap,
 }
 
-// SAFETY: TorrentClient contains UniquePtr which isn't Send, but it can be safely
-// moved between tasks/threads because:
+// NOTE: TorrentClient is NOT Send or Sync because:
 //
-// 1. The session is wrapped in Arc<RwLock<UniquePtr<Session>>> (see SendSafeSession
-//    at line 57), which provides thread-safe reference-counting and synchronization.
+// 1. It uses thread_local! storage (STORAGE_REGISTRY, STORAGE_INDEX_MAP, RUNTIME_HANDLE)
+//    that is initialized in TorrentClient::new() on the creating thread.
 //
-// 2. All operations acquire a write lock before using the session (see RwLock usage
-//    at lines 407, 463), ensuring safe access even when moved between threads.
+// 2. The C++ callbacks (read_callback, write_callback, hash_callback) access this
+//    thread-local storage. If TorrentClient is moved to a different thread, the callbacks
+//    won't find the registry and will fail.
 //
-// 3. While TorrentClient can be used from multiple threads (via ImportHandle in
-//    AppContext), access is serialized by the RwLock, making it safe to Send.
-//
-// The Arc ensures reference-counting is safe across thread boundaries, and the
-// RwLock ensures that even if multiple threads hold TorrentClient references,
-// only one can use the session at a time.
-unsafe impl Send for TorrentClient {}
-
-// SAFETY: TorrentClient can be safely shared across threads (Sync) because:
-//
-// 1. Libtorrent's session is thread-safe: The libtorrent session object is designed
-//    to be thread-safe and manages its own internal thread for network operations.
-//    Multiple threads can safely call session methods concurrently.
-//
-// 2. We serialize access with RwLock: The session is wrapped in RwLock<UniquePtr<Session>>
-//    (see SendSafeSession at line 57). All operations acquire a write lock before using
-//    the session (e.g., add_torrent_file at line 407, add_magnet_link at line 463).
-//    This serializes access even though libtorrent supports concurrent access.
-//
-// 3. Safe concurrent references: Multiple threads can hold &TorrentClient references
-//    simultaneously. When they use it, they serialize via the RwLock, ensuring only
-//    one operation happens at a time. This is safe because:
-//    - Libtorrent's session is thread-safe
-//    - Our RwLock ensures sequential access
-//    - The internal Arc ensures reference-counting is safe
-//
-// This approach is more efficient than thread-local storage, which would create one
-// session per thread (potentially 8+ sessions on multi-core systems). With a shared
-// instance, we create only one session that all threads can use safely.
-unsafe impl Sync for TorrentClient {}
+// 3. Therefore, TorrentClient must be created and used on a single dedicated thread.
+//    ImportService and TorrentSeeder spawn dedicated threads for two reasons:
+//    - TorrentClient cannot be moved between threads (thread-local storage constraint)
+//    - They need separate instances with different storage types:
+//      * ImportService/TorrentSeeder use custom storage (BaeStorage) via TorrentClient::new()
+//      * ImportContext uses default storage for metadata detection via TorrentClient::new_with_default_storage()
 
 impl Clone for TorrentClient {
     fn clone(&self) -> Self {
         TorrentClient {
-            session: SendSafeSession(SendSafeArc(Arc::clone(&self.session.0 .0))),
+            session: Rc::clone(&self.session),
             runtime_handle: self.runtime_handle.clone(),
             storage_registry: Arc::clone(&self.storage_registry),
             storage_index_map: Arc::clone(&self.storage_index_map),
@@ -328,7 +295,7 @@ impl TorrentClient {
         }
 
         Ok(TorrentClient {
-            session: SendSafeSession(SendSafeArc(Arc::new(RwLock::new(custom_session)))),
+            session: Rc::new(RwLock::new(custom_session)),
             runtime_handle,
             storage_registry,
             storage_index_map,
@@ -359,7 +326,7 @@ impl TorrentClient {
         let storage_index_map: StorageIndexMap = Arc::new(RwLock::new(HashMap::new()));
 
         Ok(TorrentClient {
-            session: SendSafeSession(SendSafeArc(Arc::new(RwLock::new(default_session)))),
+            session: Rc::new(RwLock::new(default_session)),
             runtime_handle,
             storage_registry,
             storage_index_map,
@@ -400,10 +367,10 @@ impl TorrentClient {
         let temp_path = std::env::temp_dir().to_string_lossy().to_string();
 
         // Extract session reference to avoid capturing self across await
-        let session = SendSafeArc(Arc::clone(&self.session.0 .0));
+        let session = Rc::clone(&self.session);
 
         // Get write lock first
-        let mut session_guard = session.0.write().await;
+        let mut session_guard = session.write().await;
 
         // Load torrent file using our wrapper function
         let mut params = load_torrent_file(&file_path, &temp_path);
@@ -440,6 +407,7 @@ impl TorrentClient {
         // Store raw pointer directly (opaque type, can't use UniquePtr)
         // SAFETY: We own the handle_ptr returned from session_add_torrent
         // The handle will be valid as long as the session exists
+        #[allow(clippy::arc_with_non_send_sync)]
         Ok(TorrentHandle {
             handle: SendSafeTorrentHandle(Arc::new(RwLock::new(handle_ptr))),
         })
@@ -451,11 +419,10 @@ impl TorrentClient {
         let temp_path = std::env::temp_dir().to_string_lossy().to_string();
 
         // Extract session reference to avoid capturing self across await
-        // Keep it wrapped in SendSafeArc to maintain Send safety
-        let session = SendSafeArc(Arc::clone(&self.session.0 .0));
+        let session = Rc::clone(&self.session);
 
         // Get write lock first
-        let mut session_guard = session.0.write().await;
+        let mut session_guard = session.write().await;
 
         // Parse magnet URI using our wrapper function
         let mut params = parse_magnet_uri(magnet, &temp_path);
@@ -492,6 +459,7 @@ impl TorrentClient {
         // Store raw pointer directly (opaque type, can't use UniquePtr)
         // SAFETY: We own the handle_ptr returned from session_add_torrent
         // The handle will be valid as long as the session exists
+        #[allow(clippy::arc_with_non_send_sync)]
         Ok(TorrentHandle {
             handle: SendSafeTorrentHandle(Arc::new(RwLock::new(handle_ptr))),
             // Don't store session reference - TorrentHandle doesn't need it
@@ -502,6 +470,7 @@ impl TorrentClient {
 
 /// Wrapper around raw TorrentHandle pointer that is Send/Sync-safe
 /// Uses our FFI TorrentHandle type (opaque, so we use raw pointer)
+#[allow(clippy::arc_with_non_send_sync)]
 struct SendSafeTorrentHandle(Arc<RwLock<*mut FfiTorrentHandle>>);
 
 unsafe impl Send for SendSafeTorrentHandle {}
@@ -514,11 +483,11 @@ pub struct TorrentHandle {
     // The handle is self-contained and doesn't need the session reference
 }
 
-// SAFETY: TorrentHandle contains UniquePtr which isn't Send/Sync, but we only use it
-// from a single task context. The Arc ensures the handle is reference-counted
-// and can be safely moved/shared between tasks as long as we don't actually use it
-// concurrently. In our use case, we create the handle in one task and use it
-// sequentially in that same task, so this is safe.
+// SAFETY: TorrentHandle must be Send because it's held across .await points in async functions.
+// Even though TorrentHandle is only used on the same dedicated thread as TorrentClient,
+// Rust requires Send for values held across .await. The raw pointer (*mut FfiTorrentHandle)
+// is safe to send between threads because it's just a pointer to C++ memory, and all
+// operations go through the same TorrentClient session on its dedicated thread.
 unsafe impl Send for TorrentHandle {}
 unsafe impl Sync for TorrentHandle {}
 
