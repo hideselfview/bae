@@ -35,6 +35,32 @@ For folder imports, bae scans and extracts metadata from multiple sources:
 
 Metadata is aggregated with weighted confidence scoring.
 
+### 2.1 Torrent Import Flow
+
+For torrent imports, bae uses a single TorrentClient session created in ImportContext:
+
+**UI Phase (ImportContext):**
+- User selects torrent file
+- Add torrent to shared `torrent_client_default` (single session)
+- Extract torrent metadata: info_hash, name, size, piece_length, num_pieces, file_list
+- Download CUE/log files via SelectiveDownloader (prioritizes metadata files)
+- Detect album metadata from downloaded CUE/log files
+- Store `TorrentImportMetadata` in ImportContext
+- User confirms release match
+
+**Import Phase (ImportHandle):**
+- Receives `TorrentImportMetadata` from UI (no torrent operations)
+- Uses metadata directly for track-to-file mapping
+- Parses release metadata (Discogs/MusicBrainz)
+- Inserts album/tracks to database
+- Sends import command to ImportService
+
+**Download Phase (ImportService):**
+- Uses existing TorrentClient (created on dedicated thread)
+- Registers BaeStorage for torrent
+- Downloads all files during Acquire phase
+- Streams → encrypts → uploads during Chunk phase
+
 ### 3. Release Matching
 
 **Exact Lookup** (if MusicBrainz DiscID available):
