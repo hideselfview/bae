@@ -6,14 +6,13 @@
 // and parse bencoded data for additional torrent metadata.
 
 use crate::torrent::ffi::{
-    create_bae_storage_constructor, create_session_params_default,
-    create_session_params_with_storage, create_session_with_params, get_session_ptr,
-    load_torrent_file, parse_magnet_uri, session_add_torrent, torrent_get_file_list,
-    torrent_get_name, torrent_get_num_pieces, torrent_get_piece_length, torrent_get_progress,
-    torrent_get_storage_index, torrent_get_total_size, torrent_has_metadata,
+    create_session_params_default, create_session_params_with_storage, create_session_with_params,
+    get_session_ptr, load_torrent_file, parse_magnet_uri, session_add_torrent,
+    torrent_get_file_list, torrent_get_name, torrent_get_num_pieces, torrent_get_piece_length,
+    torrent_get_progress, torrent_get_storage_index, torrent_get_total_size, torrent_has_metadata,
     torrent_set_file_priorities, Session, TorrentFileInfo, TorrentHandle as FfiTorrentHandle,
 };
-use crate::torrent::storage::BaeStorage;
+use crate::torrent::storage::{create_bae_storage_constructor, BaeStorage};
 use cxx::UniquePtr;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -21,7 +20,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::RwLock;
-use tracing::error;
 
 #[derive(Error, Debug)]
 pub enum TorrentError {
@@ -56,8 +54,8 @@ type StorageIndexMap = Arc<RwLock<HashMap<i32, String>>>;
 
 thread_local! {
     pub(crate) static STORAGE_REGISTRY: std::cell::RefCell<Option<StorageRegistry>> = const { std::cell::RefCell::new(None) };
-    static STORAGE_INDEX_MAP: std::cell::RefCell<Option<StorageIndexMap>> = const { std::cell::RefCell::new(None) };
-    static RUNTIME_HANDLE: std::cell::RefCell<Option<tokio::runtime::Handle>> = const { std::cell::RefCell::new(None) };
+    pub(crate) static STORAGE_INDEX_MAP: std::cell::RefCell<Option<StorageIndexMap>> = const { std::cell::RefCell::new(None) };
+    pub(crate) static RUNTIME_HANDLE: std::cell::RefCell<Option<tokio::runtime::Handle>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Wrapper around libtorrent session
@@ -73,9 +71,8 @@ pub struct TorrentClient {
 // 1. It uses thread_local! storage (STORAGE_REGISTRY, STORAGE_INDEX_MAP, RUNTIME_HANDLE)
 //    that is initialized in TorrentClient::new() on the creating thread.
 //
-// 2. The C++ callbacks (read_callback, write_callback, hash_callback) access this
-//    thread-local storage. If TorrentClient is moved to a different thread, the callbacks
-//    won't find the registry and will fail.
+// 2. The C++ storage callbacks access this thread-local storage. If TorrentClient is moved
+//    to a different thread, the callbacks won't find the registry and will fail.
 //
 // 3. Therefore, TorrentClient must be created and used on a single dedicated thread.
 //    ImportService and TorrentSeeder spawn dedicated threads for two reasons:
@@ -119,170 +116,8 @@ impl TorrentClient {
             *tl.borrow_mut() = Some(runtime_clone);
         });
 
-        // Create callback functions that will be called from C++
-        // These are 'static fn' pointers that look up storage from thread-local registry
-        fn read_callback(storage_index: i32, piece_index: i32, offset: i32, size: i32) -> Vec<u8> {
-            STORAGE_REGISTRY.with(|registry_tl| {
-                STORAGE_INDEX_MAP.with(|index_map_tl| {
-                    RUNTIME_HANDLE.with(|runtime_tl| {
-                        if let (Some(registry), Some(index_map), Some(runtime)) = (
-                            registry_tl.borrow().as_ref(),
-                            index_map_tl.borrow().as_ref(),
-                            runtime_tl.borrow().as_ref(),
-                        ) {
-                            // Look up torrent_id and storage in a single async block
-                            runtime.block_on(async {
-                                // Look up torrent_id from storage_index
-                                let torrent_id = {
-                                    let map_guard = index_map.read().await;
-                                    map_guard.get(&storage_index).cloned()
-                                };
-
-                                if let Some(torrent_id) = torrent_id {
-                                    // Look up storage and call async method
-                                    let registry_guard = registry.read().await;
-                                    if let Some(storage) = registry_guard.get(&torrent_id) {
-                                        let storage_guard = storage.read().await;
-                                        storage_guard
-                                            .read_piece(piece_index, offset, size)
-                                            .await
-                                            .unwrap_or_else(|e| {
-                                                error!("Storage read error: {}", e);
-                                                vec![]
-                                            })
-                                    } else {
-                                        error!("Storage not found for torrent_id: {}", torrent_id);
-                                        vec![]
-                                    }
-                                } else {
-                                    error!(
-                                        "No torrent_id mapped for storage_index: {}",
-                                        storage_index
-                                    );
-                                    vec![]
-                                }
-                            })
-                        } else {
-                            error!("Thread-local storage not initialized");
-                            vec![]
-                        }
-                    })
-                })
-            })
-        }
-
-        fn write_callback(storage_index: i32, piece_index: i32, offset: i32, data: &[u8]) -> bool {
-            STORAGE_REGISTRY.with(|registry_tl| {
-                STORAGE_INDEX_MAP.with(|index_map_tl| {
-                    RUNTIME_HANDLE.with(|runtime_tl| {
-                        if let (Some(registry), Some(index_map), Some(runtime)) = (
-                            registry_tl.borrow().as_ref(),
-                            index_map_tl.borrow().as_ref(),
-                            runtime_tl.borrow().as_ref(),
-                        ) {
-                            // Look up torrent_id from storage_index
-                            // Note: We can't use async here, so we use a blocking read
-                            // This is safe because we're in a sync callback context
-                            let torrent_id = {
-                                // Use tokio's Handle::block_on for the read lock
-                                // But we need to be careful - we're already in a block_on context
-                                // So we use a blocking approach: create a new runtime or use the existing one
-                                // Actually, we can't nest block_on, so we need a different approach
-                                // For now, use a blocking mutex or try_lock
-                                // TODO: Refactor to avoid nested block_on
-                                let map_guard = runtime.block_on(index_map.read());
-                                map_guard.get(&storage_index).cloned()
-                            };
-
-                            if let Some(torrent_id) = torrent_id {
-                                // Look up storage and call async method
-                                runtime.block_on(async {
-                                    let registry_guard = registry.read().await;
-                                    if let Some(storage) = registry_guard.get(&torrent_id) {
-                                        let storage_guard = storage.read().await;
-                                        storage_guard
-                                            .write_piece(piece_index, offset, data)
-                                            .await
-                                            .map(|_| true)
-                                            .unwrap_or_else(|e| {
-                                                error!("Storage write error: {}", e);
-                                                false
-                                            })
-                                    } else {
-                                        error!("Storage not found for torrent_id: {}", torrent_id);
-                                        false
-                                    }
-                                })
-                            } else {
-                                error!("No torrent_id mapped for storage_index: {}", storage_index);
-                                false
-                            }
-                        } else {
-                            error!("Thread-local storage not initialized");
-                            false
-                        }
-                    })
-                })
-            })
-        }
-
-        fn hash_callback(storage_index: i32, piece_index: i32, hash: &[u8]) -> bool {
-            STORAGE_REGISTRY.with(|registry_tl| {
-                STORAGE_INDEX_MAP.with(|index_map_tl| {
-                    RUNTIME_HANDLE.with(|runtime_tl| {
-                        if let (Some(registry), Some(index_map), Some(runtime)) = (
-                            registry_tl.borrow().as_ref(),
-                            index_map_tl.borrow().as_ref(),
-                            runtime_tl.borrow().as_ref(),
-                        ) {
-                            // Look up torrent_id from storage_index
-                            // Note: We can't use async here, so we use a blocking read
-                            // This is safe because we're in a sync callback context
-                            let torrent_id = {
-                                // Use tokio's Handle::block_on for the read lock
-                                // But we need to be careful - we're already in a block_on context
-                                // So we use a blocking approach: create a new runtime or use the existing one
-                                // Actually, we can't nest block_on, so we need a different approach
-                                // For now, use a blocking mutex or try_lock
-                                // TODO: Refactor to avoid nested block_on
-                                let map_guard = runtime.block_on(index_map.read());
-                                map_guard.get(&storage_index).cloned()
-                            };
-
-                            if let Some(torrent_id) = torrent_id {
-                                // Look up storage and call async method
-                                runtime.block_on(async {
-                                    let registry_guard = registry.read().await;
-                                    if let Some(storage) = registry_guard.get(&torrent_id) {
-                                        let storage_guard = storage.read().await;
-                                        storage_guard
-                                            .hash_piece(piece_index, hash)
-                                            .await
-                                            .unwrap_or_else(|e| {
-                                                error!("Storage hash error: {}", e);
-                                                false
-                                            })
-                                    } else {
-                                        error!("Storage not found for torrent_id: {}", torrent_id);
-                                        false
-                                    }
-                                })
-                            } else {
-                                error!("No torrent_id mapped for storage_index: {}", storage_index);
-                                false
-                            }
-                        } else {
-                            error!("Thread-local storage not initialized");
-                            false
-                        }
-                    })
-                })
-            })
-        }
-
         // Create storage constructor with callbacks
-        let storage_constructor =
-            create_bae_storage_constructor(read_callback, write_callback, hash_callback);
+        let storage_constructor = create_bae_storage_constructor();
 
         // Create session with custom storage backend
         let session_params = create_session_params_with_storage(storage_constructor);
@@ -307,9 +142,8 @@ impl TorrentClient {
     /// This creates a session that uses libtorrent's default disk storage,
     /// which writes files directly to disk. Useful for temporary operations
     /// like metadata detection where we don't need custom storage.
-    pub fn new_with_default_storage(
-        runtime_handle: tokio::runtime::Handle,
-    ) -> Result<Self, TorrentError> {
+    pub fn new_with_default_storage() -> Result<Self, TorrentError> {
+        let runtime_handle = tokio::runtime::Handle::current();
         // Create session with default storage (no custom storage)
         let session_params = create_session_params_default();
         let default_session = create_session_with_params(session_params);

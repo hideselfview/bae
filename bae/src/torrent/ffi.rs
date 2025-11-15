@@ -148,5 +148,5 @@ pub use ffi::{
     load_torrent_file, parse_magnet_uri, session_add_torrent, torrent_get_file_list,
     torrent_get_name, torrent_get_num_pieces, torrent_get_piece_length, torrent_get_progress,
     torrent_get_storage_index, torrent_get_total_size, torrent_has_metadata,
-    torrent_set_file_priorities, Session, TorrentFileInfo, TorrentHandle,
+    torrent_set_file_priorities, BaeStorageConstructor, Session, TorrentFileInfo, TorrentHandle,
 };

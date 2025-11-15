@@ -1,6 +1,9 @@
 use crate::cache::CacheManager;
 use crate::db::{Database, DbTorrentPieceMapping};
+use crate::torrent::client::{RUNTIME_HANDLE, STORAGE_INDEX_MAP, STORAGE_REGISTRY};
+use crate::torrent::ffi::BaeStorageConstructor;
 use crate::torrent::piece_mapper::TorrentPieceMapper;
+use cxx::UniquePtr;
 use thiserror::Error;
 use tracing::error;
 
@@ -273,4 +276,178 @@ impl BaeStorage {
 
         Ok(combined_data[start_byte..end_byte].to_vec())
     }
+}
+
+// FFI callbacks for libtorrent C++ integration
+// These are synchronous functions called from C++ that bridge to async BaeStorage methods
+
+/// Create a storage constructor for libtorrent with BAE storage callbacks
+pub fn create_bae_storage_constructor() -> UniquePtr<BaeStorageConstructor> {
+    crate::torrent::ffi::create_bae_storage_constructor(
+        read_callback,
+        write_callback,
+        hash_callback,
+    )
+}
+
+/// Callback function for reading pieces from custom storage
+/// Called from C++ when libtorrent needs to read a piece
+fn read_callback(storage_index: i32, piece_index: i32, offset: i32, size: i32) -> Vec<u8> {
+    STORAGE_REGISTRY.with(|registry_tl| {
+        STORAGE_INDEX_MAP.with(|index_map_tl| {
+            RUNTIME_HANDLE.with(|runtime_tl| {
+                if let (Some(registry), Some(index_map), Some(runtime)) = (
+                    registry_tl.borrow().as_ref(),
+                    index_map_tl.borrow().as_ref(),
+                    runtime_tl.borrow().as_ref(),
+                ) {
+                    // Look up torrent_id and storage in a single async block
+                    runtime.block_on(async {
+                        // Look up torrent_id from storage_index
+                        let torrent_id = {
+                            let map_guard = index_map.read().await;
+                            map_guard.get(&storage_index).cloned()
+                        };
+
+                        if let Some(torrent_id) = torrent_id {
+                            // Look up storage and call async method
+                            let registry_guard = registry.read().await;
+                            if let Some(storage) = registry_guard.get(&torrent_id) {
+                                let storage_guard = storage.read().await;
+                                storage_guard
+                                    .read_piece(piece_index, offset, size)
+                                    .await
+                                    .unwrap_or_else(|e| {
+                                        error!("Storage read error: {}", e);
+                                        vec![]
+                                    })
+                            } else {
+                                error!("Storage not found for torrent_id: {}", torrent_id);
+                                vec![]
+                            }
+                        } else {
+                            error!("No torrent_id mapped for storage_index: {}", storage_index);
+                            vec![]
+                        }
+                    })
+                } else {
+                    error!("Thread-local storage not initialized");
+                    vec![]
+                }
+            })
+        })
+    })
+}
+
+/// Callback function for writing pieces to custom storage
+/// Called from C++ when libtorrent needs to write a piece
+fn write_callback(storage_index: i32, piece_index: i32, offset: i32, data: &[u8]) -> bool {
+    STORAGE_REGISTRY.with(|registry_tl| {
+        STORAGE_INDEX_MAP.with(|index_map_tl| {
+            RUNTIME_HANDLE.with(|runtime_tl| {
+                if let (Some(registry), Some(index_map), Some(runtime)) = (
+                    registry_tl.borrow().as_ref(),
+                    index_map_tl.borrow().as_ref(),
+                    runtime_tl.borrow().as_ref(),
+                ) {
+                    // Look up torrent_id from storage_index
+                    // Note: We can't use async here, so we use a blocking read
+                    // This is safe because we're in a sync callback context
+                    let torrent_id = {
+                        // Use tokio's Handle::block_on for the read lock
+                        // But we need to be careful - we're already in a block_on context
+                        // So we use a blocking approach: create a new runtime or use the existing one
+                        // Actually, we can't nest block_on, so we need a different approach
+                        // For now, use a blocking mutex or try_lock
+                        // TODO: Refactor to avoid nested block_on
+                        let map_guard = runtime.block_on(index_map.read());
+                        map_guard.get(&storage_index).cloned()
+                    };
+
+                    if let Some(torrent_id) = torrent_id {
+                        // Look up storage and call async method
+                        runtime.block_on(async {
+                            let registry_guard = registry.read().await;
+                            if let Some(storage) = registry_guard.get(&torrent_id) {
+                                let storage_guard = storage.read().await;
+                                storage_guard
+                                    .write_piece(piece_index, offset, data)
+                                    .await
+                                    .map(|_| true)
+                                    .unwrap_or_else(|e| {
+                                        error!("Storage write error: {}", e);
+                                        false
+                                    })
+                            } else {
+                                error!("Storage not found for torrent_id: {}", torrent_id);
+                                false
+                            }
+                        })
+                    } else {
+                        error!("No torrent_id mapped for storage_index: {}", storage_index);
+                        false
+                    }
+                } else {
+                    error!("Thread-local storage not initialized");
+                    false
+                }
+            })
+        })
+    })
+}
+
+/// Callback function for hashing pieces in custom storage
+/// Called from C++ when libtorrent needs to verify a piece hash
+fn hash_callback(storage_index: i32, piece_index: i32, hash: &[u8]) -> bool {
+    STORAGE_REGISTRY.with(|registry_tl| {
+        STORAGE_INDEX_MAP.with(|index_map_tl| {
+            RUNTIME_HANDLE.with(|runtime_tl| {
+                if let (Some(registry), Some(index_map), Some(runtime)) = (
+                    registry_tl.borrow().as_ref(),
+                    index_map_tl.borrow().as_ref(),
+                    runtime_tl.borrow().as_ref(),
+                ) {
+                    // Look up torrent_id from storage_index
+                    // Note: We can't use async here, so we use a blocking read
+                    // This is safe because we're in a sync callback context
+                    let torrent_id = {
+                        // Use tokio's Handle::block_on for the read lock
+                        // But we need to be careful - we're already in a block_on context
+                        // So we use a blocking approach: create a new runtime or use the existing one
+                        // Actually, we can't nest block_on, so we need a different approach
+                        // For now, use a blocking mutex or try_lock
+                        // TODO: Refactor to avoid nested block_on
+                        let map_guard = runtime.block_on(index_map.read());
+                        map_guard.get(&storage_index).cloned()
+                    };
+
+                    if let Some(torrent_id) = torrent_id {
+                        // Look up storage and call async method
+                        runtime.block_on(async {
+                            let registry_guard = registry.read().await;
+                            if let Some(storage) = registry_guard.get(&torrent_id) {
+                                let storage_guard = storage.read().await;
+                                storage_guard
+                                    .hash_piece(piece_index, hash)
+                                    .await
+                                    .unwrap_or_else(|e| {
+                                        error!("Storage hash error: {}", e);
+                                        false
+                                    })
+                            } else {
+                                error!("Storage not found for torrent_id: {}", torrent_id);
+                                false
+                            }
+                        })
+                    } else {
+                        error!("No torrent_id mapped for storage_index: {}", storage_index);
+                        false
+                    }
+                } else {
+                    error!("Thread-local storage not initialized");
+                    false
+                }
+            })
+        })
+    })
 }
