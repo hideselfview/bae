@@ -74,6 +74,19 @@ torrent_handle* session_add_torrent(session* sess, std::unique_ptr<add_torrent_p
     return new torrent_handle(std::move(handle));
 }
 
+void session_remove_torrent(session* sess, torrent_handle* handle, bool delete_files) {
+    if (!sess || !handle) {
+        return;
+    }
+    // Remove torrent from session
+    // If delete_files is true, also delete the downloaded files from disk
+    if (delete_files) {
+        sess->remove_torrent(*handle, session::delete_files);
+    } else {
+        sess->remove_torrent(*handle);
+    }
+}
+
 std::string torrent_get_name_internal(torrent_handle* handle) {
     if (!handle) {
         return "";

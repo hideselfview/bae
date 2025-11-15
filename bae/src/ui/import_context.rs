@@ -52,10 +52,10 @@ pub struct ImportContext {
     torrent_source: Signal<Option<TorrentSource>>,
     seed_after_download: Signal<bool>,
     torrent_metadata: Signal<Option<TorrentImportMetadata>>,
-    client: DiscogsClient,
+    discogs_client: DiscogsClient,
     /// Shared torrent client with default storage for metadata detection
     /// Sessions are heavy, so we create one and reuse it for all metadata detection operations
-    torrent_client_default: TorrentClient,
+    torrent_client_for_metadata: TorrentClient,
 }
 
 impl ImportContext {
@@ -86,14 +86,14 @@ impl ImportContext {
             torrent_source: Signal::new(None),
             seed_after_download: Signal::new(true),
             torrent_metadata: Signal::new(None),
-            client: DiscogsClient::new(config.discogs_api_key.clone()),
-            torrent_client_default: TorrentClient::new_with_default_storage()
+            discogs_client: DiscogsClient::new(config.discogs_api_key.clone()),
+            torrent_client_for_metadata: TorrentClient::new_with_default_storage()
                 .expect("Failed to create torrent client for metadata detection"),
         }
     }
 
-    pub fn torrent_client_default(&self) -> TorrentClient {
-        self.torrent_client_default.clone()
+    pub fn torrent_client_for_metadata(&self) -> TorrentClient {
+        self.torrent_client_for_metadata.clone()
     }
 
     // Getters - return Signal (which can be used as ReadSignal)
@@ -346,7 +346,7 @@ impl ImportContext {
         // Try DISCID search first if available
         if let Some(ref discid) = metadata.discid {
             info!("🎯 Attempting DISCID search: {}", discid);
-            match self.client.search_by_discid(discid).await {
+            match self.discogs_client.search_by_discid(discid).await {
                 Ok(results) if !results.is_empty() => {
                     info!("✓ DISCID search returned {} result(s)", results.len());
                     return Ok(results);
@@ -370,7 +370,7 @@ impl ImportContext {
             );
 
             match self
-                .client
+                .discogs_client
                 .search_by_metadata(artist, album, metadata.year)
                 .await
             {
@@ -479,7 +479,7 @@ impl ImportContext {
     ) -> Result<DiscogsRelease, String> {
         self.set_error_message(None);
 
-        match self.client.get_release(&release_id).await {
+        match self.discogs_client.get_release(&release_id).await {
             Ok(release) => {
                 // The release from API already has master_id, but we use the one passed to us
                 // (which might differ if we're importing via master vs specific release)

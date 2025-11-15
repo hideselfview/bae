@@ -61,6 +61,10 @@ std::unique_ptr<add_torrent_params> load_torrent_file(const std::string& file_pa
 /// Add a torrent to a session using our Session type
 torrent_handle* session_add_torrent(session* sess, std::unique_ptr<add_torrent_params>& params);
 
+/// Remove a torrent from a session
+/// If delete_files is true, also deletes the downloaded files from disk
+void session_remove_torrent(session* sess, torrent_handle* handle, bool delete_files);
+
 /// Get the name of a torrent from its handle (internal version)
 /// Note: This is wrapped for cxx bridge - the global namespace version returns rust::String
 std::string torrent_get_name_internal(torrent_handle* handle);
@@ -110,6 +114,7 @@ using TorrentHandle = libtorrent::torrent_handle;
 std::unique_ptr<Session> create_session_with_params(std::unique_ptr<SessionParams> params);
 Session* get_session_ptr(std::unique_ptr<Session>& sess);
 TorrentHandle* session_add_torrent(Session* sess, std::unique_ptr<AddTorrentParams>& params);
+void session_remove_torrent(Session* sess, TorrentHandle* handle, bool delete_files);
 bool torrent_has_metadata(TorrentHandle* handle);
 int32_t torrent_get_storage_index(TorrentHandle* handle);
 int32_t torrent_get_piece_length(TorrentHandle* handle);

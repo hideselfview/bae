@@ -8,9 +8,10 @@
 use crate::torrent::ffi::{
     create_session_params_default, create_session_params_with_storage, create_session_with_params,
     get_session_ptr, load_torrent_file, parse_magnet_uri, session_add_torrent,
-    torrent_get_file_list, torrent_get_name, torrent_get_num_pieces, torrent_get_piece_length,
-    torrent_get_progress, torrent_get_storage_index, torrent_get_total_size, torrent_has_metadata,
-    torrent_set_file_priorities, Session, TorrentFileInfo, TorrentHandle as FfiTorrentHandle,
+    session_remove_torrent, torrent_get_file_list, torrent_get_name, torrent_get_num_pieces,
+    torrent_get_piece_length, torrent_get_progress, torrent_get_storage_index,
+    torrent_get_total_size, torrent_has_metadata, torrent_set_file_priorities, Session,
+    TorrentFileInfo, TorrentHandle as FfiTorrentHandle,
 };
 use crate::torrent::storage::{create_bae_storage_constructor, BaeStorage};
 use cxx::UniquePtr;
@@ -299,6 +300,71 @@ impl TorrentClient {
             // Don't store session reference - TorrentHandle doesn't need it
             // The handle is self-contained and can be used independently
         })
+    }
+
+    /// Remove a torrent from the session
+    ///
+    /// This removes the torrent from the libtorrent session, freeing resources.
+    /// The downloaded files are kept on disk.
+    /// After calling this, the TorrentHandle should not be used.
+    pub async fn remove_torrent_and_keep_data(
+        &self,
+        handle: &TorrentHandle,
+    ) -> Result<(), TorrentError> {
+        self._remove_torrent(handle, false).await
+    }
+
+    /// Remove a torrent from the session and delete its files from disk
+    ///
+    /// This removes the torrent from the libtorrent session and deletes all downloaded files.
+    /// After calling this, the TorrentHandle should not be used.
+    pub async fn remove_torrent_and_delete_data(
+        &self,
+        handle: &TorrentHandle,
+    ) -> Result<(), TorrentError> {
+        self._remove_torrent(handle, true).await
+    }
+
+    /// Internal implementation for removing a torrent
+    ///
+    /// # Arguments
+    /// * `handle` - The torrent handle to remove
+    /// * `delete_files` - If true, also deletes the downloaded files from disk
+    async fn _remove_torrent(
+        &self,
+        handle: &TorrentHandle,
+        delete_files: bool,
+    ) -> Result<(), TorrentError> {
+        let session = Rc::clone(&self.session);
+        let mut session_guard = session.write().await;
+        let session_ptr = get_session_ptr(&mut session_guard);
+
+        if session_ptr.is_null() {
+            drop(session_guard);
+            return Err(TorrentError::Libtorrent(
+                "Failed to get session pointer".to_string(),
+            ));
+        }
+
+        let handle_guard = handle.handle.0.read().await;
+        let handle_ptr = *handle_guard;
+
+        if handle_ptr.is_null() {
+            drop(handle_guard);
+            drop(session_guard);
+            return Err(TorrentError::Libtorrent(
+                "Invalid torrent handle".to_string(),
+            ));
+        }
+
+        unsafe {
+            session_remove_torrent(session_ptr, handle_ptr, delete_files);
+        }
+
+        drop(handle_guard);
+        drop(session_guard);
+
+        Ok(())
     }
 }
 

@@ -130,3 +130,7 @@ float torrent_get_progress(TorrentHandle* handle) {
     return libtorrent::torrent_get_progress_internal(handle);
 }
 
+void session_remove_torrent(Session* sess, TorrentHandle* handle, bool delete_files) {
+    libtorrent::session_remove_torrent(sess, handle, delete_files);
+}
+
