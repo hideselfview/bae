@@ -123,12 +123,23 @@ pub async fn handle_confirmation(
                             discogs_release.title
                         );
 
+                        let torrent_metadata =
+                            match import_context.torrent_metadata().read().clone() {
+                                Some(metadata) => metadata,
+                                None => {
+                                    import_error_message
+                                        .set(Some("No torrent metadata available".to_string()));
+                                    return;
+                                }
+                            };
+
                         let request = ImportRequest::Torrent {
                             torrent_source,
                             discogs_release: Some(discogs_release),
                             mb_release: None,
                             master_year,
                             seed_after_download,
+                            torrent_metadata,
                         };
 
                         match import_service.send_request(request).await {
@@ -160,12 +171,21 @@ pub async fn handle_confirmation(
                     mb_release.title
                 );
 
+                let torrent_metadata = match import_context.torrent_metadata().read().clone() {
+                    Some(metadata) => metadata,
+                    None => {
+                        import_error_message.set(Some("No torrent metadata available".to_string()));
+                        return;
+                    }
+                };
+
                 let request = ImportRequest::Torrent {
                     torrent_source,
                     discogs_release: None,
                     mb_release: Some(mb_release.clone()),
                     master_year,
                     seed_after_download,
+                    torrent_metadata,
                 };
 
                 match import_service.send_request(request).await {

@@ -1,7 +1,9 @@
 use crate::config::use_config;
 use crate::discogs::client::DiscogsSearchResult;
 use crate::discogs::{DiscogsClient, DiscogsRelease};
-use crate::import::{detect_metadata, FolderMetadata, MatchCandidate, TorrentSource};
+use crate::import::{
+    detect_metadata, FolderMetadata, MatchCandidate, TorrentImportMetadata, TorrentSource,
+};
 use crate::musicbrainz::{lookup_by_discid, search_releases, MbRelease};
 use crate::torrent::client::TorrentClient;
 use crate::ui::components::import::FileInfo;
@@ -49,6 +51,7 @@ pub struct ImportContext {
     // Torrent-specific state
     torrent_source: Signal<Option<TorrentSource>>,
     seed_after_download: Signal<bool>,
+    torrent_metadata: Signal<Option<TorrentImportMetadata>>,
     client: DiscogsClient,
     /// Shared torrent client with default storage for metadata detection
     /// Sessions are heavy, so we create one and reuse it for all metadata detection operations
@@ -82,13 +85,10 @@ impl ImportContext {
             folder_files: Signal::new(Vec::new()),
             torrent_source: Signal::new(None),
             seed_after_download: Signal::new(true),
+            torrent_metadata: Signal::new(None),
             client: DiscogsClient::new(config.discogs_api_key.clone()),
-            torrent_client_default: {
-                use tokio::runtime::Handle;
-                let runtime_handle = Handle::current();
-                TorrentClient::new_with_default_storage(runtime_handle)
-                    .expect("Failed to create torrent client for metadata detection")
-            },
+            torrent_client_default: TorrentClient::new_with_default_storage()
+                .expect("Failed to create torrent client for metadata detection"),
         }
     }
 
@@ -151,6 +151,10 @@ impl ImportContext {
 
     pub fn seed_after_download(&self) -> Signal<bool> {
         self.seed_after_download
+    }
+
+    pub fn torrent_metadata(&self) -> Signal<Option<TorrentImportMetadata>> {
+        self.torrent_metadata
     }
 
     pub fn set_search_query(&self, value: String) {
@@ -263,6 +267,11 @@ impl ImportContext {
         signal.set(value);
     }
 
+    pub fn set_torrent_metadata(&self, value: Option<TorrentImportMetadata>) {
+        let mut signal = self.torrent_metadata;
+        signal.set(value);
+    }
+
     /// Reset state for a new torrent selection
     pub fn select_torrent_file(
         &self,
@@ -311,6 +320,7 @@ impl ImportContext {
         self.set_folder_files(Vec::new());
         self.set_torrent_source(None);
         self.set_seed_after_download(true);
+        self.set_torrent_metadata(None);
     }
 
     pub async fn detect_folder_metadata(

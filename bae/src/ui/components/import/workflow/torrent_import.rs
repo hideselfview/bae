@@ -2,8 +2,8 @@ use super::file_list::{FileInfo, FileList};
 use super::handlers::{handle_confirmation, handle_metadata_detection};
 use super::inputs::TorrentInput;
 use super::shared::{Confirmation, ErrorDisplay, ExactLookup, ManualSearch};
-use crate::import::MatchCandidate;
 use crate::import::TorrentSource::File;
+use crate::import::{MatchCandidate, TorrentFileMetadata, TorrentImportMetadata};
 use crate::library::{use_import_service, use_library_manager};
 use crate::ui::import_context::{ImportContext, ImportPhase};
 use dioxus::prelude::*;
@@ -87,9 +87,71 @@ pub fn TorrentImport() -> Element {
                     }
                 };
 
-                // Convert torrent files to FileInfo format
+                // Extract comprehensive torrent metadata
+                let info_hash = torrent_handle.info_hash().await;
+                let total_size = match torrent_handle.total_size().await {
+                    Ok(size) => size,
+                    Err(e) => {
+                        import_context.set_import_error_message(Some(format!(
+                            "Failed to get torrent size: {}",
+                            e
+                        )));
+                        import_context.set_is_detecting(false);
+                        import_context.set_import_phase(ImportPhase::FolderSelection);
+                        return;
+                    }
+                };
+                let piece_length = match torrent_handle.piece_length().await {
+                    Ok(length) => length,
+                    Err(e) => {
+                        import_context.set_import_error_message(Some(format!(
+                            "Failed to get piece length: {}",
+                            e
+                        )));
+                        import_context.set_is_detecting(false);
+                        import_context.set_import_phase(ImportPhase::FolderSelection);
+                        return;
+                    }
+                };
+                let num_pieces = match torrent_handle.num_pieces().await {
+                    Ok(pieces) => pieces,
+                    Err(e) => {
+                        import_context.set_import_error_message(Some(format!(
+                            "Failed to get piece count: {}",
+                            e
+                        )));
+                        import_context.set_is_detecting(false);
+                        import_context.set_import_phase(ImportPhase::FolderSelection);
+                        return;
+                    }
+                };
+
+                // Convert file list to metadata format
+                let file_list: Vec<TorrentFileMetadata> = torrent_files
+                    .iter()
+                    .map(|tf| TorrentFileMetadata {
+                        path: tf.path.clone(),
+                        size: tf.size,
+                    })
+                    .collect();
+
+                // Create and store torrent metadata
+                let torrent_metadata = TorrentImportMetadata {
+                    info_hash,
+                    magnet_link: None,
+                    torrent_name: torrent_name.clone(),
+                    total_size_bytes: total_size,
+                    piece_length,
+                    num_pieces,
+                    seed_after_download: seed_flag,
+                    file_list,
+                };
+
+                import_context.set_torrent_metadata(Some(torrent_metadata));
+
+                // Convert torrent files to FileInfo format for UI display
                 let mut files: Vec<FileInfo> = torrent_files
-                    .into_iter()
+                    .iter()
                     .map(|tf| {
                         let name = tf
                             .path
@@ -136,7 +198,9 @@ pub fn TorrentImport() -> Element {
                 use crate::torrent::detect_metadata_from_torrent_file;
                 let client_for_metadata = import_context.torrent_client_default();
                 let metadata =
-                    match detect_metadata_from_torrent_file(&path, &client_for_metadata).await {
+                    match detect_metadata_from_torrent_file(&torrent_handle, &client_for_metadata)
+                        .await
+                    {
                         Ok(metadata) => metadata,
                         Err(e) => {
                             warn!("Failed to detect metadata from torrent: {}", e);
@@ -233,6 +297,85 @@ pub fn TorrentImport() -> Element {
             .any(|f| f.format.to_lowercase() == "cue" || f.format.to_lowercase() == "log");
         drop(files);
         result
+    };
+
+    let on_detect_from_cue_log = {
+        let import_context = import_context.clone();
+        move |_| {
+            let path = import_context.folder_path().read().clone();
+            let detected_metadata_for_async = import_context.detected_metadata();
+            let is_looking_up_for_async = import_context.is_looking_up();
+            let exact_match_candidates_for_async = import_context.exact_match_candidates();
+            let search_query_for_async = import_context.search_query();
+            let import_phase_for_async = import_context.import_phase();
+            let confirmed_candidate_for_async = import_context.confirmed_candidate();
+            let client_for_manual = import_context.torrent_client_default();
+            let import_context_for_async = import_context.clone();
+
+            import_context.set_is_detecting(true);
+
+            // Extract torrent name from path for fallback
+            let path_buf = PathBuf::from(&path);
+            let torrent_name = path_buf
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+
+            spawn(async move {
+                // Add torrent and get handle for metadata detection
+                let torrent_handle = match client_for_manual.add_torrent_file(&path_buf).await {
+                    Ok(handle) => handle,
+                    Err(e) => {
+                        warn!("Failed to add torrent file: {}", e);
+                        import_context_for_async.set_is_detecting(false);
+                        return;
+                    }
+                };
+
+                // Wait for metadata
+                if let Err(e) = torrent_handle.wait_for_metadata().await {
+                    warn!("Failed to get torrent metadata: {}", e);
+                    import_context_for_async.set_is_detecting(false);
+                    return;
+                }
+
+                // Detect metadata from CUE/log files
+                use crate::torrent::detect_metadata_from_torrent_file;
+                let metadata =
+                    match detect_metadata_from_torrent_file(&torrent_handle, &client_for_manual)
+                        .await
+                    {
+                        Ok(metadata) => metadata,
+                        Err(e) => {
+                            warn!("Failed to detect metadata from torrent: {}", e);
+                            None
+                        }
+                    };
+
+                // Check if detection was cancelled before processing results
+                if !*import_context_for_async.is_detecting().read() {
+                    info!("Metadata detection was cancelled, ignoring results");
+                    return;
+                }
+
+                // Process detection result
+                handle_metadata_detection(
+                    metadata,
+                    torrent_name,
+                    detected_metadata_for_async,
+                    is_looking_up_for_async,
+                    exact_match_candidates_for_async,
+                    search_query_for_async,
+                    import_phase_for_async,
+                    confirmed_candidate_for_async,
+                )
+                .await;
+
+                // Mark detection as complete
+                import_context_for_async.set_is_detecting(false);
+            });
+        }
     };
 
     rsx! {
@@ -336,64 +479,7 @@ pub fn TorrentImport() -> Element {
                                     }
                                     button {
                                         class: "px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition-colors",
-                                        onclick: {
-                                            let import_context = import_context.clone();
-                                            move |_| {
-                                                let path = import_context.folder_path().read().clone();
-                                                let detected_metadata_for_async = import_context.detected_metadata();
-                                                let is_looking_up_for_async = import_context.is_looking_up();
-                                                let exact_match_candidates_for_async = import_context.exact_match_candidates();
-                                                let search_query_for_async = import_context.search_query();
-                                                let import_phase_for_async = import_context.import_phase();
-                                                let confirmed_candidate_for_async = import_context.confirmed_candidate();
-                                                let client_for_manual = import_context.torrent_client_default();
-                                                let import_context_for_async = import_context.clone();
-
-                                                import_context.set_is_detecting(true);
-
-                                                // Extract torrent name from path for fallback
-                                                let path_buf = PathBuf::from(&path);
-                                                let torrent_name = path_buf
-                                                    .file_stem()
-                                                    .and_then(|s| s.to_str())
-                                                    .unwrap_or("unknown")
-                                                    .to_string();
-
-                                                spawn(async move {
-                                                    // Detect metadata from CUE/log files
-                                                    use crate::torrent::detect_metadata_from_torrent_file;
-                                                    let metadata = match detect_metadata_from_torrent_file(&path_buf, &client_for_manual).await {
-                                                        Ok(metadata) => metadata,
-                                                        Err(e) => {
-                                                            warn!("Failed to detect metadata from torrent: {}", e);
-                                                            None
-                                                        }
-                                                    };
-
-                                                    // Check if detection was cancelled before processing results
-                                                    if !*import_context_for_async.is_detecting().read() {
-                                                        info!("Metadata detection was cancelled, ignoring results");
-                                                        return;
-                                                    }
-
-                                                    // Process detection result
-                                                    handle_metadata_detection(
-                                                        metadata,
-                                                        torrent_name,
-                                                        detected_metadata_for_async,
-                                                        is_looking_up_for_async,
-                                                        exact_match_candidates_for_async,
-                                                        search_query_for_async,
-                                                        import_phase_for_async,
-                                                        confirmed_candidate_for_async,
-                                                    )
-                                                    .await;
-
-                                                    // Mark detection as complete
-                                                    import_context_for_async.set_is_detecting(false);
-                                                });
-                                            }
-                                        },
+                                        onclick: on_detect_from_cue_log,
                                         "Detect from CUE/log files"
                                     }
                                 }
