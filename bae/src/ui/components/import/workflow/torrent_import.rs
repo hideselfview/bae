@@ -141,22 +141,16 @@ pub fn TorrentImport() -> Element {
                     if *import_context.import_phase().read() == ImportPhase::ManualSearch {
                         if has_cue_files_for_manual && import_context.detected_metadata().read().is_none() && !*import_context.is_detecting().read() {
                             MetadataDetectionPrompt {
-                                message: "Metadata files detected".to_string(),
-                                description: "CUE/log files found in torrent. Download and detect metadata automatically?".to_string(),
-                                button_text: "Detect from CUE/log files".to_string(),
                                 on_detect: {
                                     let import_context = import_context.clone();
                                     EventHandler::new(move |()| {
-                                        let path = import_context.folder_path().read().clone();
-                                        let seed_flag = *import_context.seed_after_download().read();
                                         let import_context = import_context.clone();
                                         spawn(async move {
-                                            let path_buf = PathBuf::from(&path);
                                             if let Err(e) = import_context
-                                                .load_torrent_for_import(path_buf, seed_flag)
+                                                .retry_torrent_metadata_detection()
                                                 .await
                                             {
-                                                warn!("Failed to load torrent for metadata detection: {}", e);
+                                                warn!("Failed to retry metadata detection: {}", e);
                                             }
                                         });
                                     })
@@ -216,27 +210,22 @@ pub fn TorrentImport() -> Element {
 }
 
 #[component]
-fn MetadataDetectionPrompt(
-    message: String,
-    description: String,
-    button_text: String,
-    on_detect: EventHandler<()>,
-) -> Element {
+fn MetadataDetectionPrompt(on_detect: EventHandler<()>) -> Element {
     rsx! {
         div { class: "bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4",
             div { class: "flex items-center justify-between",
                 div { class: "flex-1",
                     p { class: "text-sm text-blue-900 font-medium mb-1",
-                        {message}
+                        "Metadata files detected"
                     }
                     p { class: "text-xs text-blue-700",
-                        {description}
+                        "CUE/log files found in torrent. Download and detect metadata automatically?"
                     }
                 }
                 button {
                     class: "px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition-colors",
                     onclick: move |_| on_detect.call(()),
-                    {button_text}
+                    "Detect from CUE/log files"
                 }
             }
         }

@@ -693,6 +693,18 @@ impl ImportContext {
         Ok(())
     }
 
+    /// Retry metadata detection for the current torrent.
+    ///
+    /// Uses the current folder_path and seed_flag from context to reload
+    /// the torrent and detect metadata. Useful for retrying detection when
+    /// CUE/log files are detected in manual search phase.
+    pub async fn retry_torrent_metadata_detection(&self) -> Result<(), String> {
+        let path = self.folder_path().read().clone();
+        let seed_flag = *self.seed_after_download().read();
+        let path_buf = PathBuf::from(&path);
+        self.load_torrent_for_import(path_buf, seed_flag).await
+    }
+
     /// Confirm a match candidate and start the import workflow.
     ///
     /// This handles the entire confirmation-to-import flow:
