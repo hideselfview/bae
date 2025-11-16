@@ -78,24 +78,6 @@ pub fn TorrentImport() -> Element {
         result
     };
 
-    let on_detect_from_cue_log = {
-        let import_context = import_context.clone();
-        move |_| {
-            let path = import_context.folder_path().read().clone();
-            let seed_flag = *import_context.seed_after_download().read();
-            let import_context = import_context.clone();
-            spawn(async move {
-                let path_buf = PathBuf::from(&path);
-                if let Err(e) = import_context
-                    .load_torrent_for_import(path_buf, seed_flag)
-                    .await
-                {
-                    warn!("Failed to load torrent for metadata detection: {}", e);
-                }
-            });
-        }
-    };
-
     rsx! {
         div { class: "space-y-6",
             // Phase 1: Torrent Selection
@@ -158,38 +140,27 @@ pub fn TorrentImport() -> Element {
                     // Phase 3: Manual Search
                     if *import_context.import_phase().read() == ImportPhase::ManualSearch {
                         if has_cue_files_for_manual && import_context.detected_metadata().read().is_none() && !*import_context.is_detecting().read() {
-                            div { class: "bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4",
-                                div { class: "flex items-center justify-between",
-                                    div { class: "flex-1",
-                                        p { class: "text-sm text-blue-900 font-medium mb-1",
-                                            "Metadata files detected"
-                                        }
-                                        p { class: "text-xs text-blue-700",
-                                            "CUE/log files found in torrent. Download and detect metadata automatically?"
-                                        }
-                                    }
-                                    button {
-                                        class: "px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition-colors",
-                                        onclick: on_detect_from_cue_log,
-                                        "Detect from CUE/log files"
-                                    }
-                                }
-                            }
-                        }
-
-                        if *import_context.is_detecting().read() {
-                            div { class: "bg-white rounded-lg shadow p-6 text-center mb-4",
-                                p { class: "text-gray-600 mb-4", "Downloading and analyzing metadata files (CUE/log)..." }
-                                button {
-                                    class: "px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded transition-colors",
-                                    onclick: {
+                            MetadataDetectionPrompt {
+                                message: "Metadata files detected".to_string(),
+                                description: "CUE/log files found in torrent. Download and detect metadata automatically?".to_string(),
+                                button_text: "Detect from CUE/log files".to_string(),
+                                on_detect: {
+                                    let import_context = import_context.clone();
+                                    EventHandler::new(move |()| {
+                                        let path = import_context.folder_path().read().clone();
+                                        let seed_flag = *import_context.seed_after_download().read();
                                         let import_context = import_context.clone();
-                                        move |_| {
-                                            import_context.set_is_detecting(false);
-                                        }
-                                    },
-                                    "Cancel"
-                                }
+                                        spawn(async move {
+                                            let path_buf = PathBuf::from(&path);
+                                            if let Err(e) = import_context
+                                                .load_torrent_for_import(path_buf, seed_flag)
+                                                .await
+                                            {
+                                                warn!("Failed to load torrent for metadata detection: {}", e);
+                                            }
+                                        });
+                                    })
+                                },
                             }
                         }
 
@@ -238,6 +209,34 @@ pub fn TorrentImport() -> Element {
                         error_message: import_context.import_error_message(),
                         duplicate_album_id: import_context.duplicate_album_id(),
                     }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn MetadataDetectionPrompt(
+    message: String,
+    description: String,
+    button_text: String,
+    on_detect: EventHandler<()>,
+) -> Element {
+    rsx! {
+        div { class: "bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4",
+            div { class: "flex items-center justify-between",
+                div { class: "flex-1",
+                    p { class: "text-sm text-blue-900 font-medium mb-1",
+                        {message}
+                    }
+                    p { class: "text-xs text-blue-700",
+                        {description}
+                    }
+                }
+                button {
+                    class: "px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition-colors",
+                    onclick: move |_| on_detect.call(()),
+                    {button_text}
                 }
             }
         }
