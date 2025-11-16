@@ -1,5 +1,5 @@
 use super::inputs::CdRipper;
-use super::shared::{Confirmation, ErrorDisplay, ExactLookup, ManualSearch};
+use super::shared::{Confirmation, ErrorDisplay, ExactLookup, ManualSearch, SelectedSource};
 use crate::import::MatchCandidate;
 use crate::ui::components::import::ImportSource;
 use crate::ui::import_context::{ImportContext, ImportPhase};
@@ -88,9 +88,9 @@ pub fn CdImport() -> Element {
 
     let on_change_folder = {
         let import_context_clone = import_context.clone();
-        move |_| {
+        EventHandler::new(move |()| {
             import_context_clone.reset();
-        }
+        })
     };
 
     rsx! {
@@ -111,25 +111,12 @@ pub fn CdImport() -> Element {
             } else {
                 div { class: "space-y-6",
                     // Show selected CD
-                    div { class: "bg-white rounded-lg shadow p-6",
-                        div { class: "mb-6 pb-4 border-b border-gray-200",
-                            div { class: "flex items-start justify-between mb-3",
-                                h3 { class: "text-sm font-semibold text-gray-700 uppercase tracking-wide",
-                                    "Selected CD"
-                                }
-                                button {
-                                    class: "px-3 py-1 text-sm text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-md transition-colors",
-                                    onclick: on_change_folder,
-                                    "Clear"
-                                }
-                            }
-                            div { class: "inline-block px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-full border border-gray-300 transition-colors",
-                                p {
-                                    class: "text-sm text-gray-900 font-mono select-text cursor-text break-all",
-                                    "{folder_path.read()}"
-                                }
-                            }
-                            if let Some((disc_id, first_track, last_track)) = cd_toc_info.read().as_ref() {
+                    SelectedSource {
+                        title: "Selected CD".to_string(),
+                        path: folder_path,
+                        on_clear: on_change_folder,
+                        children: if let Some((disc_id, first_track, last_track)) = cd_toc_info.read().as_ref() {
+                            Some(rsx! {
                                 div { class: "mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg",
                                     div { class: "space-y-2",
                                         div { class: "flex items-center",
@@ -144,12 +131,16 @@ pub fn CdImport() -> Element {
                                         }
                                     }
                                 }
-                            } else if *is_looking_up.read() {
+                            })
+                        } else if *is_looking_up.read() {
+                            Some(rsx! {
                                 div { class: "mt-4 p-4 bg-gray-50 border border-gray-200 rounded-lg text-center",
                                     p { class: "text-sm text-gray-600", "Reading CD table of contents..." }
                                 }
-                            }
-                        }
+                            })
+                        } else {
+                            None
+                        },
                     }
 
                     // Phase 2: Exact Lookup

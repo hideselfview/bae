@@ -1,6 +1,6 @@
 use super::file_list::FileList;
 use super::inputs::TorrentInput;
-use super::shared::{Confirmation, ErrorDisplay, ExactLookup, ManualSearch};
+use super::shared::{Confirmation, ErrorDisplay, ExactLookup, ManualSearch, SelectedSource};
 use crate::import::MatchCandidate;
 use crate::ui::components::import::ImportSource;
 use crate::ui::import_context::{ImportContext, ImportPhase};
@@ -60,9 +60,9 @@ pub fn TorrentImport() -> Element {
 
     let on_change_folder = {
         let import_context = import_context.clone();
-        move |_| {
+        EventHandler::new(move |()| {
             import_context.reset();
-        }
+        })
     };
 
     // Check if there are .cue files available for metadata detection (computed before rsx!)
@@ -108,56 +108,46 @@ pub fn TorrentImport() -> Element {
             } else {
                 div { class: "space-y-6",
                     // Show selected torrent
-                    div { class: "bg-white rounded-lg shadow p-6",
-                        div { class: "mb-6 pb-4 border-b border-gray-200",
-                            div { class: "flex items-start justify-between mb-3",
-                                h3 { class: "text-sm font-semibold text-gray-700 uppercase tracking-wide",
-                                    "Selected Torrent"
-                                }
-                                button {
-                                    class: "px-3 py-1 text-sm text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-md transition-colors",
-                                    onclick: on_change_folder,
-                                    "Clear"
-                                }
-                            }
-                            div { class: "inline-block px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-full border border-gray-300 transition-colors",
-                                p {
-                                    class: "text-sm text-gray-900 font-mono select-text cursor-text break-all",
-                                    "{import_context.folder_path().read()}"
-                                }
-                            }
-                        }
-
-                        if *import_context.is_detecting().read() {
-                            div { class: "text-center py-8",
-                                p { class: "text-gray-600 mb-4", "Downloading metadata files (CUE/log)..." }
-                                button {
-                                    class: "px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded transition-colors",
-                                    onclick: {
-                                        let import_context = import_context.clone();
-                                        move |_| {
-                                            import_context.set_is_detecting(false);
-                                            // Use current search query (already set to torrent name) or folder path
-                                            if import_context.search_query().read().is_empty() {
-                                                let path = import_context.folder_path().read().clone();
-                                                if let Some(name) = std::path::Path::new(&path).file_name() {
-                                                    import_context.set_search_query(name.to_string_lossy().to_string());
+                    SelectedSource {
+                        title: "Selected Torrent".to_string(),
+                        path: import_context.folder_path(),
+                        on_clear: on_change_folder,
+                        children: if *import_context.is_detecting().read() {
+                            Some(rsx! {
+                                div { class: "text-center py-8",
+                                    p { class: "text-gray-600 mb-4", "Downloading metadata files (CUE/log)..." }
+                                    button {
+                                        class: "px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded transition-colors",
+                                        onclick: {
+                                            let import_context = import_context.clone();
+                                            move |_| {
+                                                import_context.set_is_detecting(false);
+                                                // Use current search query (already set to torrent name) or folder path
+                                                if import_context.search_query().read().is_empty() {
+                                                    let path = import_context.folder_path().read().clone();
+                                                    if let Some(name) = std::path::Path::new(&path).file_name() {
+                                                        import_context.set_search_query(name.to_string_lossy().to_string());
+                                                    }
                                                 }
+                                                import_context.set_import_phase(ImportPhase::ManualSearch);
                                             }
-                                            import_context.set_import_phase(ImportPhase::ManualSearch);
-                                        }
-                                    },
-                                    "Skip and search manually"
+                                        },
+                                        "Skip and search manually"
+                                    }
                                 }
-                            }
+                            })
                         } else if !import_context.folder_files().read().is_empty() {
-                            div { class: "mt-4",
-                                h4 { class: "text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3", "Files" }
-                                FileList {
-                                    files: import_context.folder_files().read().clone(),
+                            Some(rsx! {
+                                div { class: "mt-4",
+                                    h4 { class: "text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3", "Files" }
+                                    FileList {
+                                        files: import_context.folder_files().read().clone(),
+                                    }
                                 }
-                            }
-                        }
+                            })
+                        } else {
+                            None
+                        },
                     }
 
                     // Phase 2: Exact Lookup
