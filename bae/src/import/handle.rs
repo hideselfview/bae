@@ -22,7 +22,7 @@ use tracing::{debug, info, warn};
 
 /// Handle for sending import requests and subscribing to progress updates
 #[derive(Clone)]
-pub struct ImportHandle {
+pub struct ImportServiceHandle {
     pub requests_tx: mpsc::UnboundedSender<ImportCommand>,
     pub progress_handle: ImportProgressHandle,
     pub library_manager: SharedLibraryManager,
@@ -49,7 +49,7 @@ pub struct TorrentFileMetadata {
     pub size: i64,
 }
 
-impl ImportHandle {
+impl ImportServiceHandle {
     /// Create a new ImportHandle with the given dependencies
     pub fn new(
         requests_tx: mpsc::UnboundedSender<ImportCommand>,

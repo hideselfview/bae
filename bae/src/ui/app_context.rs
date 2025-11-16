@@ -11,10 +11,10 @@ use crate::torrent;
 pub struct AppContext {
     pub library_manager: SharedLibraryManager,
     pub config: config::Config,
-    pub import_handle: import::ImportHandle,
+    pub import_handle: import::ImportServiceHandle,
     pub playback_handle: playback::PlaybackHandle,
     pub cache: cache::CacheManager,
     pub encryption_service: encryption::EncryptionService,
     pub cloud_storage: cloud_storage::CloudStorageManager,
-    pub torrent_handle: torrent::TorrentManagerHandle,
+    pub torrent_manager: torrent::TorrentManagerHandle,
 }

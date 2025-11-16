@@ -49,6 +49,6 @@ pub use folder_metadata_detector::{
     calculate_mb_discid_from_cue_flac, calculate_mb_discid_from_log, detect_metadata,
     FolderMetadata,
 };
-pub use handle::{ImportHandle, TorrentFileMetadata, TorrentImportMetadata};
+pub use handle::{ImportServiceHandle, TorrentFileMetadata, TorrentImportMetadata};
 pub use service::{ImportConfig, ImportService};
 pub use types::{ImportProgress, ImportRequest, TorrentSource};

@@ -40,7 +40,7 @@ use crate::cloud_storage::CloudStorageManager;
 use crate::db::{DbAlbum, DbRelease, DbTrack};
 use crate::encryption::EncryptionService;
 use crate::import::album_chunk_layout::AlbumChunkLayout;
-use crate::import::handle::{ImportHandle, TorrentImportMetadata};
+use crate::import::handle::{ImportServiceHandle, TorrentImportMetadata};
 use crate::import::metadata_persister::MetadataPersister;
 use crate::import::pipeline;
 use crate::import::progress::ImportProgressTracker;
@@ -101,7 +101,7 @@ impl ImportService {
         cloud_storage: CloudStorageManager,
         cache_manager: CacheManager,
         torrent_handle: TorrentManagerHandle,
-    ) -> ImportHandle {
+    ) -> ImportServiceHandle {
         let (commands_tx, commands_rx) = mpsc::unbounded_channel();
         let (progress_tx, progress_rx) = mpsc::unbounded_channel();
 
@@ -143,7 +143,7 @@ impl ImportService {
             });
         });
 
-        ImportHandle::new(commands_tx, progress_rx, library_manager, runtime_handle)
+        ImportServiceHandle::new(commands_tx, progress_rx, library_manager, runtime_handle)
     }
 
     async fn do_import(&self, command: ImportCommand) {
