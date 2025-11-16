@@ -1,6 +1,8 @@
 use super::file_list::FileList;
 use super::inputs::FolderSelector;
-use super::shared::{Confirmation, ErrorDisplay, ExactLookup, ManualSearch, SelectedSource};
+use super::shared::{
+    Confirmation, DetectingMetadata, ErrorDisplay, ExactLookup, ManualSearch, SelectedSource,
+};
 use crate::import::MatchCandidate;
 use crate::ui::components::import::ImportSource;
 use crate::ui::import_context::{ImportContext, ImportPhase};
@@ -85,8 +87,8 @@ pub fn FolderImport() -> Element {
                         on_clear: on_change_folder,
                         children: if *is_detecting.read() {
                             Some(rsx! {
-                                div { class: "text-center py-8",
-                                    p { class: "text-gray-600 mb-4", "Detecting metadata..." }
+                                DetectingMetadata {
+                                    message: "Detecting metadata...".to_string(),
                                 }
                             })
                         } else if !folder_files.read().is_empty() {

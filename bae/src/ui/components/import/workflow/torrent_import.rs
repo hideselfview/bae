@@ -1,6 +1,8 @@
 use super::file_list::FileList;
 use super::inputs::TorrentInput;
-use super::shared::{Confirmation, ErrorDisplay, ExactLookup, ManualSearch, SelectedSource};
+use super::shared::{
+    Confirmation, DetectingMetadata, ErrorDisplay, ExactLookup, ManualSearch, SelectedSource,
+};
 use crate::import::MatchCandidate;
 use crate::ui::components::import::ImportSource;
 use crate::ui::import_context::{ImportContext, ImportPhase};
@@ -114,26 +116,14 @@ pub fn TorrentImport() -> Element {
                         on_clear: on_change_folder,
                         children: if *import_context.is_detecting().read() {
                             Some(rsx! {
-                                div { class: "text-center py-8",
-                                    p { class: "text-gray-600 mb-4", "Downloading metadata files (CUE/log)..." }
-                                    button {
-                                        class: "px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded transition-colors",
-                                        onclick: {
-                                            let import_context = import_context.clone();
-                                            move |_| {
-                                                import_context.set_is_detecting(false);
-                                                // Use current search query (already set to torrent name) or folder path
-                                                if import_context.search_query().read().is_empty() {
-                                                    let path = import_context.folder_path().read().clone();
-                                                    if let Some(name) = std::path::Path::new(&path).file_name() {
-                                                        import_context.set_search_query(name.to_string_lossy().to_string());
-                                                    }
-                                                }
-                                                import_context.set_import_phase(ImportPhase::ManualSearch);
-                                            }
-                                        },
-                                        "Skip and search manually"
-                                    }
+                                DetectingMetadata {
+                                    message: "Downloading metadata files (CUE/log)...".to_string(),
+                                    on_skip: {
+                                        let import_context = import_context.clone();
+                                        EventHandler::new(move |()| {
+                                            import_context.skip_metadata_detection();
+                                        })
+                                    },
                                 }
                             })
                         } else if !import_context.folder_files().read().is_empty() {

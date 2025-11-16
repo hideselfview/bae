@@ -1100,6 +1100,26 @@ impl ImportContext {
             self.set_import_phase(ImportPhase::ManualSearch);
         }
     }
+
+    /// Skip metadata detection and proceed to manual search.
+    ///
+    /// This handles:
+    /// - Stopping the detection process
+    /// - Initializing search query from torrent/folder name if empty
+    /// - Transitioning to ManualSearch phase
+    pub fn skip_metadata_detection(&self) {
+        self.set_is_detecting(false);
+
+        // Use current search query (already set to torrent name) or folder path
+        if self.search_query().read().is_empty() {
+            let path = self.folder_path().read().clone();
+            if let Some(name) = std::path::Path::new(&path).file_name() {
+                self.set_search_query(name.to_string_lossy().to_string());
+            }
+        }
+
+        self.set_import_phase(ImportPhase::ManualSearch);
+    }
 }
 
 /// Provider component to make search context available throughout the app
