@@ -11,7 +11,7 @@ pub mod playback_hooks;
 pub mod queue_sidebar;
 pub mod settings;
 pub mod title_bar;
-pub mod torrent_seeder_hooks;
+pub mod torrent_hooks;
 
 pub use album_detail::AlbumDetail;
 pub use app::App;
@@ -23,4 +23,4 @@ pub use now_playing_bar::NowPlayingBar;
 pub use playback_hooks::{use_playback_service, use_playback_state};
 pub use settings::Settings;
 pub use title_bar::TitleBar;
-pub use torrent_seeder_hooks::use_torrent_manager;
+pub use torrent_hooks::use_torrent_manager;
