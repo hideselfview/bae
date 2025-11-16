@@ -50,6 +50,12 @@ mod ffi {
         /// Create session_params with default disk storage (no custom storage)
         fn create_session_params_default() -> UniquePtr<SessionParams>;
 
+        /// Set listen_interfaces on session_params
+        ///
+        /// # Safety
+        /// `params` must be a valid pointer to SessionParams that outlives the call.
+        unsafe fn set_listen_interfaces(params: *mut SessionParams, interfaces: &str);
+
         /// Create a session from session_params (extends libtorrent-rs)
         fn create_session_with_params(params: UniquePtr<SessionParams>) -> UniquePtr<Session>;
 
@@ -66,6 +72,12 @@ mod ffi {
 
         /// Load a torrent file and return add_torrent_params
         fn load_torrent_file(file_path: &str, save_path: &str) -> UniquePtr<AddTorrentParams>;
+
+        /// Set seed_mode flag on add_torrent_params to skip hash verification
+        ///
+        /// # Safety
+        /// `params` must be a valid pointer to AddTorrentParams that outlives the call.
+        unsafe fn set_seed_mode(params: *mut AddTorrentParams, seed_mode: bool);
 
         /// Add a torrent to a session using our Session type
         ///
@@ -159,7 +171,9 @@ pub use ffi::{
     create_bae_storage_constructor, create_session_params_default,
     create_session_params_with_storage, create_session_with_params, get_session_ptr,
     load_torrent_file, parse_magnet_uri, session_add_torrent, session_remove_torrent,
-    torrent_get_file_list, torrent_get_name, torrent_get_num_pieces, torrent_get_piece_length,
-    torrent_get_progress, torrent_get_storage_index, torrent_get_total_size, torrent_has_metadata,
-    torrent_set_file_priorities, BaeStorageConstructor, Session, TorrentFileInfo, TorrentHandle,
+    set_listen_interfaces, set_seed_mode, torrent_get_file_list, torrent_get_name,
+    torrent_get_num_pieces, torrent_get_piece_length, torrent_get_progress,
+    torrent_get_storage_index, torrent_get_total_size, torrent_has_metadata,
+    torrent_set_file_priorities, AddTorrentParams, BaeStorageConstructor, Session, SessionParams,
+    TorrentFileInfo, TorrentHandle,
 };

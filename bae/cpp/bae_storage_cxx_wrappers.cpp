@@ -62,6 +62,16 @@ std::unique_ptr<AddTorrentParams> load_torrent_file(rust::Str file_path, rust::S
     return libtorrent::load_torrent_file(std::string(file_path), std::string(save_path));
 }
 
+// Wrapper for set_seed_mode
+void set_seed_mode(AddTorrentParams* params, bool seed_mode) {
+    libtorrent::set_seed_mode(params, seed_mode);
+}
+
+// Wrapper for set_listen_interfaces - converts rust::Str to std::string
+void set_listen_interfaces(SessionParams* params, rust::Str interfaces) {
+    libtorrent::set_listen_interfaces(params, std::string(interfaces));
+}
+
 // Wrapper for torrent_get_name - converts std::string to rust::String
 rust::String torrent_get_name(TorrentHandle* handle) {
     std::string name = libtorrent::torrent_get_name_internal(handle);

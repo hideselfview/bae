@@ -1,7 +1,7 @@
 use crate::cache::CacheManager;
 use crate::db::{Database, DbTorrent, DbTorrentPieceMapping};
 use crate::import::{FolderMetadata, TorrentFileMetadata, TorrentSource};
-use crate::torrent::client::{TorrentClient, TorrentError, TorrentHandle};
+use crate::torrent::client::{TorrentClient, TorrentClientOptions, TorrentError, TorrentHandle};
 use crate::torrent::{BaeStorage, TorrentPieceMapper};
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
@@ -174,6 +174,7 @@ pub fn start_torrent_manager(
     cache_manager: CacheManager,
     database: Database,
     chunk_size_bytes: usize,
+    options: TorrentClientOptions,
 ) -> TorrentManagerHandle {
     let (command_tx, command_rx) = mpsc::unbounded_channel();
 
@@ -189,10 +190,11 @@ pub fn start_torrent_manager(
         let rt_handle = rt.handle().clone();
         rt.block_on(async move {
             // Create both TorrentClient instances on this thread
-            let download_client = TorrentClient::new_with_default_storage(rt_handle.clone())
-                .expect("Failed to create download torrent client");
-            let seeding_client =
-                TorrentClient::new(rt_handle).expect("Failed to create seeding torrent client");
+            let download_client =
+                TorrentClient::new_with_default_storage(rt_handle.clone(), options.clone())
+                    .expect("Failed to create download torrent client");
+            let seeding_client = TorrentClient::new_with_bae_storage(rt_handle, options)
+                .expect("Failed to create seeding torrent client");
 
             let service = TorrentManager {
                 command_rx,

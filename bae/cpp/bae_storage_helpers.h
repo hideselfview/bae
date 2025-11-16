@@ -100,6 +100,13 @@ bool torrent_set_file_priorities_internal(torrent_handle* handle, const std::vec
 /// Get download progress (0.0 to 1.0) for a torrent (internal C++ function)
 float torrent_get_progress_internal(torrent_handle* handle);
 
+/// Set seed_mode flag on add_torrent_params to skip hash verification
+void set_seed_mode(add_torrent_params* params, bool seed_mode);
+
+/// Set listen_interfaces on session_params
+/// interfaces can be an interface name (e.g. "eth0", "tun0") or IP:port (e.g. "0.0.0.0:6881")
+void set_listen_interfaces(session_params* params, const std::string& interfaces);
+
 } // namespace libtorrent
 
 // Type aliases for cxx bridge (must be in global namespace)
@@ -141,6 +148,8 @@ std::unique_ptr<SessionParams> create_session_params_with_storage(std::unique_pt
 std::unique_ptr<SessionParams> create_session_params_default();
 std::unique_ptr<AddTorrentParams> parse_magnet_uri(rust::Str magnet, rust::Str save_path);
 std::unique_ptr<AddTorrentParams> load_torrent_file(rust::Str file_path, rust::Str save_path);
+void set_seed_mode(AddTorrentParams* params, bool seed_mode);
+void set_listen_interfaces(SessionParams* params, rust::Str interfaces);
 rust::String torrent_get_name(TorrentHandle* handle);
 
 #endif // BAE_STORAGE_HELPERS_H

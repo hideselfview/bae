@@ -23,6 +23,7 @@ mod import;
 mod library;
 mod media_controls;
 mod musicbrainz;
+mod network;
 mod playback;
 mod subsonic;
 mod test_support;
@@ -131,10 +132,14 @@ fn main() {
         chunk_size_bytes: config.chunk_size_bytes,
     };
 
-    let torrent_handle = torrent::start_torrent_manager(
+    let torrent_options =
+        torrent_options_from_config(&config).expect("Invalid torrent bind interface configuration");
+
+    let torrent_manager = torrent::start_torrent_manager(
         cache_manager.clone(),
         database.clone(),
         config.chunk_size_bytes,
+        torrent_options,
     );
 
     // Create import service with shared runtime handle
@@ -145,7 +150,7 @@ fn main() {
         encryption_service.clone(),
         cloud_storage.clone(),
         cache_manager.clone(),
-        torrent_handle.clone(),
+        torrent_manager.clone(),
     );
 
     // Create playback service
@@ -185,10 +190,10 @@ fn main() {
         config: config.clone(),
         import_handle,
         playback_handle,
+        torrent_manager,
         cache: cache_manager.clone(),
         encryption_service: encryption_service.clone(),
         cloud_storage: cloud_storage.clone(),
-        torrent_handle,
     };
 
     // Start Subsonic API server as async task on shared runtime
@@ -244,4 +249,28 @@ async fn start_subsonic_server(
     if let Err(e) = axum::serve(listener, app).await {
         error!("Subsonic server error: {}", e);
     }
+}
+
+/// Create torrent client options from application config
+fn torrent_options_from_config(
+    config: &config::Config,
+) -> Result<torrent::client::TorrentClientOptions, String> {
+    if let Some(interface) = &config.torrent_bind_interface {
+        network::validate_network_interface(interface)?;
+    }
+
+    let options = torrent::client::TorrentClientOptions {
+        bind_interface: config.torrent_bind_interface.clone(),
+    };
+
+    if let Some(interface) = &options.bind_interface {
+        info!(
+            "Torrent client configured to bind to interface: {}",
+            interface
+        );
+    } else {
+        info!("Torrent client using default network binding");
+    }
+
+    Ok(options)
 }

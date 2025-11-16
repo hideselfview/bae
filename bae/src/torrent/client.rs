@@ -5,13 +5,15 @@
 // The libtorrent-rs crate (v0.1.1) provides a minimal API. We use what's available
 // and parse bencoded data for additional torrent metadata.
 
+use crate::torrent::ffi;
 use crate::torrent::ffi::{
     create_session_params_default, create_session_params_with_storage, create_session_with_params,
     get_session_ptr, load_torrent_file, parse_magnet_uri, session_add_torrent,
-    session_remove_torrent, torrent_get_file_list, torrent_get_name, torrent_get_num_pieces,
-    torrent_get_piece_length, torrent_get_progress, torrent_get_storage_index,
-    torrent_get_total_size, torrent_has_metadata, torrent_set_file_priorities, Session,
-    TorrentFileInfo, TorrentHandle as FfiTorrentHandle,
+    session_remove_torrent, set_listen_interfaces, torrent_get_file_list, torrent_get_name,
+    torrent_get_num_pieces, torrent_get_piece_length, torrent_get_progress,
+    torrent_get_storage_index, torrent_get_total_size, torrent_has_metadata,
+    torrent_set_file_priorities, AddTorrentParams, Session, TorrentFileInfo,
+    TorrentHandle as FfiTorrentHandle,
 };
 use crate::torrent::storage::{create_bae_storage_constructor, BaeStorage};
 use cxx::UniquePtr;
@@ -59,6 +61,13 @@ thread_local! {
     pub(crate) static RUNTIME_HANDLE: std::cell::RefCell<Option<tokio::runtime::Handle>> = const { std::cell::RefCell::new(None) };
 }
 
+/// Configuration options for creating a TorrentClient
+#[derive(Debug, Clone, Default)]
+pub struct TorrentClientOptions {
+    /// Network interface to bind to (e.g. "eth0", "tun0", "0.0.0.0:6881")
+    pub bind_interface: Option<String>,
+}
+
 /// Wrapper around libtorrent session
 pub struct TorrentClient {
     session: SessionArc,
@@ -98,40 +107,24 @@ impl TorrentClient {
     ///
     /// This creates a session with custom storage backend for use in the main import flow.
     /// Storage instances will be registered per-torrent when adding torrents.
-    pub fn new(runtime_handle: tokio::runtime::Handle) -> Result<Self, TorrentError> {
-        let storage_registry: StorageRegistry = Arc::new(RwLock::new(HashMap::new()));
-        let storage_index_map: StorageIndexMap = Arc::new(RwLock::new(HashMap::new()));
+    pub fn new_with_bae_storage(
+        runtime_handle: tokio::runtime::Handle,
+        options: TorrentClientOptions,
+    ) -> Result<Self, TorrentError> {
+        let (storage_registry, storage_index_map) = create_empty_storage_registries();
 
-        // Store registry and runtime handle in thread-local for callbacks to access
-        let registry_clone = Arc::clone(&storage_registry);
-        let index_map_clone = Arc::clone(&storage_index_map);
-        let runtime_clone = runtime_handle.clone();
-
-        STORAGE_REGISTRY.with(|tl| {
-            *tl.borrow_mut() = Some(registry_clone);
-        });
-        STORAGE_INDEX_MAP.with(|tl| {
-            *tl.borrow_mut() = Some(index_map_clone);
-        });
-        RUNTIME_HANDLE.with(|tl| {
-            *tl.borrow_mut() = Some(runtime_clone);
-        });
+        // Setup thread-local storage for callbacks to access
+        setup_thread_local_storage(&storage_registry, &storage_index_map, &runtime_handle);
 
         // Create storage constructor with callbacks
         let storage_constructor = create_bae_storage_constructor();
 
         // Create session with custom storage backend
         let session_params = create_session_params_with_storage(storage_constructor);
-        let custom_session = create_session_with_params(session_params);
-
-        if custom_session.is_null() {
-            return Err(TorrentError::Libtorrent(
-                "Failed to create libtorrent session with custom storage".to_string(),
-            ));
-        }
+        let session = create_session_from_params(session_params, &options, "custom storage")?;
 
         Ok(TorrentClient {
-            session: Rc::new(RwLock::new(custom_session)),
+            session,
             runtime_handle,
             storage_registry,
             storage_index_map,
@@ -143,25 +136,20 @@ impl TorrentClient {
     /// This creates a session that uses libtorrent's default disk storage,
     /// which writes files directly to disk. Useful for temporary operations
     /// like metadata detection where we don't need custom storage.
-    pub fn new_with_default_storage() -> Result<Self, TorrentError> {
-        let runtime_handle = tokio::runtime::Handle::current();
+    pub fn new_with_default_storage(
+        runtime_handle: tokio::runtime::Handle,
+        options: TorrentClientOptions,
+    ) -> Result<Self, TorrentError> {
         // Create session with default storage (no custom storage)
         let session_params = create_session_params_default();
-        let default_session = create_session_with_params(session_params);
-
-        if default_session.is_null() {
-            return Err(TorrentError::Libtorrent(
-                "Failed to create libtorrent session with default storage".to_string(),
-            ));
-        }
+        let session = create_session_from_params(session_params, &options, "default storage")?;
 
         // For default storage, we don't need storage registry or index map
         // but we still create empty ones to satisfy the struct
-        let storage_registry: StorageRegistry = Arc::new(RwLock::new(HashMap::new()));
-        let storage_index_map: StorageIndexMap = Arc::new(RwLock::new(HashMap::new()));
+        let (storage_registry, storage_index_map) = create_empty_storage_registries();
 
         Ok(TorrentClient {
-            session: Rc::new(RwLock::new(default_session)),
+            session,
             runtime_handle,
             storage_registry,
             storage_index_map,
@@ -253,20 +241,29 @@ impl TorrentClient {
         // Use a temporary save path - we'll handle data ourselves
         let temp_path = std::env::temp_dir().to_string_lossy().to_string();
 
+        // Parse magnet URI using our wrapper function
+        let params = parse_magnet_uri(magnet, &temp_path);
+        if params.is_null() {
+            return Err(TorrentError::InvalidTorrent(
+                "Failed to parse magnet URI".to_string(),
+            ));
+        }
+
+        self.add_torrent_with_params(params).await
+    }
+
+    /// Add a torrent using pre-constructed add_torrent_params
+    ///
+    /// This allows setting flags like seed_mode before adding the torrent.
+    pub async fn add_torrent_with_params(
+        &self,
+        mut params: UniquePtr<AddTorrentParams>,
+    ) -> Result<TorrentHandle, TorrentError> {
         // Extract session reference to avoid capturing self across await
         let session = Rc::clone(&self.session);
 
         // Get write lock first
         let mut session_guard = session.write().await;
-
-        // Parse magnet URI using our wrapper function
-        let mut params = parse_magnet_uri(magnet, &temp_path);
-        if params.is_null() {
-            drop(session_guard);
-            return Err(TorrentError::InvalidTorrent(
-                "Failed to parse magnet URI".to_string(),
-            ));
-        }
 
         // Get raw session pointer for wrapper function
         let session_ptr = get_session_ptr(&mut session_guard);
@@ -587,4 +584,70 @@ impl TorrentHandle {
 pub struct TorrentFile {
     pub path: PathBuf,
     pub size: i64,
+}
+
+/// Apply options to session_params
+fn apply_options_to_session_params(
+    session_params: &mut UniquePtr<ffi::SessionParams>,
+    options: &TorrentClientOptions,
+) {
+    if let Some(interface) = &options.bind_interface {
+        unsafe {
+            if let Some(pinned_params) = session_params.as_mut() {
+                let params_ptr = std::pin::Pin::get_unchecked_mut(pinned_params) as *mut _;
+                set_listen_interfaces(params_ptr, interface);
+            }
+        }
+    }
+}
+
+/// Create empty storage registry and index map
+fn create_empty_storage_registries() -> (StorageRegistry, StorageIndexMap) {
+    (
+        Arc::new(RwLock::new(HashMap::new())),
+        Arc::new(RwLock::new(HashMap::new())),
+    )
+}
+
+/// Setup thread-local storage for callbacks to access storage registry and runtime handle
+fn setup_thread_local_storage(
+    storage_registry: &StorageRegistry,
+    storage_index_map: &StorageIndexMap,
+    runtime_handle: &tokio::runtime::Handle,
+) {
+    let registry_clone = Arc::clone(storage_registry);
+    let index_map_clone = Arc::clone(storage_index_map);
+    let runtime_clone = runtime_handle.clone();
+
+    STORAGE_REGISTRY.with(|tl| {
+        *tl.borrow_mut() = Some(registry_clone);
+    });
+    STORAGE_INDEX_MAP.with(|tl| {
+        *tl.borrow_mut() = Some(index_map_clone);
+    });
+    RUNTIME_HANDLE.with(|tl| {
+        *tl.borrow_mut() = Some(runtime_clone);
+    });
+}
+
+/// Create a session from session_params, applying options and checking for errors
+fn create_session_from_params(
+    session_params: UniquePtr<ffi::SessionParams>,
+    options: &TorrentClientOptions,
+    storage_type: &str,
+) -> Result<SessionArc, TorrentError> {
+    let mut params = session_params;
+    // Apply options to session_params
+    apply_options_to_session_params(&mut params, options);
+
+    let session = create_session_with_params(params);
+
+    if session.is_null() {
+        return Err(TorrentError::Libtorrent(format!(
+            "Failed to create libtorrent session with {}",
+            storage_type
+        )));
+    }
+
+    Ok(Rc::new(RwLock::new(session)))
 }

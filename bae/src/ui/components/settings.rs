@@ -2,41 +2,55 @@ use crate::config::use_config;
 use dioxus::prelude::*;
 
 /// Settings page
-/// TODO: Fully implement with new unified Config system
 #[component]
 pub fn Settings() -> Element {
     let config = use_config();
 
     rsx! {
-        div { class: "p-6",
-            h1 { class: "text-2xl font-bold mb-4", "Settings" }
+        div { class: "max-w-4xl mx-auto p-6",
+            h1 { class: "text-2xl font-bold text-white mb-6", "Settings" }
 
-            div { class: "mb-6",
-                h2 { class: "text-xl font-semibold mb-2", "Configuration" }
+            div { class: "bg-white rounded-lg shadow p-6",
+                h2 { class: "text-xl font-semibold text-gray-900 mb-4", "Configuration" }
 
-                div { class: "bg-gray-100 p-4 rounded",
-                    p { class: "mb-2",
-                        strong { "S3 Bucket: " }
-                        "{config.s3_config.bucket_name}"
+                div { class: "space-y-4",
+                    div { class: "border-b border-gray-200 pb-3",
+                        div { class: "text-sm font-medium text-gray-500 mb-1", "S3 Bucket" }
+                        div { class: "text-base text-gray-900", "{config.s3_config.bucket_name}" }
                     }
-                    p { class: "mb-2",
-                        strong { "S3 Region: " }
-                        "{config.s3_config.region}"
+
+                    div { class: "border-b border-gray-200 pb-3",
+                        div { class: "text-sm font-medium text-gray-500 mb-1", "S3 Region" }
+                        div { class: "text-base text-gray-900", "{config.s3_config.region}" }
                     }
+
                     if let Some(endpoint) = &config.s3_config.endpoint_url {
-                        p { class: "mb-2",
-                            strong { "S3 Endpoint: " }
-                            "{endpoint}"
+                        div { class: "border-b border-gray-200 pb-3",
+                            div { class: "text-sm font-medium text-gray-500 mb-1", "S3 Endpoint" }
+                            div { class: "text-base text-gray-900", "{endpoint}" }
                         }
                     }
-                    p { class: "mb-2",
-                        strong { "Discogs API Key: " }
-                        "Configured ✓"
-                    }
+
+                    div { class: "border-b border-gray-200 pb-3",
+                        div { class: "text-sm font-medium text-gray-500 mb-1", "Discogs API Key" }
+                        div { class: "text-base text-gray-900 flex items-center gap-2",
+                            "Configured"
+                            span { class: "text-green-600", "✓" }
                 }
             }
 
-            p { class: "text-sm text-gray-500 mt-4", "Settings management UI coming soon..." }
+                    div { class: "pb-3",
+                        div { class: "text-sm font-medium text-gray-500 mb-1", "Torrent Bind Interface" }
+                        div { class: "text-base text-gray-900",
+                            if let Some(interface) = &config.torrent_bind_interface {
+                                "{interface}"
+                            } else {
+                                span { class: "text-gray-400 italic", "Not set (uses default)" }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

@@ -10,6 +10,7 @@
 #include <libtorrent/io_context.hpp>
 #include <libtorrent/magnet_uri.hpp>
 #include <libtorrent/error_code.hpp>
+#include <libtorrent/settings_pack.hpp>
 
 namespace libtorrent {
 
@@ -197,6 +198,18 @@ float torrent_get_progress_internal(torrent_handle* handle) {
     // progress_ppm is parts per million (0 to 1000000)
     // Convert to 0.0 to 1.0
     return static_cast<float>(status.progress_ppm) / 1000000.0f;
+}
+
+void set_seed_mode(add_torrent_params* params, bool seed_mode) {
+    if (params && seed_mode) {
+        params->flags |= torrent_flags::seed_mode;
+    }
+}
+
+void set_listen_interfaces(session_params* params, const std::string& interfaces) {
+    if (params && !interfaces.empty()) {
+        params->settings.set_str(settings_pack::listen_interfaces, interfaces);
+    }
 }
 
 } // namespace libtorrent

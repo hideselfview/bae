@@ -35,6 +35,8 @@ pub struct Config {
     pub max_import_db_write_workers: usize,
     /// Size of each chunk in bytes (default: 1MB)
     pub chunk_size_bytes: usize,
+    /// Network interface to bind torrent clients to (optional, e.g. "eth0", "tun0", "0.0.0.0:6881")
+    pub torrent_bind_interface: Option<String>,
 }
 
 /// Credential data loaded from keyring (production mode only)
@@ -138,6 +140,10 @@ impl Config {
             .and_then(|s| s.parse().ok())
             .unwrap_or(1024 * 1024); // 1MB default
 
+        let torrent_bind_interface = std::env::var("BAE_TORRENT_BIND_INTERFACE")
+            .ok()
+            .filter(|s| !s.is_empty());
+
         info!("Dev mode with S3 storage");
         info!("S3 bucket: {}", bucket_name);
         if let Some(endpoint) = &endpoint_url {
@@ -158,6 +164,7 @@ impl Config {
             max_import_encrypt_workers,
             max_import_upload_workers,
             max_import_db_write_workers,
+            torrent_bind_interface,
         }
     }
 
@@ -184,6 +191,7 @@ impl Config {
         let max_import_upload_workers = 20;
         let max_import_db_write_workers = 10;
         let chunk_size_bytes = 1024 * 1024; // 1MB default
+        let torrent_bind_interface = None; // TODO: Load from config.yaml
 
         Self {
             library_id,
@@ -194,6 +202,7 @@ impl Config {
             max_import_upload_workers,
             max_import_db_write_workers,
             chunk_size_bytes,
+            torrent_bind_interface,
         }
     }
 
