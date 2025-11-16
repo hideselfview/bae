@@ -14,7 +14,7 @@ use dioxus::prelude::*;
 use dioxus::router::Navigator;
 use std::path::PathBuf;
 use std::rc::Rc;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ImportStep {
@@ -519,9 +519,17 @@ impl ImportContext {
     ) {
         use tracing::info;
 
+        info!(
+            "Processing detected metadata (has_metadata: {})",
+            metadata.is_some()
+        );
+
         match metadata {
             Some(metadata) => {
-                info!("Detected metadata: {:?}", metadata);
+                info!(
+                    "Detected metadata: artist={:?}, album={:?}, year={:?}, mb_discid={:?}",
+                    metadata.artist, metadata.album, metadata.year, metadata.mb_discid
+                );
                 self.set_detected_metadata(Some(metadata.clone()));
 
                 // Try exact lookup if MB DiscID available
@@ -592,6 +600,11 @@ impl ImportContext {
                 self.set_import_phase(ImportPhase::ManualSearch);
             }
         }
+
+        info!(
+            "Metadata processing complete, phase set to: {:?}",
+            *self.import_phase().read()
+        );
     }
 
     /// Initialize search query from metadata
@@ -614,22 +627,33 @@ impl ImportContext {
     ) -> Result<(), String> {
         use tracing::info;
 
+        info!(
+            "Loading torrent for import: {:?}, seed_flag: {}",
+            path, seed_flag
+        );
+
         // Reset state for new torrent selection
         self.select_torrent_file(
             path.to_string_lossy().to_string(),
             TorrentSource::File(path.clone()),
             seed_flag,
         );
+        info!("Torrent file selected, phase set to MetadataDetection");
 
         // Prepare torrent via TorrentManager
+        info!("Preparing torrent via TorrentManager...");
         let torrent_info = match self
             .torrent_manager
             .prepare_import_torrent(TorrentSource::File(path))
             .await
         {
-            Ok(info) => info,
+            Ok(info) => {
+                info!("Torrent preparation successful");
+                info
+            }
             Err(e) => {
                 let error_msg = format!("Failed to prepare torrent: {}", e);
+                warn!("{}", error_msg);
                 self.set_import_error_message(Some(error_msg.clone()));
                 self.reset_to_folder_selection();
                 return Err(error_msg);
@@ -684,11 +708,17 @@ impl ImportContext {
         );
 
         // Process detected metadata
+        info!("Processing detected metadata...");
         self.process_detected_metadata(torrent_info.detected_metadata, torrent_info.torrent_name)
             .await;
+        info!(
+            "Metadata processing complete, current phase: {:?}",
+            *self.import_phase().read()
+        );
 
         // Mark detection as complete
         self.set_is_detecting(false);
+        info!("Metadata detection marked as complete");
 
         Ok(())
     }

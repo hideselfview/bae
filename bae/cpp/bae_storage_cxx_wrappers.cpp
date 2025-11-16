@@ -140,6 +140,29 @@ float torrent_get_progress(TorrentHandle* handle) {
     return libtorrent::torrent_get_progress_internal(handle);
 }
 
+int32_t torrent_get_num_peers(TorrentHandle* handle) {
+    return libtorrent::torrent_get_num_peers(handle);
+}
+
+int32_t torrent_get_num_seeds(TorrentHandle* handle) {
+    return libtorrent::torrent_get_num_seeds(handle);
+}
+
+rust::String torrent_get_tracker_status(TorrentHandle* handle) {
+    std::string status = libtorrent::torrent_get_tracker_status(handle);
+    return rust::String(status.data(), status.size());
+}
+
+rust::String session_get_listen_interfaces(Session* sess) {
+    std::string interfaces = libtorrent::session_get_listen_interfaces(sess);
+    return rust::String(interfaces.data(), interfaces.size());
+}
+
+rust::String session_get_listening_port(Session* sess) {
+    std::string port = libtorrent::session_get_listening_port(sess);
+    return rust::String(port.data(), port.size());
+}
+
 void session_remove_torrent(Session* sess, TorrentHandle* handle, bool delete_files) {
     libtorrent::session_remove_torrent(sess, handle, delete_files);
 }

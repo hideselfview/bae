@@ -189,12 +189,27 @@ pub fn start_torrent_manager(
 
         let rt_handle = rt.handle().clone();
         rt.block_on(async move {
+            // Log network configuration
+            if let Some(interface) = &options.bind_interface {
+                info!(
+                    "TorrentManager: Creating clients with bind_interface: {}",
+                    interface
+                );
+            } else {
+                info!("TorrentManager: Creating clients with default network binding");
+            }
+
             // Create both TorrentClient instances on this thread
+            info!("TorrentManager: Creating download client (default storage)...");
             let download_client =
                 TorrentClient::new_with_default_storage(rt_handle.clone(), options.clone())
                     .expect("Failed to create download torrent client");
+            info!("TorrentManager: Download client created successfully");
+
+            info!("TorrentManager: Creating seeding client (custom storage)...");
             let seeding_client = TorrentClient::new_with_bae_storage(rt_handle, options)
                 .expect("Failed to create seeding torrent client");
+            info!("TorrentManager: Seeding client created successfully");
 
             let service = TorrentManager {
                 command_rx,
@@ -442,17 +457,31 @@ impl TorrentManager {
         source: TorrentSource,
     ) -> Result<TorrentImportInfo, TorrentError> {
         use crate::torrent::detect_metadata_from_torrent_file;
+        use tracing::info;
+
+        info!("Preparing torrent for import");
 
         // Add torrent
+        info!("Adding torrent to download client...");
         let torrent_handle = match source {
-            TorrentSource::File(path) => self.download_client.add_torrent_file(&path).await?,
+            TorrentSource::File(path) => {
+                info!("Adding torrent file: {:?}", path);
+                let handle = self.download_client.add_torrent_file(&path).await?;
+                info!("Torrent added successfully, waiting for peer connections...");
+                handle
+            }
             TorrentSource::MagnetLink(magnet) => {
-                self.download_client.add_magnet_link(&magnet).await?
+                info!("Adding magnet link");
+                let handle = self.download_client.add_magnet_link(&magnet).await?;
+                info!("Magnet link added successfully, waiting for peer connections...");
+                handle
             }
         };
 
         // Wait for metadata
+        info!("Waiting for torrent metadata...");
         torrent_handle.wait_for_metadata().await?;
+        info!("Torrent metadata received");
 
         // Query all torrent info
         let info_hash = torrent_handle.info_hash().await;
@@ -460,6 +489,11 @@ impl TorrentManager {
         let total_size = torrent_handle.total_size().await? as u64;
         let piece_length = torrent_handle.piece_length().await? as u32;
         let num_pieces = torrent_handle.num_pieces().await? as u32;
+
+        info!(
+            "Torrent info: name={}, size={}, pieces={}, info_hash={}",
+            torrent_name, total_size, num_pieces, info_hash
+        );
 
         // Get file list
         let torrent_files = torrent_handle.get_file_list().await?;
@@ -471,9 +505,19 @@ impl TorrentManager {
             })
             .collect();
 
+        info!("Torrent contains {} files", file_list.len());
+
         // Detect metadata from CUE/log files
+        info!("Starting metadata detection from CUE/log files...");
         let detected_metadata = match detect_metadata_from_torrent_file(&torrent_handle).await {
-            Ok(metadata) => metadata,
+            Ok(metadata) => {
+                if metadata.is_some() {
+                    info!("Metadata detection completed successfully");
+                } else {
+                    info!("No metadata detected from CUE/log files");
+                }
+                metadata
+            }
             Err(e) => {
                 warn!("Failed to detect metadata from torrent: {}", e);
                 None
@@ -482,10 +526,12 @@ impl TorrentManager {
 
         // Remove torrent (temporary, only used for metadata detection)
         // ImportService will re-add it for actual download
+        info!("Removing temporary torrent (metadata detection complete)");
         self.download_client
             .remove_torrent_and_delete_data(&torrent_handle)
             .await?;
 
+        info!("Torrent preparation complete");
         Ok(TorrentImportInfo {
             info_hash,
             torrent_name,

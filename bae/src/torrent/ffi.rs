@@ -145,6 +145,36 @@ mod ffi {
         /// `handle` must be a valid pointer to a TorrentHandle that outlives the call.
         unsafe fn torrent_get_progress(handle: *mut TorrentHandle) -> f32;
 
+        /// Get number of connected peers
+        ///
+        /// # Safety
+        /// `handle` must be a valid pointer to a TorrentHandle that outlives the call.
+        unsafe fn torrent_get_num_peers(handle: *mut TorrentHandle) -> i32;
+
+        /// Get number of seeders
+        ///
+        /// # Safety
+        /// `handle` must be a valid pointer to a TorrentHandle that outlives the call.
+        unsafe fn torrent_get_num_seeds(handle: *mut TorrentHandle) -> i32;
+
+        /// Get tracker status as a formatted string
+        ///
+        /// # Safety
+        /// `handle` must be a valid pointer to a TorrentHandle that outlives the call.
+        unsafe fn torrent_get_tracker_status(handle: *mut TorrentHandle) -> String;
+
+        /// Get the listen_interfaces setting from a session
+        ///
+        /// # Safety
+        /// `sess` must be a valid pointer to a Session that outlives the call.
+        unsafe fn session_get_listen_interfaces(sess: *mut Session) -> String;
+
+        /// Get the listening port from a session
+        ///
+        /// # Safety
+        /// `sess` must be a valid pointer to a Session that outlives the call.
+        unsafe fn session_get_listening_port(sess: *mut Session) -> String;
+
         /// Remove a torrent from a session
         ///
         /// If `delete_files` is true, also deletes the downloaded files from disk.
@@ -170,10 +200,11 @@ mod ffi {
 pub use ffi::{
     create_bae_storage_constructor, create_session_params_default,
     create_session_params_with_storage, create_session_with_params, get_session_ptr,
-    load_torrent_file, parse_magnet_uri, session_add_torrent, session_remove_torrent,
-    set_listen_interfaces, set_seed_mode, torrent_get_file_list, torrent_get_name,
-    torrent_get_num_pieces, torrent_get_piece_length, torrent_get_progress,
-    torrent_get_storage_index, torrent_get_total_size, torrent_has_metadata,
-    torrent_set_file_priorities, AddTorrentParams, BaeStorageConstructor, Session, SessionParams,
-    TorrentFileInfo, TorrentHandle,
+    load_torrent_file, parse_magnet_uri, session_add_torrent, session_get_listen_interfaces,
+    session_get_listening_port, session_remove_torrent, set_listen_interfaces, set_seed_mode,
+    torrent_get_file_list, torrent_get_name, torrent_get_num_peers, torrent_get_num_pieces,
+    torrent_get_num_seeds, torrent_get_piece_length, torrent_get_progress,
+    torrent_get_storage_index, torrent_get_total_size, torrent_get_tracker_status,
+    torrent_has_metadata, torrent_set_file_priorities, AddTorrentParams, BaeStorageConstructor,
+    Session, SessionParams, TorrentFileInfo, TorrentHandle,
 };

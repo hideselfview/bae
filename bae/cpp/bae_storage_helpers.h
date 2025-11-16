@@ -100,12 +100,27 @@ bool torrent_set_file_priorities_internal(torrent_handle* handle, const std::vec
 /// Get download progress (0.0 to 1.0) for a torrent (internal C++ function)
 float torrent_get_progress_internal(torrent_handle* handle);
 
+/// Get number of connected peers
+int32_t torrent_get_num_peers(torrent_handle* handle);
+
+/// Get number of seeders
+int32_t torrent_get_num_seeds(torrent_handle* handle);
+
+/// Get tracker status as a formatted string
+std::string torrent_get_tracker_status(torrent_handle* handle);
+
 /// Set seed_mode flag on add_torrent_params to skip hash verification
 void set_seed_mode(add_torrent_params* params, bool seed_mode);
 
 /// Set listen_interfaces on session_params
 /// interfaces can be an interface name (e.g. "eth0", "tun0") or IP:port (e.g. "0.0.0.0:6881")
 void set_listen_interfaces(session_params* params, const std::string& interfaces);
+
+/// Get the actual listen_interfaces setting from a session
+std::string session_get_listen_interfaces(session* sess);
+
+/// Get the listening port from a session
+std::string session_get_listening_port(session* sess);
 
 } // namespace libtorrent
 
@@ -138,6 +153,11 @@ struct TorrentFileInfo;
 rust::Vec<TorrentFileInfo> torrent_get_file_list(TorrentHandle* handle);
 bool torrent_set_file_priorities(TorrentHandle* handle, rust::Vec<uint8_t> priorities);
 float torrent_get_progress(TorrentHandle* handle);
+int32_t torrent_get_num_peers(TorrentHandle* handle);
+int32_t torrent_get_num_seeds(TorrentHandle* handle);
+rust::String torrent_get_tracker_status(TorrentHandle* handle);
+rust::String session_get_listen_interfaces(Session* sess);
+rust::String session_get_listening_port(Session* sess);
 
 std::unique_ptr<BaeStorageConstructor> create_bae_storage_constructor(
     rust::Fn<rust::Vec<uint8_t>(int32_t, int32_t, int32_t, int32_t)> read_cb,

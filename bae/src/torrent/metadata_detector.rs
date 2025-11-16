@@ -59,7 +59,23 @@ async fn wait_for_metadata_files(
     handle: &TorrentHandle,
     metadata_paths: &[PathBuf],
 ) -> Result<Vec<PathBuf>, TorrentMetadataError> {
+    use std::time::{Duration, Instant};
+
+    let start_time = Instant::now();
+    let timeout = Duration::from_secs(60); // 60 second timeout
+
     loop {
+        // Check timeout
+        if start_time.elapsed() > timeout {
+            warn!("Timeout waiting for metadata files after {:?}", timeout);
+            return Err(TorrentMetadataError::Torrent(
+                crate::torrent::client::TorrentError::Libtorrent(format!(
+                    "Timeout waiting for metadata files after {:?}",
+                    timeout
+                )),
+            ));
+        }
+
         let progress = handle.progress().await?;
 
         // Check if any metadata files are complete
@@ -75,7 +91,6 @@ async fn wait_for_metadata_files(
                 .collect();
 
             if !completed.is_empty() {
-                info!("Metadata files downloaded: {:?}", completed);
                 return Ok(completed);
             }
         }
@@ -93,10 +108,14 @@ async fn wait_for_metadata_files(
 pub async fn detect_metadata_from_torrent_file(
     handle: &TorrentHandle,
 ) -> Result<Option<FolderMetadata>, TorrentMetadataError> {
+    info!("Starting metadata detection from torrent file");
+
     // Use system temp directory for downloads
     let temp_path = std::env::temp_dir();
+    info!("Using temp directory: {:?}", temp_path);
 
     // Prioritize and download metadata files
+    info!("Prioritizing metadata files...");
     let metadata_files = prioritize_metadata_files(handle).await?;
 
     if metadata_files.is_empty() {
@@ -110,9 +129,15 @@ pub async fn detect_metadata_from_torrent_file(
     );
 
     // Wait for metadata files to download
-    wait_for_metadata_files(handle, &metadata_files).await?;
-
-    info!("Metadata files downloaded, extracting...");
+    match wait_for_metadata_files(handle, &metadata_files).await {
+        Ok(_files) => {
+            // Metadata files downloaded
+        }
+        Err(e) => {
+            warn!("Failed to download metadata files: {}", e);
+            return Ok(None);
+        }
+    }
 
     // Get torrent name to construct the full save directory path
     // With default storage, files are written to temp_path/torrent_name/
@@ -124,13 +149,13 @@ pub async fn detect_metadata_from_torrent_file(
 
     // Try to detect metadata from the save directory
     if save_dir.exists() {
-        match detect_metadata(save_dir) {
+        match detect_metadata(save_dir.clone()) {
             Ok(metadata) => {
                 info!("Successfully detected metadata from torrent CUE/log files");
                 Ok(Some(metadata))
             }
             Err(e) => {
-                warn!("Failed to detect metadata: {}", e);
+                warn!("Failed to detect metadata from {:?}: {}", save_dir, e);
                 Ok(None)
             }
         }

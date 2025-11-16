@@ -5,14 +5,15 @@
 // The libtorrent-rs crate (v0.1.1) provides a minimal API. We use what's available
 // and parse bencoded data for additional torrent metadata.
 
-use crate::torrent::ffi;
+use crate::torrent::ffi::{
+    self, session_add_torrent, session_remove_torrent, set_listen_interfaces, torrent_get_file_list,
+};
 use crate::torrent::ffi::{
     create_session_params_default, create_session_params_with_storage, create_session_with_params,
-    get_session_ptr, load_torrent_file, parse_magnet_uri, session_add_torrent,
-    session_remove_torrent, set_listen_interfaces, torrent_get_file_list, torrent_get_name,
-    torrent_get_num_pieces, torrent_get_piece_length, torrent_get_progress,
-    torrent_get_storage_index, torrent_get_total_size, torrent_has_metadata,
-    torrent_set_file_priorities, AddTorrentParams, Session, TorrentFileInfo,
+    get_session_ptr, load_torrent_file, parse_magnet_uri, torrent_get_name, torrent_get_num_peers,
+    torrent_get_num_pieces, torrent_get_num_seeds, torrent_get_piece_length, torrent_get_progress,
+    torrent_get_storage_index, torrent_get_total_size, torrent_get_tracker_status,
+    torrent_has_metadata, torrent_set_file_priorities, AddTorrentParams, Session, TorrentFileInfo,
     TorrentHandle as FfiTorrentHandle,
 };
 use crate::torrent::storage::{create_bae_storage_constructor, BaeStorage};
@@ -551,6 +552,54 @@ impl TorrentHandle {
         Ok(progress)
     }
 
+    /// Get number of connected peers
+    pub async fn num_peers(&self) -> Result<i32, TorrentError> {
+        let handle_guard = self.handle.0.read().await;
+        let handle_ptr = *handle_guard;
+        if handle_ptr.is_null() {
+            return Err(TorrentError::Libtorrent(
+                "Invalid torrent handle".to_string(),
+            ));
+        }
+
+        let num_peers = unsafe { torrent_get_num_peers(handle_ptr) };
+        drop(handle_guard);
+
+        Ok(num_peers)
+    }
+
+    /// Get number of seeders
+    pub async fn num_seeds(&self) -> Result<i32, TorrentError> {
+        let handle_guard = self.handle.0.read().await;
+        let handle_ptr = *handle_guard;
+        if handle_ptr.is_null() {
+            return Err(TorrentError::Libtorrent(
+                "Invalid torrent handle".to_string(),
+            ));
+        }
+
+        let num_seeds = unsafe { torrent_get_num_seeds(handle_ptr) };
+        drop(handle_guard);
+
+        Ok(num_seeds)
+    }
+
+    /// Get tracker status as a formatted string
+    pub async fn tracker_status(&self) -> Result<String, TorrentError> {
+        let handle_guard = self.handle.0.read().await;
+        let handle_ptr = *handle_guard;
+        if handle_ptr.is_null() {
+            return Err(TorrentError::Libtorrent(
+                "Invalid torrent handle".to_string(),
+            ));
+        }
+
+        let status = unsafe { torrent_get_tracker_status(handle_ptr) };
+        drop(handle_guard);
+
+        Ok(status)
+    }
+
     /// Read a piece of data from our custom storage
     ///
     /// Wait for metadata to be available
@@ -591,14 +640,78 @@ fn apply_options_to_session_params(
     session_params: &mut UniquePtr<ffi::SessionParams>,
     options: &TorrentClientOptions,
 ) {
+    use tracing::{info, warn};
+
     if let Some(interface) = &options.bind_interface {
+        // Check if interface already includes a port (IP:port or interface:port format)
+        let listen_interface = if interface.contains(':') {
+            // Already in IP:port or interface:port format
+            interface.clone()
+        } else {
+            // Just interface name - need to get IP and add port
+            match get_interface_ip_and_format(interface) {
+                Ok(formatted) => {
+                    info!(
+                        "Resolved interface '{}' to listen address: {}",
+                        interface, formatted
+                    );
+                    formatted
+                }
+                Err(e) => {
+                    warn!("Failed to resolve IP for interface '{}': {}. Using interface:port format instead.", interface, e);
+                    // Fallback: use interface:port format (libtorrent will try to resolve it)
+                    format!("{}:6881", interface)
+                }
+            }
+        };
+
+        info!(
+            "Configuring torrent session to bind to: {}",
+            listen_interface
+        );
         unsafe {
             if let Some(pinned_params) = session_params.as_mut() {
                 let params_ptr = std::pin::Pin::get_unchecked_mut(pinned_params) as *mut _;
-                set_listen_interfaces(params_ptr, interface);
+                set_listen_interfaces(params_ptr, &listen_interface);
+            }
+        }
+    } else {
+        info!("Torrent session using default network binding (no interface specified)");
+    }
+}
+
+/// Get the IP address of a network interface and format it as IP:port for libtorrent
+fn get_interface_ip_and_format(interface_name: &str) -> Result<String, String> {
+    use if_addrs::get_if_addrs;
+
+    let interfaces =
+        get_if_addrs().map_err(|e| format!("Failed to enumerate interfaces: {}", e))?;
+
+    // Find the interface by name, prefer IPv4 addresses
+    let mut ipv4_addr = None;
+    let mut ipv6_addr = None;
+
+    for iface in interfaces {
+        if iface.name == interface_name {
+            let ip = iface.addr.ip();
+            if ip.is_ipv4() && ipv4_addr.is_none() {
+                ipv4_addr = Some(ip);
+            } else if ip.is_ipv6() && ipv6_addr.is_none() {
+                ipv6_addr = Some(ip);
             }
         }
     }
+
+    // Prefer IPv4, fallback to IPv6
+    let ip = ipv4_addr.or(ipv6_addr).ok_or_else(|| {
+        format!(
+            "Interface '{}' not found or has no IP address",
+            interface_name
+        )
+    })?;
+
+    // Use port 0 to let libtorrent choose an available port
+    Ok(format!("{}:0", ip))
 }
 
 /// Create empty storage registry and index map
@@ -636,6 +749,8 @@ fn create_session_from_params(
     options: &TorrentClientOptions,
     storage_type: &str,
 ) -> Result<SessionArc, TorrentError> {
+    use tracing::info;
+
     let mut params = session_params;
     // Apply options to session_params
     apply_options_to_session_params(&mut params, options);
@@ -649,5 +764,24 @@ fn create_session_from_params(
         )));
     }
 
-    Ok(Rc::new(RwLock::new(session)))
+    // Log actual listening interface/port after session creation
+    let session_arc = Rc::new(RwLock::new(session));
+    {
+        // Note: We can't await here since this is a sync function, but we can
+        // still log what we configured. The actual verification would need to happen
+        // asynchronously after the session is created.
+        if let Some(expected_interface) = &options.bind_interface {
+            info!(
+                "Session created ({}): configured to bind to interface '{}'",
+                storage_type, expected_interface
+            );
+        } else {
+            info!(
+                "Session created ({}): using default network binding",
+                storage_type
+            );
+        }
+    }
+
+    Ok(session_arc)
 }
