@@ -1,18 +1,16 @@
-use super::file_list::{FileInfo, FileList};
-use super::handlers::{handle_confirmation, handle_metadata_detection};
+use super::file_list::FileList;
 use super::inputs::FolderSelector;
 use super::shared::{Confirmation, ErrorDisplay, ExactLookup, ManualSearch};
 use crate::import::MatchCandidate;
-use crate::library::{use_import_service, use_library_manager};
+use crate::ui::components::import::ImportSource;
 use crate::ui::import_context::{ImportContext, ImportPhase};
 use dioxus::prelude::*;
 use std::rc::Rc;
+use tracing::warn;
 
 #[component]
 pub fn FolderImport() -> Element {
     let import_context = use_context::<Rc<ImportContext>>();
-    let library_manager = use_library_manager();
-    let import_service = use_import_service();
     let navigator = use_navigator();
 
     // Get signals via getters (signals are Copy)
@@ -29,115 +27,29 @@ pub fn FolderImport() -> Element {
     let folder_files = import_context.folder_files();
 
     let on_folder_select = {
-        let import_context_for_detect = import_context.clone();
-
+        let import_context = import_context.clone();
         move |path: String| {
-            import_context_for_detect.set_folder_path(path.clone());
-            import_context_for_detect.set_detected_metadata(None);
-            import_context_for_detect.set_exact_match_candidates(Vec::new());
-            import_context_for_detect.set_selected_match_index(None);
-            import_context_for_detect.set_confirmed_candidate(None);
-            import_context_for_detect.set_import_error_message(None);
-            import_context_for_detect.set_duplicate_album_id(None);
-            import_context_for_detect.set_import_phase(ImportPhase::MetadataDetection);
-            import_context_for_detect.set_is_detecting(true);
-
-            // Read files from folder
-            let folder_path_clone = path.clone();
-            let import_context_for_files = import_context_for_detect.clone();
+            let import_context = import_context.clone();
             spawn(async move {
-                let mut files = Vec::new();
-                if let Ok(entries) = std::fs::read_dir(&folder_path_clone) {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if path.is_file() {
-                            let name = path
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or("unknown")
-                                .to_string();
-                            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-                            let format = path
-                                .extension()
-                                .and_then(|e| e.to_str())
-                                .unwrap_or("")
-                                .to_uppercase();
-                            files.push(FileInfo { name, size, format });
-                        }
-                    }
-                    files.sort_by(|a, b| a.name.cmp(&b.name));
-                }
-                import_context_for_files.set_folder_files(files);
-            });
-
-            let import_context_for_detect = import_context_for_detect.clone();
-            let detected_metadata = import_context_for_detect.detected_metadata();
-            let is_looking_up = import_context_for_detect.is_looking_up();
-            let confirmed_candidate = import_context_for_detect.confirmed_candidate();
-            let exact_match_candidates = import_context_for_detect.exact_match_candidates();
-            let search_query = import_context_for_detect.search_query();
-            let import_phase = import_context_for_detect.import_phase();
-
-            spawn(async move {
-                // Detect metadata
-                let metadata_result = import_context_for_detect
-                    .detect_folder_metadata(path.clone())
-                    .await;
-
-                match metadata_result {
-                    Ok(metadata) => {
-                        import_context_for_detect.set_is_detecting(false);
-                        handle_metadata_detection(
-                            Some(metadata),
-                            path.clone(),
-                            detected_metadata,
-                            is_looking_up,
-                            exact_match_candidates,
-                            search_query,
-                            import_phase,
-                            confirmed_candidate,
-                        )
-                        .await;
-                    }
-                    Err(e) => {
-                        import_context_for_detect.set_import_error_message(Some(e));
-                        import_context_for_detect.set_is_detecting(false);
-                        import_context_for_detect.set_import_phase(ImportPhase::FolderSelection);
-                    }
+                if let Err(e) = import_context.load_folder_for_import(path).await {
+                    warn!("Failed to load folder: {}", e);
                 }
             });
         }
     };
 
     let on_confirm_from_manual = {
-        let import_context_for_reset = import_context.clone();
-        let library_manager = library_manager.clone();
-        let import_service = import_service.clone();
+        let import_context = import_context.clone();
         move |candidate: MatchCandidate| {
-            let folder = folder_path.read().clone();
-            let metadata = detected_metadata.read().clone();
-            let import_service = import_service.clone();
-            let duplicate_album_id = duplicate_album_id;
-            let import_error_message = import_error_message;
-            let import_context_for_reset = import_context_for_reset.clone();
-            let library_manager = library_manager.clone();
-
+            let import_context = import_context.clone();
+            let navigator = navigator;
             spawn(async move {
-                handle_confirmation(
-                    candidate,
-                    folder,
-                    metadata,
-                    crate::ui::components::import::ImportSource::Folder,
-                    None,
-                    false,
-                    import_context_for_reset,
-                    library_manager,
-                    import_service,
-                    navigator,
-                    duplicate_album_id,
-                    import_error_message,
-                )
-                .await;
+                if let Err(e) = import_context
+                    .confirm_and_start_import(candidate, ImportSource::Folder, navigator)
+                    .await
+                {
+                    warn!("Failed to confirm and start import: {}", e);
+                }
             });
         }
     };
@@ -210,11 +122,7 @@ pub fn FolderImport() -> Element {
                             on_select: {
                                 let import_context = import_context.clone();
                                 move |index| {
-                                    import_context.set_selected_match_index(Some(index));
-                                    if let Some(candidate) = import_context.exact_match_candidates().read().get(index) {
-                                        import_context.set_confirmed_candidate(Some(candidate.clone()));
-                                        import_context.set_import_phase(ImportPhase::Confirmation);
-                                    }
+                                    import_context.select_exact_match(index);
                                 }
                             },
                         }
@@ -234,8 +142,7 @@ pub fn FolderImport() -> Element {
                             on_confirm: {
                                 let import_context = import_context.clone();
                                 move |candidate: MatchCandidate| {
-                                    import_context.set_confirmed_candidate(Some(candidate.clone()));
-                                    import_context.set_import_phase(ImportPhase::Confirmation);
+                                    import_context.confirm_candidate(candidate);
                                 }
                             },
                         }
@@ -248,26 +155,7 @@ pub fn FolderImport() -> Element {
                             on_edit: {
                                 let import_context = import_context.clone();
                                 move |_| {
-                                    import_context.set_confirmed_candidate(None);
-                                    import_context.set_selected_match_index(None);
-                                    if !import_context.exact_match_candidates().read().is_empty() {
-                                        import_context.set_import_phase(ImportPhase::ExactLookup);
-                                    } else {
-                                        // Initialize search query from detected metadata when transitioning to manual search
-                                        if let Some(metadata) = import_context.detected_metadata().read().as_ref() {
-                                            let mut query_parts = Vec::new();
-                                            if let Some(ref artist) = metadata.artist {
-                                                query_parts.push(artist.clone());
-                                            }
-                                            if let Some(ref album) = metadata.album {
-                                                query_parts.push(album.clone());
-                                            }
-                                            if !query_parts.is_empty() {
-                                                import_context.set_search_query(query_parts.join(" "));
-                                            }
-                                        }
-                                        import_context.set_import_phase(ImportPhase::ManualSearch);
-                                    }
+                                    import_context.reject_confirmation();
                                 }
                             },
                             on_confirm: {

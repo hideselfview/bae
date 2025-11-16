@@ -1,19 +1,16 @@
-use super::handlers::handle_confirmation;
 use super::inputs::CdRipper;
 use super::shared::{Confirmation, ErrorDisplay, ExactLookup, ManualSearch};
-use crate::import::{MatchCandidate, MatchSource};
-use crate::library::{use_import_service, use_library_manager};
-use crate::musicbrainz::lookup_by_discid;
+use crate::import::MatchCandidate;
+use crate::ui::components::import::ImportSource;
 use crate::ui::import_context::{ImportContext, ImportPhase};
 use dioxus::prelude::*;
 use std::path::PathBuf;
 use std::rc::Rc;
+use tracing::warn;
 
 #[component]
 pub fn CdImport() -> Element {
     let import_context = use_context::<Rc<ImportContext>>();
-    let library_manager = use_library_manager();
-    let import_service = use_import_service();
     let navigator = use_navigator();
 
     // Get signals via getters (signals are Copy)
@@ -30,25 +27,18 @@ pub fn CdImport() -> Element {
 
     let on_drive_select = {
         let import_context = import_context.clone();
+        let cd_toc_info_local = cd_toc_info;
         move |drive_path: PathBuf| {
-            import_context.set_folder_path(drive_path.to_string_lossy().to_string());
-            import_context.set_import_phase(ImportPhase::ExactLookup);
-            import_context.set_is_looking_up(true);
-            import_context.set_exact_match_candidates(Vec::new());
-            import_context.set_detected_metadata(None);
-            import_context.set_import_error_message(None);
-
-            // Read TOC from CD and look up by DiscID
-            let drive_path_clone = drive_path.clone();
-            let mut cd_toc_info_async = cd_toc_info;
-            let import_context_async = import_context.clone();
+            let import_context = import_context.clone();
+            let drive_path_str = drive_path.to_string_lossy().to_string();
+            let mut cd_toc_info_async = cd_toc_info_local;
 
             spawn(async move {
                 use crate::cd::CdDrive;
 
                 let drive = CdDrive {
-                    device_path: drive_path_clone.clone(),
-                    name: drive_path_clone.to_string_lossy().to_string(),
+                    device_path: drive_path.clone(),
+                    name: drive_path_str.clone(),
                 };
 
                 match drive.read_toc() {
@@ -60,53 +50,17 @@ pub fn CdImport() -> Element {
                             toc.last_track,
                         )));
 
-                        // Look up by DiscID
-                        match lookup_by_discid(&toc.disc_id).await {
-                            Ok((matches, _external_urls)) => {
-                                import_context_async.set_is_looking_up(false);
-                                if matches.is_empty() {
-                                    // No exact match, go to manual search
-                                    import_context_async
-                                        .set_import_phase(ImportPhase::ManualSearch);
-                                    import_context_async
-                                        .set_search_query(format!("DiscID: {}", toc.disc_id));
-                                } else if matches.len() == 1 {
-                                    // Single exact match, convert to MatchCandidate and auto-confirm
-                                    let mb_release = matches[0].clone();
-                                    let candidate = MatchCandidate {
-                                        source: MatchSource::MusicBrainz(mb_release),
-                                        confidence: 100.0, // Exact DiscID match
-                                        match_reasons: vec!["Exact DiscID match".to_string()],
-                                    };
-                                    import_context_async.set_confirmed_candidate(Some(candidate));
-                                    import_context_async
-                                        .set_import_phase(ImportPhase::Confirmation);
-                                } else {
-                                    // Multiple matches, convert to MatchCandidates and show selection
-                                    let candidates: Vec<MatchCandidate> = matches
-                                        .into_iter()
-                                        .map(|mb_release| MatchCandidate {
-                                            source: MatchSource::MusicBrainz(mb_release),
-                                            confidence: 100.0, // Exact DiscID match
-                                            match_reasons: vec!["Exact DiscID match".to_string()],
-                                        })
-                                        .collect();
-                                    import_context_async.set_exact_match_candidates(candidates);
-                                }
-                            }
-                            Err(e) => {
-                                import_context_async.set_is_looking_up(false);
-                                import_context_async.set_import_error_message(Some(format!(
-                                    "Failed to look up DiscID: {}",
-                                    e
-                                )));
-                                import_context_async.set_import_phase(ImportPhase::ManualSearch);
-                            }
+                        // Load CD for import using high-level method
+                        if let Err(e) = import_context
+                            .load_cd_for_import(drive_path_str, toc.disc_id)
+                            .await
+                        {
+                            warn!("Failed to load CD: {}", e);
                         }
                     }
                     Err(e) => {
-                        import_context_async.set_is_looking_up(false);
-                        import_context_async.set_import_error_message(Some(format!(
+                        import_context.set_is_looking_up(false);
+                        import_context.set_import_error_message(Some(format!(
                             "Failed to read CD TOC: {}",
                             e
                         )));
@@ -117,35 +71,17 @@ pub fn CdImport() -> Element {
     };
 
     let on_confirm_from_manual = {
-        let import_context_for_reset = import_context.clone();
-        let library_manager = library_manager.clone();
-        let import_service = import_service.clone();
-        let detected_metadata_signal = detected_metadata;
+        let import_context = import_context.clone();
         move |candidate: MatchCandidate| {
-            let folder = folder_path.read().clone();
-            let metadata = detected_metadata_signal.read().clone();
-            let import_service = import_service.clone();
-            let duplicate_album_id = duplicate_album_id;
-            let import_error_message = import_error_message;
-            let import_context_for_reset = import_context_for_reset.clone();
-            let library_manager = library_manager.clone();
-
+            let import_context = import_context.clone();
+            let navigator = navigator;
             spawn(async move {
-                handle_confirmation(
-                    candidate,
-                    folder,
-                    metadata,
-                    crate::ui::components::import::ImportSource::Cd,
-                    None,
-                    false,
-                    import_context_for_reset,
-                    library_manager,
-                    import_service,
-                    navigator,
-                    duplicate_album_id,
-                    import_error_message,
-                )
-                .await;
+                if let Err(e) = import_context
+                    .confirm_and_start_import(candidate, ImportSource::Cd, navigator)
+                    .await
+                {
+                    warn!("Failed to confirm and start import: {}", e);
+                }
             });
         }
     };
@@ -225,11 +161,7 @@ pub fn CdImport() -> Element {
                             on_select: {
                                 let import_context = import_context.clone();
                                 move |index| {
-                                    import_context.set_selected_match_index(Some(index));
-                                    if let Some(candidate) = import_context.exact_match_candidates().read().get(index) {
-                                        import_context.set_confirmed_candidate(Some(candidate.clone()));
-                                        import_context.set_import_phase(ImportPhase::Confirmation);
-                                    }
+                                    import_context.select_exact_match(index);
                                 }
                             },
                         }
@@ -249,8 +181,7 @@ pub fn CdImport() -> Element {
                             on_confirm: {
                                 let import_context = import_context.clone();
                                 move |candidate: MatchCandidate| {
-                                    import_context.set_confirmed_candidate(Some(candidate.clone()));
-                                    import_context.set_import_phase(ImportPhase::Confirmation);
+                                    import_context.confirm_candidate(candidate);
                                 }
                             },
                         }
@@ -263,13 +194,7 @@ pub fn CdImport() -> Element {
                             on_edit: {
                                 let import_context = import_context.clone();
                                 move || {
-                                    import_context.set_confirmed_candidate(None);
-                                    import_context.set_selected_match_index(None);
-                                    if !import_context.exact_match_candidates().read().is_empty() {
-                                        import_context.set_import_phase(ImportPhase::ExactLookup);
-                                    } else {
-                                        import_context.set_import_phase(ImportPhase::ManualSearch);
-                                    }
+                                    import_context.reject_confirmation();
                                 }
                             },
                             on_confirm: {

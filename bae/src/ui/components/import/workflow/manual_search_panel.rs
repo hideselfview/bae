@@ -36,7 +36,6 @@ pub fn ManualSearchPanel(
             let import_context_clone = import_context.clone();
             let query = search_query.read().clone();
             let source = search_source.read().clone();
-            let metadata = detected_metadata.read().clone();
             let mut is_searching_clone = is_searching;
             let mut error_message_clone = error_message;
             let mut match_candidates_clone = match_candidates;
@@ -44,47 +43,21 @@ pub fn ManualSearchPanel(
             spawn(async move {
                 use tracing::info;
 
-                match source {
-                    SearchSource::MusicBrainz => {
-                        info!("Searching MusicBrainz with query: {}", query);
-                        if let Some(ref meta) = metadata {
-                            match import_context_clone
-                                .search_musicbrainz_by_metadata(meta)
-                                .await
-                            {
-                                Ok(results) => {
-                                    use crate::import::rank_mb_matches;
-                                    let ranked = rank_mb_matches(meta, results);
-                                    match_candidates_clone.set(ranked);
-                                }
-                                Err(e) => {
-                                    error_message_clone
-                                        .set(Some(format!("MusicBrainz search failed: {}", e)));
-                                }
-                            }
-                        } else {
-                            error_message_clone
-                                .set(Some("No metadata available for search".to_string()));
-                        }
+                info!(
+                    "Searching {} with query: {}",
+                    match source {
+                        SearchSource::MusicBrainz => "MusicBrainz",
+                        SearchSource::Discogs => "Discogs",
+                    },
+                    query
+                );
+
+                match import_context_clone.search_for_matches(query, source).await {
+                    Ok(candidates) => {
+                        match_candidates_clone.set(candidates);
                     }
-                    SearchSource::Discogs => {
-                        info!("Searching Discogs with query: {}", query);
-                        if let Some(ref meta) = metadata {
-                            match import_context_clone.search_discogs_by_metadata(meta).await {
-                                Ok(results) => {
-                                    use crate::import::rank_discogs_matches;
-                                    let ranked = rank_discogs_matches(meta, results);
-                                    match_candidates_clone.set(ranked);
-                                }
-                                Err(e) => {
-                                    error_message_clone
-                                        .set(Some(format!("Discogs search failed: {}", e)));
-                                }
-                            }
-                        } else {
-                            error_message_clone
-                                .set(Some("No metadata available for search".to_string()));
-                        }
+                    Err(e) => {
+                        error_message_clone.set(Some(format!("Search failed: {}", e)));
                     }
                 }
 
@@ -109,7 +82,6 @@ pub fn ManualSearchPanel(
                 let import_context_clone = import_context.clone();
                 let query = search_query.read().clone();
                 let source = search_source.read().clone();
-                let metadata = detected_metadata.read().clone();
                 let mut is_searching_clone = is_searching;
                 let mut error_message_clone = error_message;
                 let mut match_candidates_clone = match_candidates;
@@ -117,47 +89,21 @@ pub fn ManualSearchPanel(
                 spawn(async move {
                     use tracing::info;
 
-                    match source {
-                        SearchSource::MusicBrainz => {
-                            info!("Searching MusicBrainz with query: {}", query);
-                            if let Some(ref meta) = metadata {
-                                match import_context_clone
-                                    .search_musicbrainz_by_metadata(meta)
-                                    .await
-                                {
-                                    Ok(results) => {
-                                        use crate::import::rank_mb_matches;
-                                        let ranked = rank_mb_matches(meta, results);
-                                        match_candidates_clone.set(ranked);
-                                    }
-                                    Err(e) => {
-                                        error_message_clone
-                                            .set(Some(format!("MusicBrainz search failed: {}", e)));
-                                    }
-                                }
-                            } else {
-                                error_message_clone
-                                    .set(Some("No metadata available for search".to_string()));
-                            }
+                    info!(
+                        "Searching {} with query: {}",
+                        match source {
+                            SearchSource::MusicBrainz => "MusicBrainz",
+                            SearchSource::Discogs => "Discogs",
+                        },
+                        query
+                    );
+
+                    match import_context_clone.search_for_matches(query, source).await {
+                        Ok(candidates) => {
+                            match_candidates_clone.set(candidates);
                         }
-                        SearchSource::Discogs => {
-                            info!("Searching Discogs with query: {}", query);
-                            if let Some(ref meta) = metadata {
-                                match import_context_clone.search_discogs_by_metadata(meta).await {
-                                    Ok(results) => {
-                                        use crate::import::rank_discogs_matches;
-                                        let ranked = rank_discogs_matches(meta, results);
-                                        match_candidates_clone.set(ranked);
-                                    }
-                                    Err(e) => {
-                                        error_message_clone
-                                            .set(Some(format!("Discogs search failed: {}", e)));
-                                    }
-                                }
-                            } else {
-                                error_message_clone
-                                    .set(Some("No metadata available for search".to_string()));
-                            }
+                        Err(e) => {
+                            error_message_clone.set(Some(format!("Search failed: {}", e)));
                         }
                     }
 

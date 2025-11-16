@@ -1,11 +1,11 @@
 use crate::cache::CacheManager;
 use crate::db::{Database, DbTorrent, DbTorrentPieceMapping};
-use crate::import::TorrentSource;
+use crate::import::{FolderMetadata, TorrentFileMetadata, TorrentSource};
 use crate::torrent::client::{TorrentClient, TorrentError, TorrentHandle};
 use crate::torrent::{BaeStorage, TorrentPieceMapper};
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[derive(Error, Debug)]
 pub enum SeederError {
@@ -19,6 +19,18 @@ pub enum SeederError {
     PieceMapping(String),
 }
 
+/// Complete torrent information for import preparation
+#[derive(Debug, Clone)]
+pub struct TorrentImportInfo {
+    pub info_hash: String,
+    pub torrent_name: String,
+    pub total_size_bytes: u64,
+    pub piece_length: u32,
+    pub num_pieces: u32,
+    pub file_list: Vec<TorrentFileMetadata>,
+    pub detected_metadata: Option<FolderMetadata>,
+}
+
 /// Commands sent to the torrent manager service
 pub enum TorrentManagerCommand {
     // Download/metadata operations (use download_client)
@@ -30,6 +42,10 @@ pub enum TorrentManagerCommand {
         handle: TorrentHandle,
         delete_files: bool,
         response_tx: oneshot::Sender<Result<(), TorrentError>>,
+    },
+    PrepareImportTorrent {
+        source: TorrentSource,
+        response_tx: oneshot::Sender<Result<TorrentImportInfo, TorrentError>>,
     },
 
     // Seeding operations (use seeding_client)
@@ -122,6 +138,23 @@ impl TorrentManagerHandle {
             ))
         })?
     }
+
+    /// Prepare a torrent for import: add, wait for metadata, query all info, detect metadata
+    pub async fn prepare_import_torrent(
+        &self,
+        source: TorrentSource,
+    ) -> Result<TorrentImportInfo, TorrentError> {
+        let (tx, rx) = oneshot::channel();
+        self.command_tx
+            .send(TorrentManagerCommand::PrepareImportTorrent {
+                source,
+                response_tx: tx,
+            })
+            .map_err(|_| TorrentError::Libtorrent("TorrentManager channel closed".to_string()))?;
+        rx.await.map_err(|_| {
+            TorrentError::Libtorrent("TorrentManager response channel closed".to_string())
+        })?
+    }
 }
 
 /// Manages all torrent operations (downloads, metadata detection, seeding)
@@ -211,6 +244,13 @@ impl TorrentManager {
                             .remove_torrent_and_keep_data(&handle)
                             .await
                     };
+                    let _ = response_tx.send(result);
+                }
+                Some(TorrentManagerCommand::PrepareImportTorrent {
+                    source,
+                    response_tx,
+                }) => {
+                    let result = self.prepare_import_torrent_handler(source).await;
                     let _ = response_tx.send(result);
                 }
                 Some(TorrentManagerCommand::StartSeeding {
@@ -392,5 +432,66 @@ impl TorrentManager {
             .database
             .update_torrent_seeding(torrent_id, is_seeding)
             .await?)
+    }
+
+    /// Handle PrepareImportTorrent command: add torrent, query all info, detect metadata
+    async fn prepare_import_torrent_handler(
+        &self,
+        source: TorrentSource,
+    ) -> Result<TorrentImportInfo, TorrentError> {
+        use crate::torrent::detect_metadata_from_torrent_file;
+
+        // Add torrent
+        let torrent_handle = match source {
+            TorrentSource::File(path) => self.download_client.add_torrent_file(&path).await?,
+            TorrentSource::MagnetLink(magnet) => {
+                self.download_client.add_magnet_link(&magnet).await?
+            }
+        };
+
+        // Wait for metadata
+        torrent_handle.wait_for_metadata().await?;
+
+        // Query all torrent info
+        let info_hash = torrent_handle.info_hash().await;
+        let torrent_name = torrent_handle.name().await?;
+        let total_size = torrent_handle.total_size().await? as u64;
+        let piece_length = torrent_handle.piece_length().await? as u32;
+        let num_pieces = torrent_handle.num_pieces().await? as u32;
+
+        // Get file list
+        let torrent_files = torrent_handle.get_file_list().await?;
+        let file_list: Vec<TorrentFileMetadata> = torrent_files
+            .iter()
+            .map(|tf| TorrentFileMetadata {
+                path: tf.path.clone(),
+                size: tf.size,
+            })
+            .collect();
+
+        // Detect metadata from CUE/log files
+        let detected_metadata = match detect_metadata_from_torrent_file(&torrent_handle).await {
+            Ok(metadata) => metadata,
+            Err(e) => {
+                warn!("Failed to detect metadata from torrent: {}", e);
+                None
+            }
+        };
+
+        // Remove torrent (temporary, only used for metadata detection)
+        // ImportService will re-add it for actual download
+        self.download_client
+            .remove_torrent_and_delete_data(&torrent_handle)
+            .await?;
+
+        Ok(TorrentImportInfo {
+            info_hash,
+            torrent_name,
+            total_size_bytes: total_size,
+            piece_length,
+            num_pieces,
+            file_list,
+            detected_metadata,
+        })
     }
 }

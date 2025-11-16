@@ -1,7 +1,6 @@
 mod cd_import;
 mod file_list;
 mod folder_import;
-mod handlers;
 mod inputs;
 mod manual_search_panel;
 mod match_item;
@@ -14,3 +13,4 @@ mod torrent_import;
 
 pub use file_list::FileInfo;
 pub use page::ImportPage;
+pub use source_selector::SearchSource;
