@@ -4,7 +4,7 @@
 //! from torrents for automatic release matching, separate from the main import flow.
 
 use crate::import::{detect_metadata, FolderMetadata};
-use crate::torrent::client::{TorrentClient, TorrentHandle};
+use crate::torrent::client::TorrentHandle;
 use crate::torrent::selective_downloader::SelectiveDownloader;
 use thiserror::Error;
 use tracing::{info, warn};
@@ -27,13 +27,12 @@ pub enum TorrentMetadataError {
 /// This is separate from the main import flow and doesn't use custom storage.
 pub async fn detect_metadata_from_torrent_file(
     handle: &TorrentHandle,
-    client: &TorrentClient,
 ) -> Result<Option<FolderMetadata>, TorrentMetadataError> {
     // Use system temp directory for downloads
     let temp_path = std::env::temp_dir();
 
     // Prioritize and download metadata files
-    let selective_downloader = SelectiveDownloader::new(client.clone());
+    let selective_downloader = SelectiveDownloader::new();
     let metadata_files = selective_downloader
         .prioritize_metadata_files(handle)
         .await?;

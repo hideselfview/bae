@@ -6,7 +6,7 @@ use rfd::AsyncFileDialog;
 use tracing::error;
 
 use super::super::use_playback_service;
-use super::super::use_torrent_seeder;
+use super::super::use_torrent_manager;
 use super::album_art::AlbumArt;
 use super::track_row::TrackRow;
 use super::utils::get_album_track_ids;
@@ -27,7 +27,7 @@ pub fn AlbumDetailView(
     let playback = use_playback_service();
     let library_manager = use_library_manager();
     let app_context = use_context::<AppContext>();
-    let torrent_seeder = use_torrent_seeder();
+    let torrent_manager = use_torrent_manager();
     let mut show_delete_confirm = use_signal(|| false);
     let mut show_release_delete_confirm = use_signal(|| None::<String>);
     let mut is_deleting = use_signal(|| false);
@@ -474,7 +474,7 @@ pub fn AlbumDetailView(
                                                                     let release_id_for_export = release_id_for_delete.clone();
                                                                     let release_id_for_view_files = release_id_for_delete.clone();
                                                                     let release_id_for_seeding = release_id_for_delete.clone();
-                                                                    let torrent_seeder_clone = torrent_seeder.clone();
+                                                                    let torrent_manager_clone = torrent_manager.clone();
                                                                     let torrents = torrents_resource
                                                                         .value()
                                                                         .read()
@@ -505,15 +505,19 @@ pub fn AlbumDetailView(
                                                                                         class: "w-full px-4 py-2 text-left text-white hover:bg-gray-600 transition-colors flex items-center gap-2 text-sm",
                                                                                         disabled: is_deleting() || is_exporting(),
                                                                                         onclick: {
-                                                                                            let release_id = release_id_for_seeding.clone();
-                                                                                            let seeder = torrent_seeder_clone.clone();
-                                                                                            let mut torrents_resource_clone = torrents_resource;
+                                                                                            let release_id_clone = release_id_for_seeding.clone();
+                                                                                            let manager_clone = torrent_manager_clone.clone();
+                                                                                            let mut torrents_resource_clone = torrents_resource.clone();
                                                                                             move |evt| {
                                                                                                 evt.stop_propagation();
                                                                                                 show_release_dropdown.set(None);
                                                                                                 if !is_deleting() && !is_exporting() {
-                                                                                                    seeder.stop_seeding(release_id.clone());
-                                                                                                    torrents_resource_clone.restart();
+                                                                                                    let release_id = release_id_clone.clone();
+                                                                                                    let manager = manager_clone.clone();
+                                                                                                    spawn(async move {
+                                                                                                        let _ = manager.stop_seeding(release_id).await;
+                                                                                                        torrents_resource_clone.restart();
+                                                                                                    });
                                                                                                 }
                                                                                             }
                                                                                         },
@@ -524,15 +528,19 @@ pub fn AlbumDetailView(
                                                                                         class: "w-full px-4 py-2 text-left text-white hover:bg-gray-600 transition-colors flex items-center gap-2 text-sm",
                                                                                         disabled: is_deleting() || is_exporting(),
                                                                                         onclick: {
-                                                                                            let release_id = release_id_for_seeding.clone();
-                                                                                            let seeder = torrent_seeder_clone.clone();
-                                                                                            let mut torrents_resource_clone = torrents_resource;
+                                                                                            let release_id_clone = release_id_for_seeding.clone();
+                                                                                            let manager_clone = torrent_manager_clone.clone();
+                                                                                            let mut torrents_resource_clone = torrents_resource.clone();
                                                                                             move |evt| {
                                                                                                 evt.stop_propagation();
                                                                                                 show_release_dropdown.set(None);
                                                                                                 if !is_deleting() && !is_exporting() {
-                                                                                                    seeder.start_seeding(release_id.clone());
-                                                                                                    torrents_resource_clone.restart();
+                                                                                                    let release_id = release_id_clone.clone();
+                                                                                                    let manager = manager_clone.clone();
+                                                                                                    spawn(async move {
+                                                                                                        let _ = manager.start_seeding(release_id).await;
+                                                                                                        torrents_resource_clone.restart();
+                                                                                                    });
                                                                                                 }
                                                                                             }
                                                                                         },

@@ -16,5 +16,5 @@ pub struct AppContext {
     pub cache: cache::CacheManager,
     pub encryption_service: encryption::EncryptionService,
     pub cloud_storage: cloud_storage::CloudStorageManager,
-    pub torrent_seeder: torrent::TorrentSeederHandle,
+    pub torrent_handle: torrent::TorrentManagerHandle,
 }

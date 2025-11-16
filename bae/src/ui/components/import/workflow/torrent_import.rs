@@ -2,7 +2,7 @@ use super::file_list::{FileInfo, FileList};
 use super::handlers::{handle_confirmation, handle_metadata_detection};
 use super::inputs::TorrentInput;
 use super::shared::{Confirmation, ErrorDisplay, ExactLookup, ManualSearch};
-use crate::import::TorrentSource::File;
+use crate::import::TorrentSource::{self, File};
 use crate::import::{MatchCandidate, TorrentFileMetadata, TorrentImportMetadata};
 use crate::library::{use_import_service, use_library_manager};
 use crate::ui::import_context::{ImportContext, ImportPhase};
@@ -33,10 +33,13 @@ pub fn TorrentImport() -> Element {
             // let path = path.clone();
 
             spawn(async move {
-                let torrent_client = import_context.torrent_client_for_metadata();
-                // Add torrent file using shared client
-                let torrent_handle = match torrent_client.add_torrent_file(&path).await {
-                    Ok(handle) => handle,
+                let torrent_manager = import_context.torrent_manager();
+                // Add torrent file via torrent manager
+                let mut torrent_handle_opt = match torrent_manager
+                    .add_torrent(TorrentSource::File(path.clone()))
+                    .await
+                {
+                    Ok(handle) => Some(handle),
                     Err(e) => {
                         import_context.set_import_error_message(Some(format!(
                             "Failed to add torrent file: {}",
@@ -48,17 +51,12 @@ pub fn TorrentImport() -> Element {
                     }
                 };
 
-                // Ensure torrent is removed on early return
-                let cleanup_torrent = || async {
-                    let _ = import_context
-                        .torrent_client_for_metadata()
-                        .remove_torrent_and_delete_data(&torrent_handle)
-                        .await;
-                };
-
                 // Wait for metadata (immediate for torrent files, but keeps code path consistent with magnet links)
+                let torrent_handle = torrent_handle_opt.as_ref().unwrap();
                 if let Err(e) = torrent_handle.wait_for_metadata().await {
-                    cleanup_torrent().await;
+                    let _ = torrent_manager
+                        .remove_torrent(torrent_handle_opt.take().unwrap(), true)
+                        .await;
                     import_context.set_import_error_message(Some(format!(
                         "Failed to get torrent metadata: {}",
                         e
@@ -72,7 +70,9 @@ pub fn TorrentImport() -> Element {
                 let torrent_name = match torrent_handle.name().await {
                     Ok(name) => name,
                     Err(e) => {
-                        cleanup_torrent().await;
+                        let _ = torrent_manager
+                            .remove_torrent(torrent_handle_opt.take().unwrap(), true)
+                            .await;
                         import_context.set_import_error_message(Some(format!(
                             "Failed to get torrent name: {}",
                             e
@@ -87,7 +87,9 @@ pub fn TorrentImport() -> Element {
                 let torrent_files = match torrent_handle.get_file_list().await {
                     Ok(files) => files,
                     Err(e) => {
-                        cleanup_torrent().await;
+                        let _ = torrent_manager
+                            .remove_torrent(torrent_handle_opt.take().unwrap(), true)
+                            .await;
                         import_context.set_import_error_message(Some(format!(
                             "Failed to get torrent file list: {}",
                             e
@@ -103,7 +105,9 @@ pub fn TorrentImport() -> Element {
                 let total_size = match torrent_handle.total_size().await {
                     Ok(size) => size,
                     Err(e) => {
-                        cleanup_torrent().await;
+                        let _ = torrent_manager
+                            .remove_torrent(torrent_handle_opt.take().unwrap(), true)
+                            .await;
                         import_context.set_import_error_message(Some(format!(
                             "Failed to get torrent size: {}",
                             e
@@ -116,7 +120,9 @@ pub fn TorrentImport() -> Element {
                 let piece_length = match torrent_handle.piece_length().await {
                     Ok(length) => length,
                     Err(e) => {
-                        cleanup_torrent().await;
+                        let _ = torrent_manager
+                            .remove_torrent(torrent_handle_opt.take().unwrap(), true)
+                            .await;
                         import_context.set_import_error_message(Some(format!(
                             "Failed to get piece length: {}",
                             e
@@ -129,7 +135,9 @@ pub fn TorrentImport() -> Element {
                 let num_pieces = match torrent_handle.num_pieces().await {
                     Ok(pieces) => pieces,
                     Err(e) => {
-                        cleanup_torrent().await;
+                        let _ = torrent_manager
+                            .remove_torrent(torrent_handle_opt.take().unwrap(), true)
+                            .await;
                         import_context.set_import_error_message(Some(format!(
                             "Failed to get piece count: {}",
                             e
@@ -210,22 +218,20 @@ pub fn TorrentImport() -> Element {
 
                 // Detect metadata from CUE/log files
                 use crate::torrent::detect_metadata_from_torrent_file;
-                let client_for_metadata = import_context.torrent_client_for_metadata();
-                let metadata =
-                    match detect_metadata_from_torrent_file(&torrent_handle, &client_for_metadata)
-                        .await
-                    {
-                        Ok(metadata) => metadata,
-                        Err(e) => {
-                            warn!("Failed to detect metadata from torrent: {}", e);
-                            None
-                        }
-                    };
+                let metadata = match detect_metadata_from_torrent_file(&torrent_handle).await {
+                    Ok(metadata) => metadata,
+                    Err(e) => {
+                        warn!("Failed to detect metadata from torrent: {}", e);
+                        None
+                    }
+                };
 
                 // Check if detection was cancelled before processing results
                 if !*import_context.is_detecting().read() {
                     info!("Metadata detection was cancelled, ignoring results");
-                    cleanup_torrent().await;
+                    let _ = torrent_manager
+                        .remove_torrent(torrent_handle_opt.take().unwrap(), true)
+                        .await;
                     return;
                 }
 
@@ -244,7 +250,8 @@ pub fn TorrentImport() -> Element {
 
                 // Remove torrent from session after metadata detection is complete
                 // Delete files since they're temporary and only used for metadata detection
-                cleanup_torrent().await;
+                // Note: We keep the torrent alive - ImportService will use it for download
+                // The torrent will be removed by ImportService after import completes
 
                 // Mark detection as complete
                 import_context.set_is_detecting(false);
@@ -328,7 +335,7 @@ pub fn TorrentImport() -> Element {
             let search_query_for_async = import_context.search_query();
             let import_phase_for_async = import_context.import_phase();
             let confirmed_candidate_for_async = import_context.confirmed_candidate();
-            let client_for_manual = import_context.torrent_client_for_metadata();
+            let torrent_manager_for_manual = import_context.torrent_manager();
             let import_context_for_async = import_context.clone();
 
             import_context.set_is_detecting(true);
@@ -343,8 +350,11 @@ pub fn TorrentImport() -> Element {
 
             spawn(async move {
                 // Add torrent and get handle for metadata detection
-                let torrent_handle = match client_for_manual.add_torrent_file(&path_buf).await {
-                    Ok(handle) => handle,
+                let mut torrent_handle_opt_manual = match torrent_manager_for_manual
+                    .add_torrent(TorrentSource::File(path_buf.clone()))
+                    .await
+                {
+                    Ok(handle) => Some(handle),
                     Err(e) => {
                         warn!("Failed to add torrent file: {}", e);
                         import_context_for_async.set_is_detecting(false);
@@ -352,16 +362,12 @@ pub fn TorrentImport() -> Element {
                     }
                 };
 
-                // Ensure torrent is removed on early return
-                let cleanup_torrent_manual = || async {
-                    let _ = client_for_manual
-                        .remove_torrent_and_delete_data(&torrent_handle)
-                        .await;
-                };
-
                 // Wait for metadata
-                if let Err(e) = torrent_handle.wait_for_metadata().await {
-                    cleanup_torrent_manual().await;
+                let torrent_handle_manual = torrent_handle_opt_manual.as_ref().unwrap();
+                if let Err(e) = torrent_handle_manual.wait_for_metadata().await {
+                    let _ = torrent_manager_for_manual
+                        .remove_torrent(torrent_handle_opt_manual.take().unwrap(), true)
+                        .await;
                     warn!("Failed to get torrent metadata: {}", e);
                     import_context_for_async.set_is_detecting(false);
                     return;
@@ -369,21 +375,21 @@ pub fn TorrentImport() -> Element {
 
                 // Detect metadata from CUE/log files
                 use crate::torrent::detect_metadata_from_torrent_file;
-                let metadata =
-                    match detect_metadata_from_torrent_file(&torrent_handle, &client_for_manual)
-                        .await
-                    {
-                        Ok(metadata) => metadata,
-                        Err(e) => {
-                            warn!("Failed to detect metadata from torrent: {}", e);
-                            None
-                        }
-                    };
+                let metadata = match detect_metadata_from_torrent_file(torrent_handle_manual).await
+                {
+                    Ok(metadata) => metadata,
+                    Err(e) => {
+                        warn!("Failed to detect metadata from torrent: {}", e);
+                        None
+                    }
+                };
 
                 // Check if detection was cancelled before processing results
                 if !*import_context_for_async.is_detecting().read() {
                     info!("Metadata detection was cancelled, ignoring results");
-                    cleanup_torrent_manual().await;
+                    let _ = torrent_manager_for_manual
+                        .remove_torrent(torrent_handle_opt_manual.take().unwrap(), true)
+                        .await;
                     return;
                 }
 
@@ -402,7 +408,8 @@ pub fn TorrentImport() -> Element {
 
                 // Remove torrent from session after metadata detection is complete
                 // Delete files since they're temporary and only used for metadata detection
-                cleanup_torrent_manual().await;
+                // Note: We keep the torrent alive - ImportService will use it for download
+                // The torrent will be removed by ImportService after import completes
 
                 // Mark detection as complete
                 import_context_for_async.set_is_detecting(false);

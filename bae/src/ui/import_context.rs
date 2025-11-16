@@ -5,7 +5,7 @@ use crate::import::{
     detect_metadata, FolderMetadata, MatchCandidate, TorrentImportMetadata, TorrentSource,
 };
 use crate::musicbrainz::{lookup_by_discid, search_releases, MbRelease};
-use crate::torrent::client::TorrentClient;
+use crate::torrent::TorrentManagerHandle;
 use crate::ui::components::import::FileInfo;
 use dioxus::prelude::*;
 use std::path::PathBuf;
@@ -53,13 +53,12 @@ pub struct ImportContext {
     seed_after_download: Signal<bool>,
     torrent_metadata: Signal<Option<TorrentImportMetadata>>,
     discogs_client: DiscogsClient,
-    /// Shared torrent client with default storage for metadata detection
-    /// Sessions are heavy, so we create one and reuse it for all metadata detection operations
-    torrent_client_for_metadata: TorrentClient,
+    /// Handle to torrent manager service for all torrent operations
+    torrent_manager: TorrentManagerHandle,
 }
 
 impl ImportContext {
-    pub fn new(config: &crate::config::Config) -> Self {
+    pub fn new(config: &crate::config::Config, torrent_manager: TorrentManagerHandle) -> Self {
         use dioxus::prelude::*;
         Self {
             search_query: Signal::new(String::new()),
@@ -87,13 +86,12 @@ impl ImportContext {
             seed_after_download: Signal::new(true),
             torrent_metadata: Signal::new(None),
             discogs_client: DiscogsClient::new(config.discogs_api_key.clone()),
-            torrent_client_for_metadata: TorrentClient::new_with_default_storage()
-                .expect("Failed to create torrent client for metadata detection"),
+            torrent_manager,
         }
     }
 
-    pub fn torrent_client_for_metadata(&self) -> TorrentClient {
-        self.torrent_client_for_metadata.clone()
+    pub fn torrent_manager(&self) -> TorrentManagerHandle {
+        self.torrent_manager.clone()
     }
 
     // Getters - return Signal (which can be used as ReadSignal)
@@ -500,7 +498,8 @@ impl ImportContext {
 #[component]
 pub fn AlbumImportContextProvider(children: Element) -> Element {
     let config = use_config();
-    let album_import_ctx = ImportContext::new(&config);
+    let app_context = use_context::<crate::ui::AppContext>();
+    let album_import_ctx = ImportContext::new(&config, app_context.torrent_manager.clone());
 
     use_context_provider(move || Rc::new(album_import_ctx));
 

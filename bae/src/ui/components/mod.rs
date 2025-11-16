@@ -23,4 +23,4 @@ pub use now_playing_bar::NowPlayingBar;
 pub use playback_hooks::{use_playback_service, use_playback_state};
 pub use settings::Settings;
 pub use title_bar::TitleBar;
-pub use torrent_seeder_hooks::use_torrent_seeder;
+pub use torrent_seeder_hooks::use_torrent_manager;
