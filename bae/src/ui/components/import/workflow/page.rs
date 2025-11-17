@@ -27,7 +27,7 @@ pub fn ImportPage() -> Element {
             }
 
             // Source selector
-            div { class: "bg-white rounded-lg shadow p-6 mb-6",
+            div { class: "bg-gray-800 rounded-lg shadow p-6 mb-6",
                 ImportSourceSelector {
                     selected_source,
                     on_source_select,

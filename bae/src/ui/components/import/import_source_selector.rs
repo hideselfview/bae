@@ -14,12 +14,12 @@ pub fn ImportSourceSelector(
 ) -> Element {
     rsx! {
         div { class: "mb-6",
-            div { class: "flex space-x-4 border-b border-gray-200",
+            div { class: "flex space-x-4 border-b border-gray-600",
                 button {
                     class: if *selected_source.read() == ImportSource::Folder {
-                        "px-4 py-2 font-medium transition-colors text-blue-600 border-b-2 border-blue-600"
+                        "px-4 py-2 font-medium transition-colors text-blue-400 border-b-2 border-blue-400 -mb-px"
                     } else {
-                        "px-4 py-2 font-medium transition-colors text-gray-600 hover:text-gray-900"
+                        "px-4 py-2 font-medium transition-colors text-gray-400 hover:text-gray-300"
                     },
                     onclick: move |_| {
                         selected_source.set(ImportSource::Folder);
@@ -29,9 +29,9 @@ pub fn ImportSourceSelector(
                 }
                 button {
                     class: if *selected_source.read() == ImportSource::Torrent {
-                        "px-4 py-2 font-medium transition-colors text-blue-600 border-b-2 border-blue-600"
+                        "px-4 py-2 font-medium transition-colors text-blue-400 border-b-2 border-blue-400 -mb-px"
                     } else {
-                        "px-4 py-2 font-medium transition-colors text-gray-600 hover:text-gray-900"
+                        "px-4 py-2 font-medium transition-colors text-gray-400 hover:text-gray-300"
                     },
                     onclick: move |_| {
                         selected_source.set(ImportSource::Torrent);
@@ -41,9 +41,9 @@ pub fn ImportSourceSelector(
                 }
                 button {
                     class: if *selected_source.read() == ImportSource::Cd {
-                        "px-4 py-2 font-medium transition-colors text-blue-600 border-b-2 border-blue-600"
+                        "px-4 py-2 font-medium transition-colors text-blue-400 border-b-2 border-blue-400 -mb-px"
                     } else {
-                        "px-4 py-2 font-medium transition-colors text-gray-600 hover:text-gray-900"
+                        "px-4 py-2 font-medium transition-colors text-gray-400 hover:text-gray-300"
                     },
                     onclick: move |_| {
                         selected_source.set(ImportSource::Cd);

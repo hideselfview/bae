@@ -287,58 +287,82 @@ fn TorrentInfoDisplay(info: ReadSignal<Option<TorrentInfo>>) -> Element {
             // Basic Info
             div { class: "grid grid-cols-2 gap-4",
                 div {
-                    h4 { class: "text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1", "Name" }
-                    p { class: "text-sm text-gray-900", {torrent_info.name.clone()} }
+                    h4 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2", "Name" }
+                    p {
+                        class: "text-sm font-medium tracking-tight text-white bg-gray-800 px-3 py-2 rounded border border-gray-700",
+                        {torrent_info.name.clone()}
+                    }
                 }
                 div {
-                    h4 { class: "text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1", "Total Size" }
-                    p { class: "text-sm text-gray-900", {format_size(torrent_info.total_size)} }
+                    h4 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2", "Total Size" }
+                    p {
+                        class: "text-sm font-medium tracking-tight text-white bg-gray-800 px-3 py-2 rounded border border-gray-700",
+                        {format_size(torrent_info.total_size)}
+                    }
                 }
                 div {
-                    h4 { class: "text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1", "Piece Length" }
-                    p { class: "text-sm text-gray-900", {format_size(torrent_info.piece_length as i64)} }
+                    h4 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2", "Piece Length" }
+                    p {
+                        class: "text-sm font-medium tracking-tight text-white bg-gray-800 px-3 py-2 rounded border border-gray-700",
+                        {format_size(torrent_info.piece_length as i64)}
+                    }
                 }
                 div {
-                    h4 { class: "text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1", "Number of Pieces" }
-                    p { class: "text-sm text-gray-900", {torrent_info.num_pieces.to_string()} }
+                    h4 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2", "Number of Pieces" }
+                    p {
+                        class: "text-sm font-medium tracking-tight text-white bg-gray-800 px-3 py-2 rounded border border-gray-700",
+                        {torrent_info.num_pieces.to_string()}
+                    }
                 }
                 div {
-                    h4 { class: "text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1", "Private" }
-                    p { class: "text-sm text-gray-900", if torrent_info.is_private { "Yes" } else { "No" } }
+                    h4 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2", "Private" }
+                    p {
+                        class: "text-sm font-medium tracking-tight text-white bg-gray-800 px-3 py-2 rounded border border-gray-700",
+                        if torrent_info.is_private { "Yes" } else { "No" }
+                    }
                 }
             }
 
             // Comment
             if !torrent_info.comment.is_empty() {
                 div {
-                    h4 { class: "text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1", "Comment" }
-                    p { class: "text-sm text-gray-900", {torrent_info.comment.clone()} }
+                    h4 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2", "Comment" }
+                    p {
+                        class: "text-sm font-medium tracking-tight text-white bg-gray-800 px-3 py-2 rounded border border-gray-700 break-words",
+                        {torrent_info.comment.clone()}
+                    }
                 }
             }
 
             // Creator
             if !torrent_info.creator.is_empty() {
                 div {
-                    h4 { class: "text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1", "Created By" }
-                    p { class: "text-sm text-gray-900", {torrent_info.creator.clone()} }
+                    h4 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2", "Created By" }
+                    p {
+                        class: "text-sm font-medium tracking-tight text-white bg-gray-800 px-3 py-2 rounded border border-gray-700",
+                        {torrent_info.creator.clone()}
+                    }
                 }
             }
 
             // Creation Date
             if torrent_info.creation_date != 0 {
                 div {
-                    h4 { class: "text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1", "Creation Date" }
-                    p { class: "text-sm text-gray-900", {format_date(torrent_info.creation_date)} }
+                    h4 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2", "Creation Date" }
+                    p {
+                        class: "text-sm font-medium tracking-tight text-white bg-gray-800 px-3 py-2 rounded border border-gray-700",
+                        {format_date(torrent_info.creation_date)}
+                    }
                 }
             }
 
             // Trackers
             if !torrent_info.trackers.is_empty() {
                 div {
-                    h4 { class: "text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2", "Trackers" }
-                    ul { class: "space-y-1",
+                    h4 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2", "Trackers" }
+                    ul { class: "space-y-1.5",
                         for tracker in torrent_info.trackers.iter() {
-                            li { class: "text-sm text-gray-700 font-mono bg-gray-50 px-2 py-1 rounded",
+                            li { class: "text-sm font-medium text-white font-mono bg-gray-800 px-3 py-2 rounded border border-gray-700",
                                 {tracker.clone()}
                             }
                         }
@@ -349,7 +373,7 @@ fn TorrentInfoDisplay(info: ReadSignal<Option<TorrentInfo>>) -> Element {
             // Files
             if !files.is_empty() {
                 div {
-                    h4 { class: "text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3", "Files" }
+                    h4 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3", "Files" }
                     FileList {
                         files: files,
                     }

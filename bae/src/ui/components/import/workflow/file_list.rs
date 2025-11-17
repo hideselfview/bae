@@ -18,15 +18,15 @@ pub fn FileList(files: Vec<FileInfo>) -> Element {
             div { class: "space-y-2",
                 for file in files.iter() {
                     div {
-                        class: "flex items-center justify-between py-2 px-3 bg-gray-50 rounded hover:bg-gray-100 transition-colors",
+                        class: "flex items-center justify-between py-2 px-3 bg-gray-800 rounded hover:bg-gray-700 transition-colors border border-gray-700",
                         div {
                             class: "flex-1",
                             div {
-                                class: "text-gray-900 text-sm font-medium",
+                                class: "text-white text-sm font-medium",
                                 {file.name.clone()}
                             }
                             div {
-                                class: "text-gray-500 text-xs mt-1",
+                                class: "text-gray-400 text-xs mt-1",
                                 {format!("{} • {}", format_file_size(file.size as i64), file.format)}
                             }
                         }
