@@ -6,15 +6,14 @@
 // and parse bencoded data for additional torrent metadata.
 
 use crate::torrent::ffi::{
-    self, session_add_torrent, session_remove_torrent, set_listen_interfaces, torrent_get_file_list,
-};
-use crate::torrent::ffi::{
-    create_session_params_default, create_session_params_with_storage, create_session_with_params,
-    get_session_ptr, load_torrent_file, parse_magnet_uri, torrent_get_name, torrent_get_num_peers,
-    torrent_get_num_pieces, torrent_get_num_seeds, torrent_get_piece_length, torrent_get_progress,
+    self, create_session_params_default, create_session_params_with_storage,
+    create_session_with_params, get_session_ptr, load_torrent_file, parse_magnet_uri,
+    session_add_torrent, session_remove_torrent, set_listen_interfaces, set_paused,
+    torrent_get_file_list, torrent_get_name, torrent_get_num_peers, torrent_get_num_pieces,
+    torrent_get_num_seeds, torrent_get_piece_length, torrent_get_progress,
     torrent_get_storage_index, torrent_get_total_size, torrent_get_tracker_status,
-    torrent_has_metadata, torrent_set_file_priorities, AddTorrentParams, Session, TorrentFileInfo,
-    TorrentHandle as FfiTorrentHandle,
+    torrent_has_metadata, torrent_pause, torrent_resume, torrent_set_file_priorities,
+    AddTorrentParams, Session, TorrentFileInfo, TorrentHandle as FfiTorrentHandle,
 };
 use crate::torrent::storage::{create_bae_storage_constructor, BaeStorage};
 use cxx::UniquePtr;
@@ -205,6 +204,14 @@ impl TorrentClient {
             ));
         }
 
+        // Set paused flag so torrent starts paused
+        unsafe {
+            if let Some(pinned_params) = params.as_mut() {
+                let params_ptr = std::pin::Pin::get_unchecked_mut(pinned_params) as *mut _;
+                set_paused(params_ptr, true);
+            }
+        }
+
         // Get raw session pointer for wrapper function
         let session_ptr = get_session_ptr(&mut session_guard);
         if session_ptr.is_null() {
@@ -243,11 +250,19 @@ impl TorrentClient {
         let temp_path = std::env::temp_dir().to_string_lossy().to_string();
 
         // Parse magnet URI using our wrapper function
-        let params = parse_magnet_uri(magnet, &temp_path);
+        let mut params = parse_magnet_uri(magnet, &temp_path);
         if params.is_null() {
             return Err(TorrentError::InvalidTorrent(
                 "Failed to parse magnet URI".to_string(),
             ));
+        }
+
+        // Set paused flag so torrent starts paused
+        unsafe {
+            if let Some(pinned_params) = params.as_mut() {
+                let params_ptr = std::pin::Pin::get_unchecked_mut(pinned_params) as *mut _;
+                set_paused(params_ptr, true);
+            }
         }
 
         self.add_torrent_with_params(params).await
@@ -533,6 +548,34 @@ impl TorrentHandle {
             ));
         }
 
+        Ok(())
+    }
+
+    /// Pause the torrent
+    pub async fn pause(&self) -> Result<(), TorrentError> {
+        let handle_guard = self.handle.0.read().await;
+        let handle_ptr = *handle_guard;
+        if handle_ptr.is_null() {
+            return Err(TorrentError::Libtorrent(
+                "Invalid torrent handle".to_string(),
+            ));
+        }
+        unsafe { torrent_pause(handle_ptr) };
+        drop(handle_guard);
+        Ok(())
+    }
+
+    /// Resume the torrent
+    pub async fn resume(&self) -> Result<(), TorrentError> {
+        let handle_guard = self.handle.0.read().await;
+        let handle_ptr = *handle_guard;
+        if handle_ptr.is_null() {
+            return Err(TorrentError::Libtorrent(
+                "Invalid torrent handle".to_string(),
+            ));
+        }
+        unsafe { torrent_resume(handle_ptr) };
+        drop(handle_guard);
         Ok(())
     }
 

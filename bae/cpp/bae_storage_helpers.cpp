@@ -255,6 +255,12 @@ void set_seed_mode(add_torrent_params* params, bool seed_mode) {
     }
 }
 
+void set_paused(add_torrent_params* params, bool paused) {
+    if (params && paused) {
+        params->flags |= torrent_flags::paused;
+    }
+}
+
 void set_listen_interfaces(session_params* params, const std::string& interfaces) {
     if (params && !interfaces.empty()) {
         params->settings.set_str(settings_pack::listen_interfaces, interfaces);
@@ -285,6 +291,18 @@ std::string session_get_listening_port(session* sess) {
     // We can get it from settings, but for now just return a placeholder
     // The important thing is confirming the interface is set correctly
     return "Port: (checking via settings)";
+}
+
+void torrent_pause(torrent_handle* handle) {
+    if (handle) {
+        handle->pause();
+    }
+}
+
+void torrent_resume(torrent_handle* handle) {
+    if (handle) {
+        handle->resume();
+    }
 }
 
 } // namespace libtorrent

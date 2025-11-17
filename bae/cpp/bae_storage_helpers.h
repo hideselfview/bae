@@ -112,6 +112,9 @@ std::string torrent_get_tracker_status(torrent_handle* handle);
 /// Set seed_mode flag on add_torrent_params to skip hash verification
 void set_seed_mode(add_torrent_params* params, bool seed_mode);
 
+/// Set paused flag on add_torrent_params to add torrent in paused state
+void set_paused(add_torrent_params* params, bool paused);
+
 /// Set listen_interfaces on session_params
 /// interfaces can be an interface name (e.g. "eth0", "tun0") or IP:port (e.g. "0.0.0.0:6881")
 void set_listen_interfaces(session_params* params, const std::string& interfaces);
@@ -121,6 +124,12 @@ std::string session_get_listen_interfaces(session* sess);
 
 /// Get the listening port from a session
 std::string session_get_listening_port(session* sess);
+
+/// Pause a torrent
+void torrent_pause(torrent_handle* handle);
+
+/// Resume a torrent
+void torrent_resume(torrent_handle* handle);
 
 } // namespace libtorrent
 
@@ -158,6 +167,9 @@ int32_t torrent_get_num_seeds(TorrentHandle* handle);
 rust::String torrent_get_tracker_status(TorrentHandle* handle);
 rust::String session_get_listen_interfaces(Session* sess);
 rust::String session_get_listening_port(Session* sess);
+void set_paused(AddTorrentParams* params, bool paused);
+void torrent_pause(TorrentHandle* handle);
+void torrent_resume(TorrentHandle* handle);
 
 std::unique_ptr<BaeStorageConstructor> create_bae_storage_constructor(
     rust::Fn<rust::Vec<uint8_t>(int32_t, int32_t, int32_t, int32_t)> read_cb,

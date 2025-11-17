@@ -67,6 +67,11 @@ void set_seed_mode(AddTorrentParams* params, bool seed_mode) {
     libtorrent::set_seed_mode(params, seed_mode);
 }
 
+// Wrapper for set_paused
+void set_paused(AddTorrentParams* params, bool paused) {
+    libtorrent::set_paused(params, paused);
+}
+
 // Wrapper for set_listen_interfaces - converts rust::Str to std::string
 void set_listen_interfaces(SessionParams* params, rust::Str interfaces) {
     libtorrent::set_listen_interfaces(params, std::string(interfaces));
@@ -161,6 +166,14 @@ rust::String session_get_listen_interfaces(Session* sess) {
 rust::String session_get_listening_port(Session* sess) {
     std::string port = libtorrent::session_get_listening_port(sess);
     return rust::String(port.data(), port.size());
+}
+
+void torrent_pause(TorrentHandle* handle) {
+    libtorrent::torrent_pause(handle);
+}
+
+void torrent_resume(TorrentHandle* handle) {
+    libtorrent::torrent_resume(handle);
 }
 
 void session_remove_torrent(Session* sess, TorrentHandle* handle, bool delete_files) {
