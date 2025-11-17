@@ -1,10 +1,8 @@
 use super::file_list::FileList;
 use super::inputs::TorrentInput;
-use super::shared::{
-    Confirmation, DetectingMetadata, ErrorDisplay, ExactLookup, ManualSearch, SelectedSource,
-};
-use super::torrent_status::TorrentStatus;
+use super::shared::{Confirmation, ErrorDisplay, ExactLookup, ManualSearch, SelectedSource};
 use crate::import::MatchCandidate;
+use crate::torrent::ffi::TorrentInfo;
 use crate::ui::components::import::ImportSource;
 use crate::ui::import_context::{ImportContext, ImportPhase};
 use dioxus::prelude::*;
@@ -92,14 +90,20 @@ pub fn TorrentImport() -> Element {
                 }
             } else {
                 div { class: "space-y-6",
-                    // Show selected torrent
+                    // Show selected torrent with all info
                     SelectedSource {
                         title: "Selected Torrent".to_string(),
                         path: import_context.folder_path(),
                         on_clear: on_change_folder,
-                        children: None,
+                        children: Some(rsx! {
+                            TorrentInfoDisplay {
+                                info: import_context.torrent_info(),
+                            }
+                        }),
                     }
 
+                    // OLD CODE - Commented out
+                    /*
                     // Show torrent status if we have an info_hash
                     if let Some(info_hash) = import_context.torrent_info_hash().read().as_ref() {
                         TorrentStatus {
@@ -126,6 +130,7 @@ pub fn TorrentImport() -> Element {
                             }
                         }
                     }
+                    */
 
                     // Phase 2: Exact Lookup
                     if *import_context.import_phase().read() == ImportPhase::ExactLookup {
@@ -207,6 +212,146 @@ pub fn TorrentImport() -> Element {
                     ErrorDisplay {
                         error_message: import_context.import_error_message(),
                         duplicate_album_id: import_context.duplicate_album_id(),
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn TorrentInfoDisplay(info: ReadSignal<Option<TorrentInfo>>) -> Element {
+    use crate::ui::components::import::FileInfo;
+
+    let torrent_info_opt = info.read();
+    let Some(torrent_info) = torrent_info_opt.as_ref() else {
+        return rsx! {
+            div { "No torrent info available" }
+        };
+    };
+
+    // Format file size
+    let format_size = |bytes: i64| -> String {
+        if bytes < 1024 {
+            format!("{} B", bytes)
+        } else if bytes < 1024 * 1024 {
+            format!("{:.2} KB", bytes as f64 / 1024.0)
+        } else if bytes < 1024 * 1024 * 1024 {
+            format!("{:.2} MB", bytes as f64 / (1024.0 * 1024.0))
+        } else {
+            format!("{:.2} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+        }
+    };
+
+    // Format creation date
+    let format_date = |timestamp: i64| -> String {
+        if timestamp == 0 {
+            "Not available".to_string()
+        } else {
+            use chrono::TimeZone;
+            if let Some(dt) = chrono::Utc.timestamp_opt(timestamp, 0).single() {
+                dt.format("%Y-%m-%d %H:%M:%S UTC").to_string()
+            } else {
+                "Invalid date".to_string()
+            }
+        }
+    };
+
+    // Convert files to FileInfo format
+    let mut files: Vec<FileInfo> = torrent_info
+        .files
+        .iter()
+        .map(|tf| {
+            let path_buf = std::path::PathBuf::from(&tf.path);
+            let name = path_buf
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let format = path_buf
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_uppercase();
+            FileInfo {
+                name,
+                size: tf.size as u64,
+                format,
+            }
+        })
+        .collect();
+    files.sort_by(|a, b| a.name.cmp(&b.name));
+
+    rsx! {
+        div { class: "mt-4 space-y-4",
+            // Basic Info
+            div { class: "grid grid-cols-2 gap-4",
+                div {
+                    h4 { class: "text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1", "Name" }
+                    p { class: "text-sm text-gray-900", {torrent_info.name.clone()} }
+                }
+                div {
+                    h4 { class: "text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1", "Total Size" }
+                    p { class: "text-sm text-gray-900", {format_size(torrent_info.total_size)} }
+                }
+                div {
+                    h4 { class: "text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1", "Piece Length" }
+                    p { class: "text-sm text-gray-900", {format_size(torrent_info.piece_length as i64)} }
+                }
+                div {
+                    h4 { class: "text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1", "Number of Pieces" }
+                    p { class: "text-sm text-gray-900", {torrent_info.num_pieces.to_string()} }
+                }
+                div {
+                    h4 { class: "text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1", "Private" }
+                    p { class: "text-sm text-gray-900", if torrent_info.is_private { "Yes" } else { "No" } }
+                }
+            }
+
+            // Comment
+            if !torrent_info.comment.is_empty() {
+                div {
+                    h4 { class: "text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1", "Comment" }
+                    p { class: "text-sm text-gray-900", {torrent_info.comment.clone()} }
+                }
+            }
+
+            // Creator
+            if !torrent_info.creator.is_empty() {
+                div {
+                    h4 { class: "text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1", "Created By" }
+                    p { class: "text-sm text-gray-900", {torrent_info.creator.clone()} }
+                }
+            }
+
+            // Creation Date
+            if torrent_info.creation_date != 0 {
+                div {
+                    h4 { class: "text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1", "Creation Date" }
+                    p { class: "text-sm text-gray-900", {format_date(torrent_info.creation_date)} }
+                }
+            }
+
+            // Trackers
+            if !torrent_info.trackers.is_empty() {
+                div {
+                    h4 { class: "text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2", "Trackers" }
+                    ul { class: "space-y-1",
+                        for tracker in torrent_info.trackers.iter() {
+                            li { class: "text-sm text-gray-700 font-mono bg-gray-50 px-2 py-1 rounded",
+                                {tracker.clone()}
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Files
+            if !files.is_empty() {
+                div {
+                    h4 { class: "text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3", "Files" }
+                    FileList {
+                        files: files,
                     }
                 }
             }

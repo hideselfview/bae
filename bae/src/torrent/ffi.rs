@@ -211,6 +211,12 @@ mod ffi {
         /// # Safety
         /// `sess` must be a valid pointer to a Session that outlives the call.
         unsafe fn session_pop_alerts(sess: *mut Session) -> Vec<AlertData>;
+
+        /// Get all torrent info from a torrent file path
+        ///
+        /// Parses the torrent file and returns all available metadata.
+        /// Returns an empty struct if the file cannot be parsed.
+        fn get_torrent_info(file_path: &str) -> TorrentInfo;
     }
 
     /// File info from torrent (shared between Rust and C++)
@@ -218,6 +224,20 @@ mod ffi {
         index: i32,
         path: String,
         size: i64,
+    }
+
+    /// Complete torrent info from a torrent file (shared between Rust and C++)
+    struct TorrentInfo {
+        name: String,
+        trackers: Vec<String>,
+        comment: String,
+        creator: String,
+        creation_date: i64,
+        is_private: bool,
+        total_size: i64,
+        piece_length: i32,
+        num_pieces: i32,
+        files: Vec<TorrentFileInfo>,
     }
 
     /// Alert data from libtorrent (shared between Rust and C++)
@@ -237,12 +257,12 @@ mod ffi {
 pub use ffi::{
     create_bae_storage_constructor, create_session_params_default,
     create_session_params_with_storage, create_session_with_params, get_session_ptr,
-    load_torrent_file, parse_magnet_uri, session_add_torrent, session_pop_alerts,
+    get_torrent_info, load_torrent_file, parse_magnet_uri, session_add_torrent, session_pop_alerts,
     session_remove_torrent, set_listen_interfaces, set_paused, set_seed_mode,
     torrent_get_file_list, torrent_get_name, torrent_get_num_peers, torrent_get_num_pieces,
     torrent_get_num_seeds, torrent_get_piece_length, torrent_get_progress,
     torrent_get_storage_index, torrent_get_total_size, torrent_get_tracker_status,
     torrent_has_metadata, torrent_pause, torrent_resume, torrent_set_file_priorities,
     AddTorrentParams, AlertData, BaeStorageConstructor, Session, SessionParams, TorrentFileInfo,
-    TorrentHandle,
+    TorrentHandle, TorrentInfo,
 };

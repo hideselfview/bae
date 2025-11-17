@@ -7,7 +7,8 @@ use crate::import::{
 };
 use crate::library::SharedLibraryManager;
 use crate::musicbrainz::{lookup_by_discid, search_releases, MbRelease};
-use crate::torrent::TorrentManagerHandle;
+use crate::torrent::ffi::TorrentInfo;
+use crate::torrent::{parse_torrent_info, TorrentManagerHandle};
 use crate::ui::components::import::{FileInfo, ImportSource, SearchSource};
 use crate::ui::Route;
 use dioxus::prelude::*;
@@ -58,6 +59,7 @@ pub struct ImportContext {
     seed_after_download: Signal<bool>,
     torrent_metadata: Signal<Option<TorrentImportMetadata>>,
     torrent_info_hash: Signal<Option<String>>,
+    torrent_info: Signal<Option<TorrentInfo>>,
     discogs_client: DiscogsClient,
     /// Handle to torrent manager service for all torrent operations
     torrent_manager: TorrentManagerHandle,
@@ -101,6 +103,7 @@ impl ImportContext {
             seed_after_download: Signal::new(true),
             torrent_metadata: Signal::new(None),
             torrent_info_hash: Signal::new(None),
+            torrent_info: Signal::new(None),
             discogs_client: DiscogsClient::new(config.discogs_api_key.clone()),
             torrent_manager,
             library_manager,
@@ -293,6 +296,15 @@ impl ImportContext {
         self.torrent_info_hash
     }
 
+    pub fn torrent_info(&self) -> Signal<Option<TorrentInfo>> {
+        self.torrent_info
+    }
+
+    pub fn set_torrent_info(&self, value: Option<TorrentInfo>) {
+        let mut signal = self.torrent_info;
+        signal.set(value);
+    }
+
     pub fn torrent_manager(&self) -> TorrentManagerHandle {
         self.torrent_manager.clone()
     }
@@ -353,6 +365,7 @@ impl ImportContext {
         self.set_seed_after_download(true);
         self.set_torrent_metadata(None);
         self.set_torrent_info_hash(None);
+        self.set_torrent_info(None);
     }
 
     pub async fn detect_folder_metadata(
@@ -635,7 +648,7 @@ impl ImportContext {
         self.set_search_query(query_parts.join(" "));
     }
 
-    /// Load torrent for import: prepare torrent, extract info, process metadata
+    /// Load torrent for import: parse torrent file and extract info
     pub async fn load_torrent_for_import(
         &self,
         path: PathBuf,
@@ -654,8 +667,62 @@ impl ImportContext {
             TorrentSource::File(path.clone()),
             seed_flag,
         );
-        info!("Torrent file selected, phase set to MetadataDetection");
+        info!("Torrent file selected");
 
+        // Parse torrent file to extract info
+        info!("Parsing torrent file...");
+        let torrent_info = match parse_torrent_info(&path) {
+            Ok(info) => {
+                info!("Torrent parsing successful");
+                info
+            }
+            Err(e) => {
+                let error_msg = format!("Failed to parse torrent file: {}", e);
+                warn!("{}", error_msg);
+                self.set_import_error_message(Some(error_msg.clone()));
+                self.reset_to_folder_selection();
+                return Err(error_msg);
+            }
+        };
+
+        // Convert file list to UI FileInfo format (before storing torrent_info)
+        let mut files: Vec<FileInfo> = torrent_info
+            .files
+            .iter()
+            .map(|tf| {
+                let path_buf = PathBuf::from(&tf.path);
+                let name = path_buf
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                let format = path_buf
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_uppercase();
+                FileInfo {
+                    name,
+                    size: tf.size as u64,
+                    format,
+                }
+            })
+            .collect();
+
+        files.sort_by(|a, b| a.name.cmp(&b.name));
+        self.set_folder_files(files);
+
+        info!(
+            "Torrent loaded: {} ({} files)",
+            torrent_info.name,
+            torrent_info.files.len()
+        );
+
+        // Store torrent info (move ownership into signal)
+        self.set_torrent_info(Some(torrent_info));
+
+        // OLD CODE - Commented out for now
+        /*
         // Prepare torrent via TorrentManager
         info!("Preparing torrent via TorrentManager...");
         let torrent_info = match self
@@ -676,34 +743,6 @@ impl ImportContext {
             }
         };
 
-        // Convert file list to UI FileInfo format
-        let mut files: Vec<FileInfo> = torrent_info
-            .file_list
-            .iter()
-            .map(|tf| {
-                let name = tf
-                    .path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown")
-                    .to_string();
-                let format = tf
-                    .path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("")
-                    .to_uppercase();
-                FileInfo {
-                    name,
-                    size: tf.size as u64,
-                    format,
-                }
-            })
-            .collect();
-
-        files.sort_by(|a, b| a.name.cmp(&b.name));
-        self.set_folder_files(files);
-
         // Store torrent metadata
         let torrent_metadata = TorrentImportMetadata {
             info_hash: torrent_info.info_hash.clone(),
@@ -718,12 +757,6 @@ impl ImportContext {
         self.set_torrent_metadata(Some(torrent_metadata));
         self.set_torrent_info_hash(Some(torrent_info.info_hash));
 
-        info!(
-            "Torrent loaded: {} ({} files)",
-            torrent_info.torrent_name,
-            self.folder_files().read().len()
-        );
-
         // Process detected metadata
         info!("Processing detected metadata...");
         self.process_detected_metadata(torrent_info.detected_metadata, torrent_info.torrent_name)
@@ -736,6 +769,7 @@ impl ImportContext {
         // Mark detection as complete
         self.set_is_detecting(false);
         info!("Metadata detection marked as complete");
+        */
 
         Ok(())
     }

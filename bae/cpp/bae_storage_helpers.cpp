@@ -254,6 +254,49 @@ std::string torrent_get_tracker_status(torrent_handle* handle) {
     return result;
 }
 
+std::unique_ptr<LibTorrentInfo> get_torrent_info_internal(const std::string& file_path) {
+    error_code ec;
+    torrent_info ti(file_path, ec);
+    if (ec) {
+        return nullptr;
+    }
+    
+    auto info = std::make_unique<LibTorrentInfo>();
+    
+    // Extract basic info
+    info->name = ti.name();
+    info->total_size = ti.total_size();
+    info->piece_length = ti.piece_length();
+    info->num_pieces = ti.num_pieces();
+    info->is_private = ti.priv();
+    
+    // Extract comment and creator
+    info->comment = ti.comment();
+    info->creator = ti.creator();
+    
+    // Extract creation date
+    info->creation_date = ti.creation_date();
+    
+    // Extract trackers
+    auto trackers = ti.trackers();
+    for (const auto& tracker : trackers) {
+        info->trackers.push_back(tracker.url);
+    }
+    
+    // Extract file list
+    auto file_storage = ti.files();
+    for (int i = 0; i < file_storage.num_files(); ++i) {
+        LibTorrentFileInfo file_info;
+        file_info.index = i;
+        auto file_path = file_storage.file_path(i);
+        file_info.path = std::string(file_path.begin(), file_path.end());
+        file_info.size = file_storage.file_size(i);
+        info->files.push_back(file_info);
+    }
+    
+    return info;
+}
+
 void set_seed_mode(add_torrent_params* params, bool seed_mode) {
     if (params && seed_mode) {
         params->flags |= torrent_flags::seed_mode;

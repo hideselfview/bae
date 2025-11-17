@@ -168,6 +168,55 @@ rust::String session_get_listening_port(Session* sess) {
     return rust::String(port.data(), port.size());
 }
 
+// Wrapper for get_torrent_info - converts C++ LibTorrentInfo to Rust TorrentInfo
+TorrentInfo get_torrent_info(rust::Str file_path) {
+    auto cpp_info = libtorrent::get_torrent_info_internal(std::string(file_path));
+    if (!cpp_info) {
+        // Return empty struct on error - Rust will handle the error
+        TorrentInfo info;
+        info.name = rust::String("");
+        info.trackers = rust::Vec<rust::String>();
+        info.comment = rust::String("");
+        info.creator = rust::String("");
+        info.creation_date = 0;
+        info.is_private = false;
+        info.total_size = 0;
+        info.piece_length = 0;
+        info.num_pieces = 0;
+        info.files = rust::Vec<TorrentFileInfo>();
+        return info;
+    }
+    
+    TorrentInfo info;
+    info.name = rust::String(cpp_info->name.data(), cpp_info->name.size());
+    
+    rust::Vec<rust::String> trackers;
+    for (const auto& tracker : cpp_info->trackers) {
+        trackers.push_back(rust::String(tracker.data(), tracker.size()));
+    }
+    info.trackers = trackers;
+    
+    info.comment = rust::String(cpp_info->comment.data(), cpp_info->comment.size());
+    info.creator = rust::String(cpp_info->creator.data(), cpp_info->creator.size());
+    info.creation_date = cpp_info->creation_date;
+    info.is_private = cpp_info->is_private;
+    info.total_size = cpp_info->total_size;
+    info.piece_length = cpp_info->piece_length;
+    info.num_pieces = cpp_info->num_pieces;
+    
+    rust::Vec<TorrentFileInfo> files;
+    for (const auto& file : cpp_info->files) {
+        TorrentFileInfo file_info;
+        file_info.index = file.index;
+        file_info.path = rust::String(file.path.data(), file.path.size());
+        file_info.size = file.size;
+        files.push_back(file_info);
+    }
+    info.files = files;
+    
+    return info;
+}
+
 void torrent_pause(TorrentHandle* handle) {
     libtorrent::torrent_pause(handle);
 }
