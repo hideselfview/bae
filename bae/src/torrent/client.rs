@@ -709,7 +709,7 @@ fn apply_options_to_session_params(
         };
 
         info!(
-            "Configuring torrent session to bind to: {}",
+            "Configuring torrent session to bind to: {} (port 0: libtorrent auto-selects)",
             listen_interface
         );
         unsafe {
