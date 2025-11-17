@@ -461,7 +461,7 @@ impl TorrentManager {
 
         info!("Preparing torrent for import");
 
-        // Add torrent
+        // Add torrent (starts paused)
         info!("Adding torrent to download client...");
         let torrent_handle = match source {
             TorrentSource::File(path) => {

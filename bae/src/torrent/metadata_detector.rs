@@ -17,8 +17,16 @@ pub enum TorrentMetadataError {
     Io(#[from] std::io::Error),
 }
 
-/// Prioritize metadata files (.cue, .log, .txt) for early download
-async fn prioritize_metadata_files(
+/// Disable all files in the torrent
+async fn disable_all_files(handle: &TorrentHandle) -> Result<(), TorrentMetadataError> {
+    let files = handle.get_file_list().await?;
+    let priorities: Vec<FilePriority> = vec![FilePriority::DoNotDownload; files.len()];
+    handle.set_file_priorities(priorities).await?;
+    Ok(())
+}
+
+/// Enable only metadata files (.cue, .log, .txt) for download
+async fn enable_metadata_files(
     handle: &TorrentHandle,
 ) -> Result<Vec<PathBuf>, TorrentMetadataError> {
     let files = handle.get_file_list().await?;
@@ -42,14 +50,17 @@ async fn prioritize_metadata_files(
         if is_metadata {
             metadata_files.push(file.path.clone());
             priorities.push(FilePriority::Maximum);
-            debug!("Prioritizing metadata file: {}", file.path.display());
+            debug!("Enabling metadata file: {}", file.path.display());
         } else {
             priorities.push(FilePriority::DoNotDownload);
         }
     }
 
     handle.set_file_priorities(priorities).await?;
-    info!("Prioritized {} metadata files", metadata_files.len());
+    info!(
+        "Enabled {} metadata files for download",
+        metadata_files.len()
+    );
 
     Ok(metadata_files)
 }
@@ -114,9 +125,19 @@ pub async fn detect_metadata_from_torrent_file(
     let temp_path = std::env::temp_dir();
     info!("Using temp directory: {:?}", temp_path);
 
-    // Prioritize and download metadata files
-    info!("Prioritizing metadata files...");
-    let metadata_files = prioritize_metadata_files(handle).await?;
+    // Disable all files first, then enable only metadata files
+    info!("Disabling all files...");
+    disable_all_files(handle).await?;
+
+    info!("Enabling metadata files...");
+    let metadata_files = enable_metadata_files(handle).await?;
+
+    // Resume the torrent now that priorities are set
+    info!("Resuming torrent download...");
+    handle
+        .resume()
+        .await
+        .map_err(TorrentMetadataError::Torrent)?;
 
     if metadata_files.is_empty() {
         info!("No CUE/log files found in torrent");
