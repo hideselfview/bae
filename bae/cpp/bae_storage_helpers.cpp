@@ -12,6 +12,11 @@
 #include <libtorrent/error_code.hpp>
 #include <libtorrent/settings_pack.hpp>
 #include <libtorrent/session_status.hpp>
+#include <libtorrent/alert_types.hpp>
+#include <libtorrent/alert.hpp>
+#include <libtorrent/sha1_hash.hpp>
+#include <sstream>
+#include <iomanip>
 
 namespace libtorrent {
 
@@ -303,6 +308,96 @@ void torrent_resume(torrent_handle* handle) {
     if (handle) {
         handle->resume();
     }
+}
+
+// Helper function to convert sha1_hash to hex string
+std::string hash_to_string(const libtorrent::sha1_hash& hash) {
+    std::ostringstream oss;
+    oss << std::hex << std::uppercase;
+    for (int i = 0; i < 20; ++i) {
+        oss << std::setw(2) << std::setfill('0') << static_cast<int>(hash[i]);
+    }
+    return oss.str();
+}
+
+std::vector<libtorrent::AlertData> session_pop_alerts(session* sess) {
+    std::vector<libtorrent::AlertData> alerts;
+    if (!sess) {
+        return alerts;
+    }
+    
+    // Pop all pending alerts from the session
+    std::vector<libtorrent::alert*> alert_queue;
+    sess->pop_alerts(&alert_queue);
+    
+    for (auto* alert_ptr : alert_queue) {
+        if (!alert_ptr) {
+            continue;
+        }
+        
+        libtorrent::AlertData alert_data;
+        alert_data.type = libtorrent::ALERT_UNKNOWN;
+        alert_data.num_peers = 0;
+        alert_data.num_seeds = 0;
+        alert_data.progress = 0.0f;
+        
+        // Get info_hash from alert if available
+        auto* torrent_alert = dynamic_cast<libtorrent::torrent_alert*>(alert_ptr);
+        if (torrent_alert) {
+            alert_data.info_hash = hash_to_string(torrent_alert->handle.info_hash());
+        }
+        
+        // Handle different alert types
+        if (auto* tracker_alert = dynamic_cast<libtorrent::tracker_announce_alert*>(alert_ptr)) {
+            alert_data.type = libtorrent::ALERT_TRACKER_ANNOUNCE;
+            alert_data.tracker_url = tracker_alert->tracker_url();
+            alert_data.tracker_message = "Announcing";
+        } else if (auto* tracker_error = dynamic_cast<libtorrent::tracker_error_alert*>(alert_ptr)) {
+            alert_data.type = libtorrent::ALERT_TRACKER_ERROR;
+            alert_data.tracker_url = tracker_error->tracker_url();
+            alert_data.tracker_message = tracker_error->message();
+            alert_data.error_message = tracker_error->message();
+        } else if (auto* peer_alert = dynamic_cast<libtorrent::peer_alert*>(alert_ptr)) {
+            if (dynamic_cast<libtorrent::peer_connect_alert*>(alert_ptr)) {
+                alert_data.type = libtorrent::ALERT_PEER_CONNECT;
+            } else if (dynamic_cast<libtorrent::peer_disconnected_alert*>(alert_ptr)) {
+                alert_data.type = libtorrent::ALERT_PEER_DISCONNECT;
+            }
+            // Get peer counts from torrent status
+            auto status = peer_alert->handle.status();
+            alert_data.num_peers = static_cast<int32_t>(status.num_peers);
+            alert_data.num_seeds = static_cast<int32_t>(status.num_seeds);
+        } else if (auto* file_alert = dynamic_cast<libtorrent::file_completed_alert*>(alert_ptr)) {
+            alert_data.type = libtorrent::ALERT_FILE_COMPLETED;
+            // file_completed_alert has index property (file_index_t)
+            // Get file path from torrent_info if available
+            auto status = file_alert->handle.status();
+            auto torrent_file = status.torrent_file.lock();
+            if (torrent_file) {
+                auto file_storage = torrent_file->files();
+                auto file_index = file_alert->index;
+                // Convert file_index_t to int for comparison
+                int file_index_int = static_cast<int>(file_index);
+                if (file_index_int >= 0 && file_index_int < file_storage.num_files()) {
+                    auto file_path = file_storage.file_path(file_index);
+                    alert_data.file_path = std::string(file_path.begin(), file_path.end());
+                }
+            }
+            alert_data.progress = static_cast<float>(status.progress_ppm) / 1000000.0f;
+        } else if (auto* metadata_alert = dynamic_cast<libtorrent::metadata_received_alert*>(alert_ptr)) {
+            alert_data.type = libtorrent::ALERT_METADATA_RECEIVED;
+        } else if (auto* state_alert = dynamic_cast<libtorrent::state_changed_alert*>(alert_ptr)) {
+            alert_data.type = libtorrent::ALERT_STATE_CHANGED;
+            auto status = state_alert->handle.status();
+            alert_data.num_peers = static_cast<int32_t>(status.num_peers);
+            alert_data.num_seeds = static_cast<int32_t>(status.num_seeds);
+            alert_data.progress = static_cast<float>(status.progress_ppm) / 1000000.0f;
+        }
+        
+        alerts.push_back(alert_data);
+    }
+    
+    return alerts;
 }
 
 } // namespace libtorrent

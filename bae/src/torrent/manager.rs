@@ -2,6 +2,7 @@ use crate::cache::CacheManager;
 use crate::db::{Database, DbTorrent, DbTorrentPieceMapping};
 use crate::import::{FolderMetadata, TorrentFileMetadata, TorrentSource};
 use crate::torrent::client::{TorrentClient, TorrentClientOptions, TorrentError, TorrentHandle};
+use crate::torrent::progress::{TorrentProgress, TorrentProgressHandle};
 use crate::torrent::{BaeStorage, TorrentPieceMapper};
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot};
@@ -63,6 +64,7 @@ pub enum TorrentManagerCommand {
 #[derive(Clone)]
 pub struct TorrentManagerHandle {
     command_tx: mpsc::UnboundedSender<TorrentManagerCommand>,
+    progress_handle: TorrentProgressHandle,
 }
 
 impl TorrentManagerHandle {
@@ -155,6 +157,11 @@ impl TorrentManagerHandle {
             TorrentError::Libtorrent("TorrentManager response channel closed".to_string())
         })?
     }
+
+    /// Subscribe to progress updates for a specific torrent
+    pub fn subscribe_torrent(&self, info_hash: String) -> mpsc::UnboundedReceiver<TorrentProgress> {
+        self.progress_handle.subscribe_torrent(info_hash)
+    }
 }
 
 /// Manages all torrent operations (downloads, metadata detection, seeding)
@@ -166,6 +173,7 @@ struct TorrentManager {
     cache_manager: CacheManager,
     database: Database,
     chunk_size_bytes: usize,
+    progress_tx: mpsc::UnboundedSender<TorrentProgress>,
 }
 
 /// Start the torrent manager service
@@ -177,17 +185,29 @@ pub fn start_torrent_manager(
     options: TorrentClientOptions,
 ) -> TorrentManagerHandle {
     let (command_tx, command_rx) = mpsc::unbounded_channel();
+    let (progress_tx, progress_rx) = mpsc::unbounded_channel();
 
     // Clone for the thread
     let cache_manager_for_worker = cache_manager.clone();
     let database_for_worker = database.clone();
+    let progress_tx_for_worker = progress_tx.clone();
+    let progress_rx_for_handle = progress_rx;
 
     // Spawn the service task on a dedicated thread (TorrentClient isn't Send-safe due to FFI)
+    let progress_handle = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let progress_handle_clone = progress_handle.clone();
+
     std::thread::spawn(move || {
         // Create a new tokio runtime for this thread
         let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
 
         let rt_handle = rt.handle().clone();
+
+        // Create progress handle inside the runtime
+        let progress_handle_local =
+            TorrentProgressHandle::new(progress_rx_for_handle, rt_handle.clone());
+        *progress_handle_clone.lock().unwrap() = Some(progress_handle_local.clone());
+
         rt.block_on(async move {
             // Log network configuration
             if let Some(interface) = &options.bind_interface {
@@ -207,7 +227,7 @@ pub fn start_torrent_manager(
             info!("TorrentManager: Download client created successfully");
 
             info!("TorrentManager: Creating seeding client (custom storage)...");
-            let seeding_client = TorrentClient::new_with_bae_storage(rt_handle, options)
+            let seeding_client = TorrentClient::new_with_bae_storage(rt_handle.clone(), options)
                 .expect("Failed to create seeding torrent client");
             info!("TorrentManager: Seeding client created successfully");
 
@@ -218,13 +238,25 @@ pub fn start_torrent_manager(
                 cache_manager: cache_manager_for_worker,
                 database: database_for_worker,
                 chunk_size_bytes,
+                progress_tx: progress_tx_for_worker,
             };
 
             service.run_manager_worker().await;
         });
     });
 
-    TorrentManagerHandle { command_tx }
+    // Wait for progress handle to be initialized
+    let progress_handle = loop {
+        if let Some(handle) = progress_handle.lock().unwrap().take() {
+            break handle;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+
+    TorrentManagerHandle {
+        command_tx,
+        progress_handle,
+    }
 }
 
 impl TorrentManager {
@@ -232,66 +264,146 @@ impl TorrentManager {
         info!("TorrentManager worker started");
 
         loop {
-            match self.command_rx.recv().await {
-                Some(TorrentManagerCommand::AddTorrent {
-                    source,
-                    response_tx,
-                }) => {
-                    let result = match source {
-                        TorrentSource::File(path) => {
-                            self.download_client.add_torrent_file(&path).await
+            tokio::select! {
+                // Handle commands
+                cmd = self.command_rx.recv() => {
+                    match cmd {
+                        Some(TorrentManagerCommand::AddTorrent {
+                            source,
+                            response_tx,
+                        }) => {
+                            let result = match source {
+                                TorrentSource::File(path) => {
+                                    self.download_client.add_torrent_file(&path).await
+                                }
+                                TorrentSource::MagnetLink(magnet) => {
+                                    self.download_client.add_magnet_link(&magnet).await
+                                }
+                            };
+                            let _ = response_tx.send(result);
                         }
-                        TorrentSource::MagnetLink(magnet) => {
-                            self.download_client.add_magnet_link(&magnet).await
+                        Some(TorrentManagerCommand::RemoveTorrent {
+                            handle,
+                            delete_files,
+                            response_tx,
+                        }) => {
+                            let result = if delete_files {
+                                self.download_client
+                                    .remove_torrent_and_delete_data(&handle)
+                                    .await
+                            } else {
+                                self.download_client
+                                    .remove_torrent_and_keep_data(&handle)
+                                    .await
+                            };
+                            let _ = response_tx.send(result);
                         }
-                    };
-                    let _ = response_tx.send(result);
+                        Some(TorrentManagerCommand::PrepareImportTorrent {
+                            source,
+                            response_tx,
+                        }) => {
+                            let result = self.prepare_import_torrent_handler(source).await;
+                            let _ = response_tx.send(result);
+                        }
+                        Some(TorrentManagerCommand::StartSeeding {
+                            release_id,
+                            response_tx,
+                        }) => {
+                            let result = self.start_seeding(&release_id).await;
+                            let _ = response_tx.send(result);
+                        }
+                        Some(TorrentManagerCommand::StopSeeding {
+                            release_id,
+                            response_tx,
+                        }) => {
+                            let result = self.stop_seeding(&release_id).await;
+                            let _ = response_tx.send(result);
+                        }
+                        None => {
+                            info!("TorrentManager command channel closed");
+                            break;
+                        }
+                    }
                 }
-                Some(TorrentManagerCommand::RemoveTorrent {
-                    handle,
-                    delete_files,
-                    response_tx,
-                }) => {
-                    let result = if delete_files {
-                        self.download_client
-                            .remove_torrent_and_delete_data(&handle)
-                            .await
-                    } else {
-                        self.download_client
-                            .remove_torrent_and_keep_data(&handle)
-                            .await
-                    };
-                    let _ = response_tx.send(result);
-                }
-                Some(TorrentManagerCommand::PrepareImportTorrent {
-                    source,
-                    response_tx,
-                }) => {
-                    let result = self.prepare_import_torrent_handler(source).await;
-                    let _ = response_tx.send(result);
-                }
-                Some(TorrentManagerCommand::StartSeeding {
-                    release_id,
-                    response_tx,
-                }) => {
-                    let result = self.start_seeding(&release_id).await;
-                    let _ = response_tx.send(result);
-                }
-                Some(TorrentManagerCommand::StopSeeding {
-                    release_id,
-                    response_tx,
-                }) => {
-                    let result = self.stop_seeding(&release_id).await;
-                    let _ = response_tx.send(result);
-                }
-                None => {
-                    info!("TorrentManager command channel closed");
-                    break;
+                // Poll alerts periodically
+                _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
+                    let alerts = self.download_client.pop_alerts().await;
+                    for alert in alerts {
+                        self.process_alert(alert).await;
+                    }
                 }
             }
         }
 
         info!("TorrentManager worker stopped");
+    }
+
+    async fn process_alert(&self, alert: crate::torrent::ffi::AlertData) {
+        let info_hash = alert.info_hash.clone();
+        match alert.alert_type {
+            0 => {
+                // ALERT_TRACKER_ANNOUNCE
+                let _ = self.progress_tx.send(TorrentProgress::StatusUpdate {
+                    info_hash: info_hash.clone(),
+                    num_peers: alert.num_peers,
+                    num_seeds: alert.num_seeds,
+                    trackers: vec![crate::torrent::progress::TrackerStatus {
+                        url: alert.tracker_url.clone(),
+                        status: "announcing".to_string(),
+                        message: Some(alert.tracker_message.clone()),
+                    }],
+                });
+            }
+            1 => {
+                // ALERT_TRACKER_ERROR
+                let _ = self.progress_tx.send(TorrentProgress::StatusUpdate {
+                    info_hash: info_hash.clone(),
+                    num_peers: alert.num_peers,
+                    num_seeds: alert.num_seeds,
+                    trackers: vec![crate::torrent::progress::TrackerStatus {
+                        url: alert.tracker_url.clone(),
+                        status: "error".to_string(),
+                        message: Some(alert.error_message.clone()),
+                    }],
+                });
+            }
+            2 | 3 => {
+                // ALERT_PEER_CONNECT or ALERT_PEER_DISCONNECT
+                let _ = self.progress_tx.send(TorrentProgress::StatusUpdate {
+                    info_hash: info_hash.clone(),
+                    num_peers: alert.num_peers,
+                    num_seeds: alert.num_seeds,
+                    trackers: vec![],
+                });
+            }
+            4 => {
+                // ALERT_FILE_COMPLETED
+                let _ = self.progress_tx.send(TorrentProgress::MetadataProgress {
+                    info_hash: info_hash.clone(),
+                    file: alert.file_path.clone(),
+                    progress: alert.progress,
+                });
+            }
+            5 => {
+                // ALERT_METADATA_RECEIVED
+                let _ = self.progress_tx.send(TorrentProgress::TorrentInfoReady {
+                    info_hash: info_hash.clone(),
+                    name: String::new(), // Will be filled in later
+                    total_size: 0,
+                    num_files: 0,
+                });
+            }
+            10 | 11 => {
+                // ALERT_STATE_CHANGED or ALERT_STATS
+                let _ = self.progress_tx.send(TorrentProgress::StatusUpdate {
+                    info_hash: info_hash.clone(),
+                    num_peers: alert.num_peers,
+                    num_seeds: alert.num_seeds,
+                    trackers: vec![],
+                });
+            }
+            _ => {}
+        }
     }
 
     /// Start seeding a torrent for a release
@@ -473,7 +585,12 @@ impl TorrentManager {
             TorrentSource::MagnetLink(magnet) => {
                 info!("Adding magnet link");
                 let handle = self.download_client.add_magnet_link(&magnet).await?;
-                info!("Magnet link added successfully, waiting for peer connections...");
+                let info_hash = handle.info_hash().await;
+                // Emit waiting for metadata event
+                let _ = self.progress_tx.send(TorrentProgress::WaitingForMetadata {
+                    info_hash: info_hash.clone(),
+                });
+                info!("Magnet link added successfully, waiting for metadata...");
                 handle
             }
         };
@@ -507,22 +624,41 @@ impl TorrentManager {
 
         info!("Torrent contains {} files", file_list.len());
 
+        // Emit torrent info ready event
+        let _ = self.progress_tx.send(TorrentProgress::TorrentInfoReady {
+            info_hash: info_hash.clone(),
+            name: torrent_name.clone(),
+            total_size,
+            num_files: file_list.len(),
+        });
+
         // Detect metadata from CUE/log files
         info!("Starting metadata detection from CUE/log files...");
-        let detected_metadata = match detect_metadata_from_torrent_file(&torrent_handle).await {
-            Ok(metadata) => {
-                if metadata.is_some() {
-                    info!("Metadata detection completed successfully");
-                } else {
-                    info!("No metadata detected from CUE/log files");
+        let detected_metadata =
+            match detect_metadata_from_torrent_file(&torrent_handle, &self.progress_tx).await {
+                Ok(metadata) => {
+                    if metadata.is_some() {
+                        info!("Metadata detection completed successfully");
+                    } else {
+                        info!("No metadata detected from CUE/log files");
+                    }
+                    metadata
                 }
-                metadata
-            }
-            Err(e) => {
-                warn!("Failed to detect metadata from torrent: {}", e);
-                None
-            }
-        };
+                Err(e) => {
+                    warn!("Failed to detect metadata from torrent: {}", e);
+                    let _ = self.progress_tx.send(TorrentProgress::Error {
+                        info_hash: info_hash.clone(),
+                        message: format!("Metadata detection failed: {}", e),
+                    });
+                    None
+                }
+            };
+
+        // Emit metadata complete event
+        let _ = self.progress_tx.send(TorrentProgress::MetadataComplete {
+            info_hash: info_hash.clone(),
+            detected: detected_metadata.clone(),
+        });
 
         // Remove torrent (temporary, only used for metadata detection)
         // ImportService will re-add it for actual download

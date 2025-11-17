@@ -8,12 +8,13 @@
 use crate::torrent::ffi::{
     self, create_session_params_default, create_session_params_with_storage,
     create_session_with_params, get_session_ptr, load_torrent_file, parse_magnet_uri,
-    session_add_torrent, session_remove_torrent, set_listen_interfaces, set_paused,
-    torrent_get_file_list, torrent_get_name, torrent_get_num_peers, torrent_get_num_pieces,
-    torrent_get_num_seeds, torrent_get_piece_length, torrent_get_progress,
-    torrent_get_storage_index, torrent_get_total_size, torrent_get_tracker_status,
-    torrent_has_metadata, torrent_pause, torrent_resume, torrent_set_file_priorities,
-    AddTorrentParams, Session, TorrentFileInfo, TorrentHandle as FfiTorrentHandle,
+    session_add_torrent, session_pop_alerts, session_remove_torrent, set_listen_interfaces,
+    set_paused, torrent_get_file_list, torrent_get_name, torrent_get_num_peers,
+    torrent_get_num_pieces, torrent_get_num_seeds, torrent_get_piece_length,
+    torrent_get_progress, torrent_get_storage_index, torrent_get_total_size,
+    torrent_get_tracker_status, torrent_has_metadata, torrent_pause, torrent_resume,
+    torrent_set_file_priorities, AddTorrentParams, AlertData, Session, TorrentFileInfo,
+    TorrentHandle as FfiTorrentHandle,
 };
 use crate::torrent::storage::{create_bae_storage_constructor, BaeStorage};
 use cxx::UniquePtr;
@@ -378,6 +379,18 @@ impl TorrentClient {
         drop(session_guard);
 
         Ok(())
+    }
+
+    /// Pop all pending alerts from the session
+    pub async fn pop_alerts(&self) -> Vec<AlertData> {
+        let mut session_guard = self.session.write().await;
+        let session_ptr = get_session_ptr(&mut session_guard);
+        if session_ptr.is_null() {
+            return Vec::new();
+        }
+        let alerts = unsafe { session_pop_alerts(session_ptr) };
+        drop(session_guard);
+        alerts
     }
 }
 

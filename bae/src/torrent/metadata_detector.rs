@@ -5,8 +5,10 @@
 
 use crate::import::{detect_metadata, FolderMetadata};
 use crate::torrent::client::{FilePriority, TorrentHandle};
+use crate::torrent::progress::TorrentProgress;
 use std::path::PathBuf;
 use thiserror::Error;
+use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 #[derive(Error, Debug)]
@@ -69,31 +71,14 @@ async fn enable_metadata_files(
 async fn wait_for_metadata_files(
     handle: &TorrentHandle,
     metadata_paths: &[PathBuf],
+    progress_tx: &mpsc::UnboundedSender<TorrentProgress>,
+    info_hash: &str,
 ) -> Result<Vec<PathBuf>, TorrentMetadataError> {
-    use std::time::{Duration, Instant};
-
-    let start_time = Instant::now();
-    let timeout = Duration::from_secs(60); // 60 second timeout
-
     loop {
-        // Check timeout
-        if start_time.elapsed() > timeout {
-            warn!("Timeout waiting for metadata files after {:?}", timeout);
-            return Err(TorrentMetadataError::Torrent(
-                crate::torrent::client::TorrentError::Libtorrent(format!(
-                    "Timeout waiting for metadata files after {:?}",
-                    timeout
-                )),
-            ));
-        }
-
         let progress = handle.progress().await?;
 
-        // Check if any metadata files are complete
-        // Note: This is simplified - actual implementation would check individual file completion
-        if progress > 0.0 {
-            // For now, return the metadata paths once we have some progress
-            // Full implementation would verify each file is complete
+        // Wait for 100% completion (progress >= 1.0) before checking files
+        if progress >= 1.0 {
             let files = handle.get_file_list().await?;
             let completed: Vec<PathBuf> = files
                 .iter()
@@ -104,6 +89,17 @@ async fn wait_for_metadata_files(
             if !completed.is_empty() {
                 return Ok(completed);
             }
+        }
+
+        // Emit progress for individual files
+        for metadata_path in metadata_paths {
+            // Check file progress (simplified - in real implementation would track per-file)
+            let file_progress = progress; // Use overall progress as approximation
+            let _ = progress_tx.send(TorrentProgress::MetadataProgress {
+                info_hash: info_hash.to_string(),
+                file: metadata_path.to_string_lossy().to_string(),
+                progress: file_progress,
+            });
         }
 
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
@@ -118,8 +114,11 @@ async fn wait_for_metadata_files(
 /// This is separate from the main import flow and doesn't use custom storage.
 pub async fn detect_metadata_from_torrent_file(
     handle: &TorrentHandle,
+    progress_tx: &mpsc::UnboundedSender<TorrentProgress>,
 ) -> Result<Option<FolderMetadata>, TorrentMetadataError> {
     info!("Starting metadata detection from torrent file");
+
+    let info_hash = handle.info_hash().await;
 
     // Use system temp directory for downloads
     let temp_path = std::env::temp_dir();
@@ -132,6 +131,26 @@ pub async fn detect_metadata_from_torrent_file(
     info!("Enabling metadata files...");
     let metadata_files = enable_metadata_files(handle).await?;
 
+    if metadata_files.is_empty() {
+        info!("No CUE/log files found in torrent");
+        return Ok(None);
+    }
+
+    // Emit metadata files detected event
+    let metadata_file_names: Vec<String> = metadata_files
+        .iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
+    let _ = progress_tx.send(TorrentProgress::MetadataFilesDetected {
+        info_hash: info_hash.clone(),
+        files: metadata_file_names.clone(),
+    });
+
+    info!(
+        "Found {} metadata files, downloading...",
+        metadata_files.len()
+    );
+
     // Resume the torrent now that priorities are set
     info!("Resuming torrent download...");
     handle
@@ -139,23 +158,17 @@ pub async fn detect_metadata_from_torrent_file(
         .await
         .map_err(TorrentMetadataError::Torrent)?;
 
-    if metadata_files.is_empty() {
-        info!("No CUE/log files found in torrent");
-        return Ok(None);
-    }
-
-    info!(
-        "Found {} metadata files, downloading...",
-        metadata_files.len()
-    );
-
-    // Wait for metadata files to download
-    match wait_for_metadata_files(handle, &metadata_files).await {
+    // Wait for metadata files to download (no timeout - user can cancel via UI)
+    match wait_for_metadata_files(handle, &metadata_files, progress_tx, &info_hash).await {
         Ok(_files) => {
             // Metadata files downloaded
         }
         Err(e) => {
             warn!("Failed to download metadata files: {}", e);
+            let _ = progress_tx.send(TorrentProgress::Error {
+                info_hash: info_hash.clone(),
+                message: format!("Failed to download metadata files: {}", e),
+            });
             return Ok(None);
         }
     }
@@ -164,9 +177,6 @@ pub async fn detect_metadata_from_torrent_file(
     // With default storage, files are written to temp_path/torrent_name/
     let torrent_name = handle.name().await?;
     let save_dir = temp_path.join(&torrent_name);
-
-    // Wait a bit for libtorrent to finish writing files
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
     // Try to detect metadata from the save directory
     if save_dir.exists() {
@@ -177,6 +187,10 @@ pub async fn detect_metadata_from_torrent_file(
             }
             Err(e) => {
                 warn!("Failed to detect metadata from {:?}: {}", save_dir, e);
+                let _ = progress_tx.send(TorrentProgress::Error {
+                    info_hash: info_hash.clone(),
+                    message: format!("Failed to detect metadata: {}", e),
+                });
                 Ok(None)
             }
         }

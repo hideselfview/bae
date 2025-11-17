@@ -3,6 +3,7 @@ use super::inputs::TorrentInput;
 use super::shared::{
     Confirmation, DetectingMetadata, ErrorDisplay, ExactLookup, ManualSearch, SelectedSource,
 };
+use super::torrent_status::TorrentStatus;
 use crate::import::MatchCandidate;
 use crate::ui::components::import::ImportSource;
 use crate::ui::import_context::{ImportContext, ImportPhase};
@@ -96,30 +97,34 @@ pub fn TorrentImport() -> Element {
                         title: "Selected Torrent".to_string(),
                         path: import_context.folder_path(),
                         on_clear: on_change_folder,
-                        children: if *import_context.is_detecting().read() {
-                            Some(rsx! {
-                                DetectingMetadata {
-                                    message: "Downloading metadata files (CUE/log)...".to_string(),
-                                    on_skip: {
-                                        let import_context = import_context.clone();
-                                        EventHandler::new(move |()| {
-                                            import_context.skip_metadata_detection();
-                                        })
-                                    },
-                                }
-                            })
-                        } else if !import_context.folder_files().read().is_empty() {
-                            Some(rsx! {
-                                div { class: "mt-4",
-                                    h4 { class: "text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3", "Files" }
-                                    FileList {
-                                        files: import_context.folder_files().read().clone(),
-                                    }
-                                }
-                            })
-                        } else {
-                            None
-                        },
+                        children: None,
+                    }
+
+                    // Show torrent status if we have an info_hash
+                    if let Some(info_hash) = import_context.torrent_info_hash().read().as_ref() {
+                        TorrentStatus {
+                            info_hash: info_hash.clone(),
+                            on_skip: if *import_context.is_detecting().read() {
+                                Some({
+                                    let import_context = import_context.clone();
+                                    EventHandler::new(move |()| {
+                                        import_context.skip_metadata_detection();
+                                    })
+                                })
+                            } else {
+                                None
+                            },
+                        }
+                    }
+
+                    // Show file list if available
+                    if !import_context.folder_files().read().is_empty() {
+                        div { class: "bg-white rounded-lg shadow p-6",
+                            h4 { class: "text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3", "Files" }
+                            FileList {
+                                files: import_context.folder_files().read().clone(),
+                            }
+                        }
                     }
 
                     // Phase 2: Exact Lookup

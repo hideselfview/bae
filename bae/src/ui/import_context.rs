@@ -57,6 +57,7 @@ pub struct ImportContext {
     torrent_source: Signal<Option<TorrentSource>>,
     seed_after_download: Signal<bool>,
     torrent_metadata: Signal<Option<TorrentImportMetadata>>,
+    torrent_info_hash: Signal<Option<String>>,
     discogs_client: DiscogsClient,
     /// Handle to torrent manager service for all torrent operations
     torrent_manager: TorrentManagerHandle,
@@ -99,6 +100,7 @@ impl ImportContext {
             torrent_source: Signal::new(None),
             seed_after_download: Signal::new(true),
             torrent_metadata: Signal::new(None),
+            torrent_info_hash: Signal::new(None),
             discogs_client: DiscogsClient::new(config.discogs_api_key.clone()),
             torrent_manager,
             library_manager,
@@ -282,6 +284,19 @@ impl ImportContext {
         signal.set(value);
     }
 
+    pub fn set_torrent_info_hash(&self, value: Option<String>) {
+        let mut signal = self.torrent_info_hash;
+        signal.set(value);
+    }
+
+    pub fn torrent_info_hash(&self) -> Signal<Option<String>> {
+        self.torrent_info_hash
+    }
+
+    pub fn torrent_manager(&self) -> TorrentManagerHandle {
+        self.torrent_manager.clone()
+    }
+
     /// Reset detection state and return to folder selection phase
     fn reset_to_folder_selection(&self) {
         self.set_is_detecting(false);
@@ -337,6 +352,7 @@ impl ImportContext {
         self.set_torrent_source(None);
         self.set_seed_after_download(true);
         self.set_torrent_metadata(None);
+        self.set_torrent_info_hash(None);
     }
 
     pub async fn detect_folder_metadata(
@@ -690,7 +706,7 @@ impl ImportContext {
 
         // Store torrent metadata
         let torrent_metadata = TorrentImportMetadata {
-            info_hash: torrent_info.info_hash,
+            info_hash: torrent_info.info_hash.clone(),
             magnet_link: None,
             torrent_name: torrent_info.torrent_name.clone(),
             total_size_bytes: torrent_info.total_size_bytes as i64,
@@ -700,6 +716,7 @@ impl ImportContext {
             file_list: torrent_info.file_list,
         };
         self.set_torrent_metadata(Some(torrent_metadata));
+        self.set_torrent_info_hash(Some(torrent_info.info_hash));
 
         info!(
             "Torrent loaded: {} ({} files)",

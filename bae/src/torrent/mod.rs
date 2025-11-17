@@ -3,6 +3,7 @@ pub mod ffi;
 pub mod manager;
 pub mod metadata_detector;
 pub mod piece_mapper;
+pub mod progress;
 pub mod storage;
 
 pub use manager::{start_torrent_manager, TorrentManagerHandle};

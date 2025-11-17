@@ -131,6 +131,40 @@ void torrent_pause(torrent_handle* handle);
 /// Resume a torrent
 void torrent_resume(torrent_handle* handle);
 
+/// Alert handling functions for libtorrent's alert system
+/// Alert types (matching libtorrent alert_category_t)
+enum AlertType {
+    ALERT_TRACKER_ANNOUNCE = 0,
+    ALERT_TRACKER_ERROR = 1,
+    ALERT_PEER_CONNECT = 2,
+    ALERT_PEER_DISCONNECT = 3,
+    ALERT_FILE_COMPLETED = 4,
+    ALERT_METADATA_RECEIVED = 5,
+    ALERT_TORRENT_ADDED = 6,
+    ALERT_TORRENT_REMOVED = 7,
+    ALERT_TORRENT_PAUSED = 8,
+    ALERT_TORRENT_RESUMED = 9,
+    ALERT_STATE_CHANGED = 10,
+    ALERT_STATS = 11,
+    ALERT_UNKNOWN = 99,
+};
+
+/// Alert data structure for passing to Rust
+struct AlertData {
+    AlertType type;
+    std::string info_hash;
+    std::string tracker_url;
+    std::string tracker_message;
+    int32_t num_peers;
+    int32_t num_seeds;
+    std::string file_path;
+    float progress;
+    std::string error_message;
+};
+
+/// Pop all pending alerts from session
+std::vector<AlertData> session_pop_alerts(session* sess);
+
 } // namespace libtorrent
 
 // Type aliases for cxx bridge (must be in global namespace)
@@ -170,6 +204,10 @@ rust::String session_get_listening_port(Session* sess);
 void set_paused(AddTorrentParams* params, bool paused);
 void torrent_pause(TorrentHandle* handle);
 void torrent_resume(TorrentHandle* handle);
+
+// Alert handling (implemented in bae_storage_helpers.cpp)
+struct AlertData;
+rust::Vec<AlertData> session_pop_alerts(Session* sess);
 
 std::unique_ptr<BaeStorageConstructor> create_bae_storage_constructor(
     rust::Fn<rust::Vec<uint8_t>(int32_t, int32_t, int32_t, int32_t)> read_cb,

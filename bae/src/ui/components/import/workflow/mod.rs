@@ -10,6 +10,7 @@ mod page;
 mod shared;
 mod source_selector;
 mod torrent_import;
+mod torrent_status;
 
 pub use file_list::FileInfo;
 pub use page::ImportPage;

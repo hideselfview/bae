@@ -180,3 +180,23 @@ void session_remove_torrent(Session* sess, TorrentHandle* handle, bool delete_fi
     libtorrent::session_remove_torrent(sess, handle, delete_files);
 }
 
+// Wrapper for session_pop_alerts - converts C++ AlertData to Rust AlertData
+rust::Vec<AlertData> session_pop_alerts(Session* sess) {
+    auto cpp_alerts = libtorrent::session_pop_alerts(sess);
+    rust::Vec<AlertData> rust_alerts;
+    for (const auto& cpp_alert : cpp_alerts) {
+        AlertData rust_alert;
+        rust_alert.alert_type = static_cast<int32_t>(cpp_alert.type);
+        rust_alert.info_hash = rust::String(cpp_alert.info_hash.data(), cpp_alert.info_hash.size());
+        rust_alert.tracker_url = rust::String(cpp_alert.tracker_url.data(), cpp_alert.tracker_url.size());
+        rust_alert.tracker_message = rust::String(cpp_alert.tracker_message.data(), cpp_alert.tracker_message.size());
+        rust_alert.num_peers = cpp_alert.num_peers;
+        rust_alert.num_seeds = cpp_alert.num_seeds;
+        rust_alert.file_path = rust::String(cpp_alert.file_path.data(), cpp_alert.file_path.size());
+        rust_alert.progress = cpp_alert.progress;
+        rust_alert.error_message = rust::String(cpp_alert.error_message.data(), cpp_alert.error_message.size());
+        rust_alerts.push_back(rust_alert);
+    }
+    return rust_alerts;
+}
+
