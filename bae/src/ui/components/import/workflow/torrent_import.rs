@@ -101,6 +101,9 @@ pub fn TorrentImport() -> Element {
                             TorrentInfoDisplay {
                                 info: import_context.torrent_info(),
                             }
+                            TorrentFilesDisplay {
+                                info: import_context.torrent_info(),
+                            }
                         }),
                     }
 
@@ -223,28 +226,20 @@ pub fn TorrentImport() -> Element {
 
 #[component]
 fn TorrentTrackerDisplay(trackers: Vec<String>) -> Element {
-    let mut expanded = use_signal(|| false);
-
     if trackers.is_empty() {
         return rsx! {
             div { "No trackers available" }
         };
     }
 
-    // Fake data for tracker status and peers
+    // Fake data for tracker status
     struct TrackerStatus {
         url: String,
         announce_status: String,
+        announce_progress: Option<(usize, usize)>, // (current, total) for announcing, None for connected
         peer_count: usize,
-        peers: Vec<PeerInfo>,
-    }
-
-    struct PeerInfo {
-        ip: String,
-        port: u16,
-        availability: f64,
-        client: String,
-        is_seeder: bool,
+        seeders: usize,
+        leechers: usize,
     }
 
     let tracker_statuses: Vec<TrackerStatus> = trackers
@@ -253,66 +248,89 @@ fn TorrentTrackerDisplay(trackers: Vec<String>) -> Element {
         .map(|(idx, url)| {
             // Generate fake data - use index to vary peer counts
             let peer_count = 15 + (idx * 7) % 35; // Varies between 15-49
-            let peers: Vec<PeerInfo> = (0..peer_count.min(10))
-                .map(|i| {
-                    // Seeders typically have 100% availability, leechers have less
-                    let is_seeder = i % 4 == 0; // Roughly 25% seeders
-                    let availability = if is_seeder {
-                        100.0
-                    } else {
-                        (50.0 + (i as f64 * 5.0)).min(99.0)
-                    };
-                    PeerInfo {
-                        ip: format!("192.168.1.{}", 100 + i),
-                        port: 6881 + (i as u16),
-                        availability,
-                        client: if i % 3 == 0 {
-                            "qBittorrent".to_string()
-                        } else if i % 3 == 1 {
-                            "Transmission".to_string()
-                        } else {
-                            "Deluge".to_string()
-                        },
-                        is_seeder,
-                    }
-                })
-                .collect();
+            let seeders = peer_count / 4; // Roughly 25% seeders
+            let leechers = peer_count - seeders;
+
+            // Determine announce status and progress
+            let (announce_status, announce_progress) = if url.contains("udp") {
+                ("Connected".to_string(), None)
+            } else {
+                // Simulate announcing progress (0/2, 1/2, or 2/2 = Connected)
+                let progress = idx % 3; // Cycle through 0, 1, 2
+                if progress == 2 {
+                    ("Connected".to_string(), None)
+                } else {
+                    ("Announcing".to_string(), Some((progress, 2)))
+                }
+            };
 
             TrackerStatus {
                 url: url.clone(),
-                announce_status: if url.contains("udp") {
-                    "Connected".to_string()
-                } else {
-                    "Announcing...".to_string()
-                },
+                announce_status,
+                announce_progress,
                 peer_count,
-                peers,
+                seeders,
+                leechers,
             }
         })
         .collect();
 
+    let mut expanded = use_signal(|| false);
+
     let total_peers: usize = tracker_statuses.iter().map(|ts| ts.peer_count).sum();
+    let total_seeders: usize = tracker_statuses.iter().map(|ts| ts.seeders).sum();
+    let total_leechers: usize = tracker_statuses.iter().map(|ts| ts.leechers).sum();
 
-    // Collect all peers from all trackers into a single list
-    let mut all_peers: Vec<&PeerInfo> = tracker_statuses
-        .iter()
-        .flat_map(|ts| ts.peers.iter())
-        .collect();
-    // Sort by availability (highest first)
-    all_peers.sort_by(|a, b| {
-        b.availability
-            .partial_cmp(&a.availability)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    // Generate summary for collapsed state
+    let mut connected_count = 0;
+    let mut announcing_count = 0;
+    let mut error_count = 0;
 
-    // Calculate seeder/leecher breakdown
-    let seeders = all_peers.iter().filter(|p| p.is_seeder).count();
-    let leechers = all_peers.len() - seeders;
+    for tracker in tracker_statuses.iter() {
+        match tracker.announce_status.as_str() {
+            "Connected" => connected_count += 1,
+            "Announcing" => announcing_count += 1,
+            _ => error_count += 1,
+        }
+    }
+
+    let mut summary_parts = Vec::new();
+    if connected_count > 0 {
+        summary_parts.push(format!("{} connected", connected_count));
+    }
+    if announcing_count > 0 {
+        summary_parts.push(format!("{} announcing", announcing_count));
+    }
+    if error_count > 0 {
+        summary_parts.push(format!("{} error", error_count));
+    }
+    let summary = if summary_parts.is_empty() {
+        "No status".to_string()
+    } else {
+        summary_parts.join(", ")
+    };
 
     rsx! {
-        div { class: "mb-4 space-y-3",
-            div { class: "flex items-center justify-between",
-                h3 { class: "text-sm font-semibold text-gray-300 uppercase tracking-wide", "Trackers" }
+        div { class: "mb-4",
+            button {
+                class: "w-full flex items-center justify-between p-3 bg-gray-800 rounded border border-gray-700 hover:bg-gray-700 transition-colors",
+                onclick: move |_| {
+                    let current = *expanded.read();
+                    expanded.set(!current);
+                },
+                div { class: "flex items-center gap-3",
+                    span { class: "text-xs text-gray-400",
+                        if *expanded.read() {
+                            "▼"
+                        } else {
+                            "▶"
+                        }
+                    }
+                    h3 { class: "text-sm font-semibold text-gray-300 uppercase tracking-wide", "Trackers" }
+                    if !*expanded.read() {
+                        span { class: "text-xs text-gray-400", {format!("({})", summary)} }
+                    }
+                }
                 div { class: "flex items-center gap-4 text-sm text-gray-400",
                     div {
                         span { "Total peers: " }
@@ -321,86 +339,72 @@ fn TorrentTrackerDisplay(trackers: Vec<String>) -> Element {
                     div { class: "flex items-center gap-2",
                         span { class: "px-2 py-0.5 rounded bg-green-900/30 text-green-400 border border-green-700",
                             span { "Seeders: " }
-                            span { class: "font-medium", {seeders.to_string()} }
+                            span { class: "font-medium", {total_seeders.to_string()} }
                         }
                         span { class: "px-2 py-0.5 rounded bg-blue-900/30 text-blue-400 border border-blue-700",
                             span { "Leechers: " }
-                            span { class: "font-medium", {leechers.to_string()} }
-                        }
-                    }
-                }
-            }
-
-            div { class: "space-y-2",
-                for tracker in tracker_statuses.iter() {
-                    div { class: "bg-gray-800 rounded border border-gray-700 p-3",
-                        div { class: "flex items-center justify-between",
-                            div { class: "flex-1 min-w-0",
-                                p { class: "text-sm font-mono text-gray-300 truncate", {tracker.url.clone()} }
-                            }
-                            div { class: "flex items-center gap-4 ml-4",
-                                span { class: "text-xs px-2 py-1 rounded",
-                                    class: if tracker.announce_status == "Connected" {
-                                        "bg-green-900/30 text-green-400 border border-green-700"
-                                    } else {
-                                        "bg-yellow-900/30 text-yellow-400 border border-yellow-700"
-                                    },
-                                    {tracker.announce_status.clone()}
-                                }
-                                span { class: "text-xs text-gray-400",
-                                    {tracker.peer_count.to_string()}
-                                    span { " peers" }
-                                }
-                            }
+                            span { class: "font-medium", {total_leechers.to_string()} }
                         }
                     }
                 }
             }
 
             if *expanded.read() {
-                div { class: "mt-3 pt-3 border-t border-gray-700",
-                    h4 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2", "All Peers" }
-                    div { class: "space-y-1.5 max-h-64 overflow-y-auto",
-                        for peer in all_peers.iter() {
-                            div { class: "flex items-center justify-between text-xs bg-gray-900/50 px-2 py-1.5 rounded",
-                                div { class: "flex items-center gap-3",
-                                    span { class: "font-mono text-gray-300", {format!("{}:{}", peer.ip, peer.port)} }
-                                    span { class: "text-gray-500", {peer.client.clone()} }
-                                    span { class: "px-1.5 py-0.5 rounded text-xs",
-                                        class: if peer.is_seeder {
-                                            "bg-green-900/30 text-green-400 border border-green-700"
-                                        } else {
-                                            "bg-blue-900/30 text-blue-400 border border-blue-700"
-                                        },
-                                        if peer.is_seeder { "Seeder" } else { "Leecher" }
-                                    }
-                                }
-                                div { class: "flex items-center gap-2",
-                                    div { class: "w-16 h-1.5 bg-gray-700 rounded-full overflow-hidden",
-                                        div {
-                                            class: "h-full",
-                                            class: if peer.is_seeder { "bg-green-500" } else { "bg-blue-500" },
-                                            style: "width: {peer.availability}%",
-                                        }
-                                    }
-                                    span { class: "text-gray-400 w-12 text-right", {format!("{:.1}%", peer.availability)} }
-                                }
-                            }
+                div { class: "mt-3 space-y-2",
+                    for tracker in tracker_statuses.iter() {
+                        TrackerItem {
+                            url: tracker.url.clone(),
+                            announce_status: tracker.announce_status.clone(),
+                            announce_progress: tracker.announce_progress,
+                            peer_count: tracker.peer_count,
+                            seeders: tracker.seeders,
+                            leechers: tracker.leechers,
                         }
                     }
                 }
             }
+        }
+    }
+}
 
-            button {
-                class: "w-full text-xs text-gray-400 hover:text-gray-300 py-2 transition-colors",
-                onclick: move |_| {
-                    let current = *expanded.read();
-                    expanded.set(!current);
-                },
-                if *expanded.read() {
-                    "Hide peer details"
-                } else {
-                    "Show peer details"
+#[component]
+fn TrackerItem(
+    url: String,
+    announce_status: String,
+    announce_progress: Option<(usize, usize)>,
+    peer_count: usize,
+    seeders: usize,
+    leechers: usize,
+) -> Element {
+    rsx! {
+        div { class: "bg-gray-800 rounded border border-gray-700 p-3",
+            div { class: "flex items-center justify-between",
+                div { class: "flex-1 min-w-0",
+                    p { class: "text-sm font-mono text-gray-300 truncate", {url.clone()} }
+                }
+                div { class: "flex items-center gap-4 ml-4",
+                    span { class: "text-xs px-2 py-1 rounded",
+                        class: if announce_status == "Connected" {
+                            "bg-green-900/30 text-green-400 border border-green-700"
+                        } else {
+                            "bg-yellow-900/30 text-yellow-400 border border-yellow-700"
+                        },
+                        {announce_status.clone()}
+                    }
+                    span { class: "text-xs text-gray-400",
+                        {peer_count.to_string()}
+                        span { " peers" }
+                    }
+                }
+            }
+            div { class: "mt-3 flex items-center gap-4 text-xs pt-3 border-t border-gray-700",
+                div {
+                    span { class: "text-gray-400", "Seeders: " }
+                    span { class: "text-green-400 font-medium", {seeders.to_string()} }
+                }
+                div {
+                    span { class: "text-gray-400", "Leechers: " }
+                    span { class: "text-blue-400 font-medium", {leechers.to_string()} }
                 }
             }
         }
@@ -409,7 +413,7 @@ fn TorrentTrackerDisplay(trackers: Vec<String>) -> Element {
 
 #[component]
 fn TorrentInfoDisplay(info: ReadSignal<Option<TorrentInfo>>) -> Element {
-    use crate::ui::components::import::FileInfo;
+    let mut expanded = use_signal(|| false);
 
     let torrent_info_opt = info.read();
     let Some(torrent_info) = torrent_info_opt.as_ref() else {
@@ -445,35 +449,29 @@ fn TorrentInfoDisplay(info: ReadSignal<Option<TorrentInfo>>) -> Element {
         }
     };
 
-    // Convert files to FileInfo format
-    let mut files: Vec<FileInfo> = torrent_info
-        .files
-        .iter()
-        .map(|tf| {
-            let path_buf = std::path::PathBuf::from(&tf.path);
-            let name = path_buf
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("unknown")
-                .to_string();
-            let format = path_buf
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("")
-                .to_uppercase();
-            FileInfo {
-                name,
-                size: tf.size as u64,
-                format,
-            }
-        })
-        .collect();
-    files.sort_by(|a, b| a.name.cmp(&b.name));
-
     rsx! {
-        div { class: "mt-4 space-y-4",
-            // Basic Info
-            div { class: "grid grid-cols-2 gap-4",
+        div { class: "mt-4",
+            // Header with toggle button
+            button {
+                class: "w-full flex items-center justify-between text-left p-3 bg-gray-800 rounded border border-gray-700 hover:bg-gray-700 transition-colors",
+                onclick: move |_| {
+                    let current = *expanded.read();
+                    expanded.set(!current);
+                },
+                h3 { class: "text-sm font-semibold text-gray-300 uppercase tracking-wide", "Details" }
+                span { class: "text-xs text-gray-400",
+                    if *expanded.read() {
+                        "▼"
+                    } else {
+                        "▶"
+                    }
+                }
+            }
+
+            if *expanded.read() {
+                div { class: "mt-3 space-y-4",
+                    // Basic Info
+                    div { class: "grid grid-cols-2 gap-4",
                 div {
                     h4 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2", "Name" }
                     p {
@@ -509,46 +507,110 @@ fn TorrentInfoDisplay(info: ReadSignal<Option<TorrentInfo>>) -> Element {
                         if torrent_info.is_private { "Yes" } else { "No" }
                     }
                 }
-            }
+                    }
 
-            // Comment
-            if !torrent_info.comment.is_empty() {
-                div {
-                    h4 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2", "Comment" }
-                    p {
-                        class: "text-sm font-medium tracking-tight text-white bg-gray-800 px-3 py-2 rounded border border-gray-700 break-words",
-                        {torrent_info.comment.clone()}
+                    // Comment
+                    if !torrent_info.comment.is_empty() {
+                        div {
+                            h4 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2", "Comment" }
+                            p {
+                                class: "text-sm font-medium tracking-tight text-white bg-gray-800 px-3 py-2 rounded border border-gray-700 break-words",
+                                {torrent_info.comment.clone()}
+                            }
+                        }
+                    }
+
+                    // Creator
+                    if !torrent_info.creator.is_empty() {
+                        div {
+                            h4 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2", "Created By" }
+                            p {
+                                class: "text-sm font-medium tracking-tight text-white bg-gray-800 px-3 py-2 rounded border border-gray-700",
+                                {torrent_info.creator.clone()}
+                            }
+                        }
+                    }
+
+                    // Creation Date
+                    if torrent_info.creation_date != 0 {
+                        div {
+                            h4 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2", "Creation Date" }
+                            p {
+                                class: "text-sm font-medium tracking-tight text-white bg-gray-800 px-3 py-2 rounded border border-gray-700",
+                                {format_date(torrent_info.creation_date)}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn TorrentFilesDisplay(info: ReadSignal<Option<TorrentInfo>>) -> Element {
+    use crate::ui::components::import::FileInfo;
+    let mut expanded = use_signal(|| false);
+
+    let torrent_info_opt = info.read();
+    let Some(torrent_info) = torrent_info_opt.as_ref() else {
+        return rsx! {
+            div { "No torrent info available" }
+        };
+    };
+
+    // Convert files to FileInfo format
+    let mut files: Vec<FileInfo> = torrent_info
+        .files
+        .iter()
+        .map(|tf| {
+            let path_buf = std::path::PathBuf::from(&tf.path);
+            let name = path_buf
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let format = path_buf
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_uppercase();
+            FileInfo {
+                name,
+                size: tf.size as u64,
+                format,
+            }
+        })
+        .collect();
+    files.sort_by(|a, b| a.name.cmp(&b.name));
+
+    if files.is_empty() {
+        return rsx! {
+            div { "No files available" }
+        };
+    }
+
+    rsx! {
+        div { class: "mt-4",
+            // Header with toggle button
+            button {
+                class: "w-full flex items-center justify-between text-left p-3 bg-gray-800 rounded border border-gray-700 hover:bg-gray-700 transition-colors",
+                onclick: move |_| {
+                    let current = *expanded.read();
+                    expanded.set(!current);
+                },
+                h3 { class: "text-sm font-semibold text-gray-300 uppercase tracking-wide", "Files" }
+                span { class: "text-xs text-gray-400",
+                    if *expanded.read() {
+                        "▼"
+                    } else {
+                        "▶"
                     }
                 }
             }
 
-            // Creator
-            if !torrent_info.creator.is_empty() {
-                div {
-                    h4 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2", "Created By" }
-                    p {
-                        class: "text-sm font-medium tracking-tight text-white bg-gray-800 px-3 py-2 rounded border border-gray-700",
-                        {torrent_info.creator.clone()}
-                    }
-                }
-            }
-
-            // Creation Date
-            if torrent_info.creation_date != 0 {
-                div {
-                    h4 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2", "Creation Date" }
-                    p {
-                        class: "text-sm font-medium tracking-tight text-white bg-gray-800 px-3 py-2 rounded border border-gray-700",
-                        {format_date(torrent_info.creation_date)}
-                    }
-                }
-            }
-
-
-            // Files
-            if !files.is_empty() {
-                div {
-                    h4 { class: "text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3", "Files" }
+            if *expanded.read() {
+                div { class: "mt-3",
                     FileList {
                         files: files,
                     }
