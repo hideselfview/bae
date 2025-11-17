@@ -13,7 +13,7 @@ pub fn ImportSourceSelector(
     on_source_select: EventHandler<ImportSource>,
 ) -> Element {
     rsx! {
-        div { class: "mb-6",
+        div { class: "mb-4",
             div { class: "flex space-x-4 border-b border-gray-600",
                 button {
                     class: if *selected_source.read() == ImportSource::Folder {

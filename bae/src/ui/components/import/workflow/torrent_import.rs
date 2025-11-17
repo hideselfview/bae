@@ -78,15 +78,14 @@ pub fn TorrentImport() -> Element {
     };
 
     rsx! {
-        div { class: "space-y-6",
+        div {
             // Phase 1: Torrent Selection
             if *import_context.import_phase().read() == ImportPhase::FolderSelection {
-                div { class: "bg-white rounded-lg shadow p-6",
-                    TorrentInput {
-                        on_file_select: on_torrent_file_select,
-                        on_magnet_link: on_magnet_link,
-                        on_error: on_torrent_error,
-                    }
+                TorrentInput {
+                    on_file_select: on_torrent_file_select,
+                    on_magnet_link: on_magnet_link,
+                    on_error: on_torrent_error,
+                    show_seed_checkbox: false,
                 }
             } else {
                 div { class: "space-y-6",

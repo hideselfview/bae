@@ -8,6 +8,7 @@ pub fn TorrentInput(
     on_file_select: EventHandler<(PathBuf, bool)>,
     on_magnet_link: EventHandler<(String, bool)>,
     on_error: EventHandler<String>,
+    show_seed_checkbox: bool,
 ) -> Element {
     let mut magnet_link = use_signal(String::new);
     let mut input_mode = use_signal(|| "file"); // "file" or "magnet"
@@ -52,24 +53,24 @@ pub fn TorrentInput(
     };
 
     rsx! {
-        div { class: "space-y-6",
+        div { class: "space-y-4",
             // Mode selector
-            div { class: "mb-4",
-                div { class: "flex space-x-3 border-b border-gray-300",
+            div { class: "mb-3",
+                div { class: "flex space-x-1 border-b border-gray-600",
                     button {
                         class: if *input_mode.read() == "file" {
-                            "px-3 py-1.5 text-sm font-medium transition-colors text-gray-700 border-b-2 border-gray-500"
+                            "px-3 py-1.5 text-sm font-medium transition-colors text-blue-400 border-b-2 border-blue-400"
                         } else {
-                            "px-3 py-1.5 text-sm font-medium transition-colors text-gray-500 hover:text-gray-700"
+                            "px-3 py-1.5 text-sm font-medium transition-colors text-gray-400 hover:text-gray-300"
                         },
                         onclick: move |_| input_mode.set("file"),
                         "Torrent File"
                     }
                     button {
                         class: if *input_mode.read() == "magnet" {
-                            "px-3 py-1.5 text-sm font-medium transition-colors text-gray-700 border-b-2 border-gray-500"
+                            "px-3 py-1.5 text-sm font-medium transition-colors text-blue-400 border-b-2 border-blue-400"
                         } else {
-                            "px-3 py-1.5 text-sm font-medium transition-colors text-gray-500 hover:text-gray-700"
+                            "px-3 py-1.5 text-sm font-medium transition-colors text-gray-400 hover:text-gray-300"
                         },
                         onclick: move |_| input_mode.set("magnet"),
                         "Magnet Link"
@@ -79,7 +80,7 @@ pub fn TorrentInput(
 
             // File input mode
             if *input_mode.read() == "file" {
-                div { class: "border-2 border-dashed border-gray-300 rounded-lg p-12 text-center",
+                div { class: "border-2 border-dashed border-gray-600 rounded-lg p-10 text-center",
                     div { class: "space-y-4",
                         svg {
                             xmlns: "http://www.w3.org/2000/svg",
@@ -95,10 +96,10 @@ pub fn TorrentInput(
                             }
                         }
                         div {
-                            h3 { class: "text-lg font-semibold text-gray-900 mb-2",
+                            h3 { class: "text-lg font-semibold text-gray-200 mb-2",
                                 "Select a torrent file"
                             }
-                            p { class: "text-sm text-gray-600 mb-4",
+                            p { class: "text-sm text-gray-400 mb-4",
                                 "Choose a .torrent file from your computer"
                             }
                             button {
@@ -113,14 +114,14 @@ pub fn TorrentInput(
 
             // Magnet link input mode
             if *input_mode.read() == "magnet" {
-                div { class: "space-y-4",
+                div { class: "space-y-3",
                     div {
-                        label { class: "block text-sm font-medium text-gray-700 mb-2",
+                        label { class: "block text-sm font-medium text-gray-300 mb-2",
                             "Magnet Link"
                         }
                         div { class: "flex space-x-2",
                             input {
-                                class: "flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500",
+                                class: "flex-1 px-4 py-2 border border-gray-600 bg-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500",
                                 r#type: "text",
                                 placeholder: "magnet:?xt=urn:btih:...",
                                 value: "{magnet_link}",
@@ -138,25 +139,27 @@ pub fn TorrentInput(
                             }
                         }
                     }
-                    p { class: "text-xs text-gray-500",
+                    p { class: "text-xs text-gray-400",
                         "Paste a magnet link to start downloading"
                     }
                 }
             }
 
-            // Seed after download option
-            div { class: "mt-4 flex items-center space-x-2",
-                input {
-                    r#type: "checkbox",
-                    id: "seed-after-download",
-                    checked: *seed_after_download.read(),
-                    onchange: move |evt| seed_after_download.set(evt.checked()),
-                    class: "w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                }
-                label {
-                    r#for: "seed-after-download",
-                    class: "text-sm text-gray-700",
-                    "Seed after download"
+            // Seed after download option (only show when a torrent is selected)
+            if show_seed_checkbox {
+                div { class: "mt-4 flex items-center space-x-2",
+                    input {
+                        r#type: "checkbox",
+                        id: "seed-after-download",
+                        checked: *seed_after_download.read(),
+                        onchange: move |evt| seed_after_download.set(evt.checked()),
+                        class: "w-4 h-4 text-blue-600 border-gray-600 rounded focus:ring-blue-500 bg-gray-700"
+                    }
+                    label {
+                        r#for: "seed-after-download",
+                        class: "text-sm text-gray-300",
+                        "Seed after download"
+                    }
                 }
             }
         }

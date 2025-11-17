@@ -26,25 +26,23 @@ pub fn ImportPage() -> Element {
                 h1 { class: "text-2xl font-bold text-white", "Import" }
             }
 
-            // Source selector
-            div { class: "bg-gray-800 rounded-lg shadow p-6 mb-6",
+            // Combined source selector and import component
+            div { class: "bg-gray-800 rounded-lg shadow p-4",
                 ImportSourceSelector {
                     selected_source,
                     on_source_select,
                 }
-            }
-
-            // Route to appropriate import type component
-            match *selected_source.read() {
-                ImportSource::Folder => rsx! {
-                    FolderImport {}
-                },
-                ImportSource::Torrent => rsx! {
-                    TorrentImport {}
-                },
-                ImportSource::Cd => rsx! {
-                    CdImport {}
-                },
+                match *selected_source.read() {
+                    ImportSource::Folder => rsx! {
+                        FolderImport {}
+                    },
+                    ImportSource::Torrent => rsx! {
+                        TorrentImport {}
+                    },
+                    ImportSource::Cd => rsx! {
+                        CdImport {}
+                    },
+                }
             }
         }
     }

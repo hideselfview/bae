@@ -55,7 +55,7 @@ pub fn SelectedSource(
 
                 // Filename badge
                 div {
-                    class: "inline-flex items-center px-3 py-1.5 bg-blue-900/30 border border-blue-700 rounded-md hover:bg-blue-900/40 transition-colors",
+                    class: "inline-flex items-center px-3 py-1.5 bg-gray-700 border border-blue-600 rounded-md hover:bg-gray-600 transition-colors",
                     p {
                         class: "text-sm text-blue-300 font-medium tracking-tight select-text cursor-text break-words",
                         {display_name}
