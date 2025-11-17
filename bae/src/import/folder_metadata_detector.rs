@@ -158,25 +158,51 @@ fn extract_track_offsets_from_cue(
 fn extract_leadout_from_log(log_content: &str) -> Option<(i32, i32)> {
     debug!("🔍 Parsing LOG file to extract lead-out sector");
 
-    // Find the TOC section - look for "TOC of the extracted CD" header
+    // Find the TOC section - look for "TOC" header (works for English and non-English logs)
+    // Also detect TOC table format directly as fallback
     let mut in_toc_section = false;
     let mut last_end_sector = None;
     let mut track_count = 0;
 
     for line in log_content.lines() {
         let line = line.trim();
+        let line_lower = line.to_ascii_lowercase();
 
-        // Detect TOC section start
-        if line.contains("TOC of the extracted") {
+        // Detect TOC section start - look for "TOC" keyword (language-independent)
+        // This matches "TOC of the extracted CD" in English and "TOC ������������ CD" in Russian/etc
+        if line_lower.contains("toc")
+            && (line_lower.contains("cd") || line_lower.contains("extracted"))
+        {
             in_toc_section = true;
-            debug!("Found TOC section header");
+            debug!("Found TOC section header: {}", line);
             continue;
+        }
+
+        // Also detect TOC table format directly (fallback for logs without clear header)
+        // Look for lines with pipe separators containing track numbers
+        if !in_toc_section && line.contains('|') {
+            let parts: Vec<&str> = line.split('|').collect();
+            if parts.len() >= 5 {
+                // Check if first column looks like a track number (1, 2, 3, etc.)
+                let first_col = parts[0].trim();
+                if let Ok(track_num) = first_col.parse::<u32>() {
+                    if (1..=99).contains(&track_num) {
+                        // Check if 5th column (index 4) is a valid sector number
+                        let end_sector_str = parts[4].trim();
+                        if end_sector_str.parse::<i32>().is_ok() {
+                            in_toc_section = true;
+                            debug!("Found TOC table format directly (no header)");
+                            // Fall through to parse this line
+                        }
+                    }
+                }
+            }
         }
 
         // Stop parsing after TOC section (look for next major section)
         if in_toc_section
-            && (line.contains("Range status")
-                || line.contains("AccurateRip")
+            && (line_lower.contains("range status")
+                || line_lower.contains("accuraterip")
                 || (line.is_empty() && track_count > 0 && last_end_sector.is_some()))
         {
             debug!("End of TOC section, found {} tracks", track_count);
@@ -188,9 +214,11 @@ fn extract_leadout_from_log(log_content: &str) -> Option<(i32, i32)> {
         }
 
         // Skip header separator lines and empty lines
+        // Check for header lines in a language-independent way
         if line.contains("---")
             || line.is_empty()
-            || (line.contains("Track") && line.contains("Start sector"))
+            || (line_lower.contains("track")
+                && (line_lower.contains("start") || line_lower.contains("sector")))
         {
             continue;
         }
@@ -224,15 +252,22 @@ fn extract_leadout_from_log(log_content: &str) -> Option<(i32, i32)> {
         Some((lead_out, lead_out_start))
     } else {
         warn!("⚠️ Could not find any end sectors in LOG file");
-        debug!(
-            "LOG content preview (TOC section):\n{}",
+        // Try to find TOC section for debug output (language-independent)
+        let toc_start = log_content.lines().position(|l| {
+            let l_lower = l.to_ascii_lowercase();
+            l_lower.contains("toc") && (l_lower.contains("cd") || l_lower.contains("extracted"))
+        });
+        let preview: String = if let Some(start_idx) = toc_start {
             log_content
                 .lines()
-                .skip_while(|l| !l.contains("TOC of the extracted"))
+                .skip(start_idx)
                 .take(15)
                 .collect::<Vec<_>>()
                 .join("\n")
-        );
+        } else {
+            log_content.lines().take(30).collect::<Vec<_>>().join("\n")
+        };
+        debug!("LOG content preview (TOC section):\n{}", preview);
         None
     }
 }
@@ -247,25 +282,51 @@ fn extract_track_offsets_from_log(
 ) -> Result<(Vec<i32>, Vec<i32>), MetadataDetectionError> {
     debug!("🔍 Parsing LOG file to extract track offsets");
 
-    // Find the TOC section - look for "TOC of the extracted CD" header
+    // Find the TOC section - look for "TOC" header (works for English and non-English logs)
+    // Also detect TOC table format directly as fallback
     let mut in_toc_section = false;
     let mut track_offsets = Vec::new();
     let mut raw_sectors = Vec::new();
 
     for line in log_content.lines() {
         let line = line.trim();
+        let line_lower = line.to_ascii_lowercase();
 
-        // Detect TOC section start
-        if line.contains("TOC of the extracted") {
+        // Detect TOC section start - look for "TOC" keyword (language-independent)
+        // This matches "TOC of the extracted CD" in English and "TOC ������������ CD" in Russian/etc
+        if line_lower.contains("toc")
+            && (line_lower.contains("cd") || line_lower.contains("extracted"))
+        {
             in_toc_section = true;
-            debug!("Found TOC section header");
+            debug!("Found TOC section header: {}", line);
             continue;
+        }
+
+        // Also detect TOC table format directly (fallback for logs without clear header)
+        // Look for lines with pipe separators containing track numbers
+        if !in_toc_section && line.contains('|') {
+            let parts: Vec<&str> = line.split('|').collect();
+            if parts.len() >= 5 {
+                // Check if first column looks like a track number (1, 2, 3, etc.)
+                let first_col = parts[0].trim();
+                if let Ok(track_num) = first_col.parse::<u32>() {
+                    if (1..=99).contains(&track_num) {
+                        // Check if 4th column (index 3) is a valid sector number
+                        let start_sector_str = parts[3].trim();
+                        if start_sector_str.parse::<i32>().is_ok() {
+                            in_toc_section = true;
+                            debug!("Found TOC table format directly (no header)");
+                            // Fall through to parse this line
+                        }
+                    }
+                }
+            }
         }
 
         // Stop parsing after TOC section (look for next major section)
         if in_toc_section
-            && (line.contains("Range status")
-                || line.contains("AccurateRip")
+            && (line_lower.contains("range status")
+                || line_lower.contains("accuraterip")
                 || (line.is_empty() && !track_offsets.is_empty()))
         {
             debug!("End of TOC section, found {} tracks", track_offsets.len());
@@ -277,9 +338,11 @@ fn extract_track_offsets_from_log(
         }
 
         // Skip header separator lines and empty lines
+        // Check for header lines in a language-independent way
         if line.contains("---")
             || line.is_empty()
-            || (line.contains("Track") && line.contains("Start sector"))
+            || (line_lower.contains("track")
+                && (line_lower.contains("start") || line_lower.contains("sector")))
         {
             continue;
         }
