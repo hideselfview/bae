@@ -1,7 +1,10 @@
+use crate::ui::components::import::TorrentInputMode;
+use crate::ui::import_context::ImportContext;
 use dioxus::html::KeyboardEvent;
 use dioxus::prelude::*;
 use rfd::AsyncFileDialog;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 #[component]
 pub fn TorrentInput(
@@ -10,15 +13,16 @@ pub fn TorrentInput(
     on_error: EventHandler<String>,
     show_seed_checkbox: bool,
 ) -> Element {
-    let mut magnet_link = use_signal(String::new);
-    let mut input_mode = use_signal(|| "file"); // "file" or "magnet"
-    let mut seed_after_download = use_signal(|| true);
+    let import_context = use_context::<Rc<ImportContext>>();
+    let magnet_link = import_context.magnet_link();
+    let input_mode = import_context.torrent_input_mode();
+    let seed_after_download = import_context.seed_after_download();
 
     let on_file_button_click = {
-        let seed_after_download = seed_after_download;
+        let import_context = import_context.clone();
         let on_file_select = on_file_select;
         move |_| {
-            let seed_flag = *seed_after_download.read();
+            let seed_flag = *import_context.seed_after_download().read();
             spawn(async move {
                 if let Some(file_handle) = AsyncFileDialog::new()
                     .set_title("Select Torrent File")
@@ -33,12 +37,11 @@ pub fn TorrentInput(
     };
 
     let on_magnet_submit = {
-        let magnet_link = magnet_link;
-        let seed_after_download = seed_after_download;
+        let import_context = import_context.clone();
         let on_error = on_error;
         let on_magnet_link = on_magnet_link;
         move |_| {
-            let link = magnet_link.read().trim().to_string();
+            let link = import_context.magnet_link().read().trim().to_string();
             if link.is_empty() {
                 on_error.call("Please enter a magnet link".to_string());
                 return;
@@ -47,8 +50,29 @@ pub fn TorrentInput(
                 on_error.call("Invalid magnet link format".to_string());
                 return;
             }
-            let seed_flag = *seed_after_download.read();
+            let seed_flag = *import_context.seed_after_download().read();
             on_magnet_link.call((link, seed_flag));
+        }
+    };
+
+    let on_file_mode_click = {
+        let import_context = import_context.clone();
+        move |_| import_context.set_torrent_input_mode(TorrentInputMode::File)
+    };
+
+    let on_magnet_mode_click = {
+        let import_context = import_context.clone();
+        move |_| import_context.set_torrent_input_mode(TorrentInputMode::Magnet)
+    };
+
+    let import_context_for_input = import_context.clone();
+    let import_context_for_seed = import_context.clone();
+    let on_magnet_submit_for_keydown = on_magnet_submit.clone();
+    let on_magnet_keydown = {
+        move |evt: KeyboardEvent| {
+            if evt.key() == dioxus::html::Key::Enter {
+                on_magnet_submit_for_keydown(());
+            }
         }
     };
 
@@ -58,28 +82,28 @@ pub fn TorrentInput(
             div { class: "mb-3",
                 div { class: "flex space-x-1 border-b border-gray-600",
                     button {
-                        class: if *input_mode.read() == "file" {
+                        class: if *input_mode.read() == TorrentInputMode::File {
                             "px-3 py-1.5 text-sm font-medium transition-colors text-blue-400 border-b-2 border-blue-400"
                         } else {
                             "px-3 py-1.5 text-sm font-medium transition-colors text-gray-400 hover:text-gray-300"
                         },
-                        onclick: move |_| input_mode.set("file"),
+                        onclick: on_file_mode_click,
                         "Torrent File"
                     }
                     button {
-                        class: if *input_mode.read() == "magnet" {
+                        class: if *input_mode.read() == TorrentInputMode::Magnet {
                             "px-3 py-1.5 text-sm font-medium transition-colors text-blue-400 border-b-2 border-blue-400"
                         } else {
                             "px-3 py-1.5 text-sm font-medium transition-colors text-gray-400 hover:text-gray-300"
                         },
-                        onclick: move |_| input_mode.set("magnet"),
+                        onclick: on_magnet_mode_click,
                         "Magnet Link"
                     }
                 }
             }
 
             // File input mode
-            if *input_mode.read() == "file" {
+            if *input_mode.read() == TorrentInputMode::File {
                 div { class: "border-2 border-dashed border-gray-600 rounded-lg p-10 text-center",
                     div { class: "space-y-4",
                         svg {
@@ -113,7 +137,7 @@ pub fn TorrentInput(
             }
 
             // Magnet link input mode
-            if *input_mode.read() == "magnet" {
+            if *input_mode.read() == TorrentInputMode::Magnet {
                 div { class: "space-y-3",
                     div {
                         label { class: "block text-sm font-medium text-gray-300 mb-2",
@@ -125,12 +149,10 @@ pub fn TorrentInput(
                                 r#type: "text",
                                 placeholder: "magnet:?xt=urn:btih:...",
                                 value: "{magnet_link}",
-                                oninput: move |evt| magnet_link.set(evt.value()),
-                                onkeydown: move |evt: KeyboardEvent| {
-                                    if evt.key() == dioxus::html::Key::Enter {
-                                        on_magnet_submit(());
-                                    }
-                                }
+                                oninput: move |evt| {
+                                    import_context_for_input.set_magnet_link(evt.value());
+                                },
+                                onkeydown: on_magnet_keydown,
                             }
                             button {
                                 class: "px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium",
@@ -152,7 +174,9 @@ pub fn TorrentInput(
                         r#type: "checkbox",
                         id: "seed-after-download",
                         checked: *seed_after_download.read(),
-                        onchange: move |evt| seed_after_download.set(evt.checked()),
+                        onchange: move |evt| {
+                            import_context_for_seed.set_seed_after_download(evt.checked());
+                        },
                         class: "w-4 h-4 text-blue-600 border-gray-600 rounded focus:ring-blue-500 bg-gray-700"
                     }
                     label {

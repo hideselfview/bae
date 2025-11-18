@@ -9,7 +9,7 @@ use crate::library::SharedLibraryManager;
 use crate::musicbrainz::{lookup_by_discid, search_releases, MbRelease};
 use crate::torrent::ffi::TorrentInfo;
 use crate::torrent::{parse_torrent_info, TorrentManagerHandle};
-use crate::ui::components::import::{FileInfo, ImportSource, SearchSource};
+use crate::ui::components::import::{FileInfo, ImportSource, SearchSource, TorrentInputMode};
 use crate::ui::Route;
 use dioxus::prelude::*;
 use dioxus::router::Navigator;
@@ -60,6 +60,14 @@ pub struct ImportContext {
     torrent_metadata: Signal<Option<TorrentImportMetadata>>,
     torrent_info_hash: Signal<Option<String>>,
     torrent_info: Signal<Option<TorrentInfo>>,
+    torrent_input_mode: Signal<TorrentInputMode>,
+    magnet_link: Signal<String>,
+    // CD-specific state
+    cd_toc_info: Signal<Option<(String, u8, u8)>>, // (disc_id, first_track, last_track)
+    // UI state (persists across navigation)
+    selected_import_source: Signal<ImportSource>,
+    search_source: Signal<SearchSource>,
+    manual_match_candidates: Signal<Vec<MatchCandidate>>,
     discogs_client: DiscogsClient,
     /// Handle to torrent manager service for all torrent operations
     torrent_manager: TorrentManagerHandle,
@@ -104,6 +112,12 @@ impl ImportContext {
             torrent_metadata: Signal::new(None),
             torrent_info_hash: Signal::new(None),
             torrent_info: Signal::new(None),
+            torrent_input_mode: Signal::new(TorrentInputMode::File),
+            magnet_link: Signal::new(String::new()),
+            cd_toc_info: Signal::new(None),
+            selected_import_source: Signal::new(ImportSource::Folder),
+            search_source: Signal::new(SearchSource::MusicBrainz),
+            manual_match_candidates: Signal::new(Vec::new()),
             discogs_client: DiscogsClient::new(config.discogs_api_key.clone()),
             torrent_manager,
             library_manager,
@@ -146,6 +160,10 @@ impl ImportContext {
 
     pub fn is_looking_up(&self) -> Signal<bool> {
         self.is_looking_up
+    }
+
+    pub fn error_message(&self) -> Signal<Option<String>> {
+        self.error_message
     }
 
     pub fn import_error_message(&self) -> Signal<Option<String>> {
@@ -305,6 +323,60 @@ impl ImportContext {
         signal.set(value);
     }
 
+    pub fn torrent_input_mode(&self) -> Signal<TorrentInputMode> {
+        self.torrent_input_mode
+    }
+
+    pub fn set_torrent_input_mode(&self, value: TorrentInputMode) {
+        let mut signal = self.torrent_input_mode;
+        signal.set(value);
+    }
+
+    pub fn magnet_link(&self) -> Signal<String> {
+        self.magnet_link
+    }
+
+    pub fn set_magnet_link(&self, value: String) {
+        let mut signal = self.magnet_link;
+        signal.set(value);
+    }
+
+    pub fn cd_toc_info(&self) -> Signal<Option<(String, u8, u8)>> {
+        self.cd_toc_info
+    }
+
+    pub fn set_cd_toc_info(&self, value: Option<(String, u8, u8)>) {
+        let mut signal = self.cd_toc_info;
+        signal.set(value);
+    }
+
+    pub fn selected_import_source(&self) -> Signal<ImportSource> {
+        self.selected_import_source
+    }
+
+    pub fn set_selected_import_source(&self, value: ImportSource) {
+        let mut signal = self.selected_import_source;
+        signal.set(value);
+    }
+
+    pub fn search_source(&self) -> Signal<SearchSource> {
+        self.search_source
+    }
+
+    pub fn set_search_source(&self, value: SearchSource) {
+        let mut signal = self.search_source;
+        signal.set(value);
+    }
+
+    pub fn manual_match_candidates(&self) -> Signal<Vec<MatchCandidate>> {
+        self.manual_match_candidates
+    }
+
+    pub fn set_manual_match_candidates(&self, value: Vec<MatchCandidate>) {
+        let mut signal = self.manual_match_candidates;
+        signal.set(value);
+    }
+
     pub fn torrent_manager(&self) -> TorrentManagerHandle {
         self.torrent_manager.clone()
     }
@@ -366,6 +438,11 @@ impl ImportContext {
         self.set_torrent_metadata(None);
         self.set_torrent_info_hash(None);
         self.set_torrent_info(None);
+        self.set_torrent_input_mode(TorrentInputMode::File);
+        self.set_magnet_link(String::new());
+        self.set_cd_toc_info(None);
+        self.set_manual_match_candidates(Vec::new());
+        // Note: selected_import_source and search_source are NOT reset - they persist across navigation
     }
 
     pub async fn detect_folder_metadata(

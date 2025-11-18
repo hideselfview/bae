@@ -7,6 +7,12 @@ pub enum ImportSource {
     Cd,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum TorrentInputMode {
+    File,
+    Magnet,
+}
+
 #[component]
 pub fn ImportSourceSelector(
     selected_source: Signal<ImportSource>,

@@ -9,12 +9,12 @@ use std::rc::Rc;
 #[component]
 pub fn ImportPage() -> Element {
     let import_context = use_context::<Rc<ImportContext>>();
-    let mut selected_source = use_signal(|| ImportSource::Folder);
+    let selected_source = import_context.selected_import_source();
 
     let on_source_select = {
         let import_context = import_context.clone();
         move |source: ImportSource| {
-            selected_source.set(source);
+            import_context.set_selected_import_source(source);
             // Reset import context when switching sources
             import_context.reset();
         }

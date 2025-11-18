@@ -15,30 +15,28 @@ pub fn ManualSearchPanel(
     let import_context = use_context::<Rc<ImportContext>>();
 
     let mut search_query = import_context.search_query();
-    let mut search_source = use_signal(|| SearchSource::MusicBrainz);
-    let mut match_candidates = use_signal(Vec::<MatchCandidate>::new);
+    let search_source = import_context.search_source();
+    let match_candidates = import_context.manual_match_candidates();
     let mut is_searching = use_signal(|| false);
-    let mut error_message = use_signal(|| None::<String>);
+    let error_message = import_context.error_message();
 
     let on_search_click = {
         let import_context = import_context.clone();
 
         move |_| {
             if search_query.read().trim().is_empty() {
-                error_message.set(Some("Please enter a search query".to_string()));
+                import_context.set_error_message(Some("Please enter a search query".to_string()));
                 return;
             }
 
             is_searching.set(true);
-            error_message.set(None);
-            match_candidates.set(Vec::new());
+            import_context.set_error_message(None);
+            import_context.set_manual_match_candidates(Vec::new());
 
             let import_context_clone = import_context.clone();
             let query = search_query.read().clone();
             let source = search_source.read().clone();
             let mut is_searching_clone = is_searching;
-            let mut error_message_clone = error_message;
-            let mut match_candidates_clone = match_candidates;
 
             spawn(async move {
                 use tracing::info;
@@ -54,10 +52,11 @@ pub fn ManualSearchPanel(
 
                 match import_context_clone.search_for_matches(query, source).await {
                     Ok(candidates) => {
-                        match_candidates_clone.set(candidates);
+                        import_context_clone.set_manual_match_candidates(candidates);
                     }
                     Err(e) => {
-                        error_message_clone.set(Some(format!("Search failed: {}", e)));
+                        import_context_clone
+                            .set_error_message(Some(format!("Search failed: {}", e)));
                     }
                 }
 
@@ -71,20 +70,19 @@ pub fn ManualSearchPanel(
         move |evt: dioxus::html::KeyboardEvent| {
             if evt.key() == dioxus::html::Key::Enter {
                 if search_query.read().trim().is_empty() {
-                    error_message.set(Some("Please enter a search query".to_string()));
+                    import_context
+                        .set_error_message(Some("Please enter a search query".to_string()));
                     return;
                 }
 
                 is_searching.set(true);
-                error_message.set(None);
-                match_candidates.set(Vec::new());
+                import_context.set_error_message(None);
+                import_context.set_manual_match_candidates(Vec::new());
 
                 let import_context_clone = import_context.clone();
                 let query = search_query.read().clone();
                 let source = search_source.read().clone();
                 let mut is_searching_clone = is_searching;
-                let mut error_message_clone = error_message;
-                let mut match_candidates_clone = match_candidates;
 
                 spawn(async move {
                     use tracing::info;
@@ -100,10 +98,11 @@ pub fn ManualSearchPanel(
 
                     match import_context_clone.search_for_matches(query, source).await {
                         Ok(candidates) => {
-                            match_candidates_clone.set(candidates);
+                            import_context_clone.set_manual_match_candidates(candidates);
                         }
                         Err(e) => {
-                            error_message_clone.set(Some(format!("Search failed: {}", e)));
+                            import_context_clone
+                                .set_error_message(Some(format!("Search failed: {}", e)));
                         }
                     }
 
@@ -120,9 +119,9 @@ pub fn ManualSearchPanel(
             SearchSourceSelector {
                 selected_source: search_source,
                 on_select: move |source| {
-                    search_source.set(source);
-                    match_candidates.set(Vec::new());
-                    error_message.set(None);
+                    import_context.set_search_source(source);
+                    import_context.set_manual_match_candidates(Vec::new());
+                    import_context.set_error_message(None);
                 }
             }
 

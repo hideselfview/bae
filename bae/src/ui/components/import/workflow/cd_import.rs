@@ -23,15 +23,13 @@ pub fn CdImport() -> Element {
     let is_looking_up = import_context.is_looking_up();
     let import_error_message = import_context.import_error_message();
     let duplicate_album_id = import_context.duplicate_album_id();
-    let cd_toc_info: Signal<Option<(String, u8, u8)>> = use_signal(|| None); // (disc_id, first_track, last_track)
+    let cd_toc_info = import_context.cd_toc_info();
 
     let on_drive_select = {
         let import_context = import_context.clone();
-        let cd_toc_info_local = cd_toc_info;
         move |drive_path: PathBuf| {
             let import_context = import_context.clone();
             let drive_path_str = drive_path.to_string_lossy().to_string();
-            let mut cd_toc_info_async = cd_toc_info_local;
 
             spawn(async move {
                 use crate::cd::CdDrive;
@@ -44,7 +42,7 @@ pub fn CdImport() -> Element {
                 match drive.read_toc() {
                     Ok(toc) => {
                         // Store CD info for display
-                        cd_toc_info_async.set(Some((
+                        import_context.set_cd_toc_info(Some((
                             toc.disc_id.clone(),
                             toc.first_track,
                             toc.last_track,
