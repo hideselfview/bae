@@ -1,6 +1,7 @@
 use crate::ui::Route;
 use dioxus::prelude::*;
 
+use super::dialog::GlobalDialog;
 use super::queue_sidebar::QueueSidebar;
 use super::NowPlayingBar;
 use super::TitleBar;
@@ -24,5 +25,6 @@ pub fn Navbar() -> Element {
         Outlet::<Route> {}
         NowPlayingBar {}
         QueueSidebar {}
+        GlobalDialog {}
     }
 }

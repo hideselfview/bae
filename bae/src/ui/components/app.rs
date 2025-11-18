@@ -1,9 +1,10 @@
-use crate::ui::import_context::AlbumImportContextProvider;
+use crate::ui::import_context::ImportContextProvider;
 use crate::ui::window_activation::setup_transparent_titlebar;
 use crate::ui::{Route, FAVICON, MAIN_CSS, TAILWIND_CSS};
 use dioxus::prelude::*;
 use tracing::debug;
 
+use super::dialog_context::DialogContext;
 use super::library_search_context::LibrarySearchContextProvider;
 use super::playback_hooks::PlaybackStateProvider;
 use super::queue_sidebar::QueueSidebarState;
@@ -12,10 +13,10 @@ use super::queue_sidebar::QueueSidebarState;
 pub fn App() -> Element {
     debug!("Rendering app component");
 
-    let queue_sidebar_state = QueueSidebarState {
-        is_open: use_signal(|| false),
-    };
-    use_context_provider(|| queue_sidebar_state.clone());
+    use_context_provider(|| QueueSidebarState {
+        is_open: Signal::new(false),
+    });
+    use_context_provider(DialogContext::new);
 
     // Setup transparent titlebar on macOS after window is created
     use_effect(move || {
@@ -27,7 +28,7 @@ pub fn App() -> Element {
         document::Link { rel: "stylesheet", href: MAIN_CSS }
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
         PlaybackStateProvider {
-            AlbumImportContextProvider {
+            ImportContextProvider {
                 LibrarySearchContextProvider {
                 div {
                     // On macOS: pt-10 accounts for custom titlebar
