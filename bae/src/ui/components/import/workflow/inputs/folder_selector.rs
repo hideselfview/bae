@@ -139,9 +139,9 @@ pub fn FolderSelector(on_select: EventHandler<String>, on_error: EventHandler<St
     };
 
     let drag_classes = if *is_dragging.read() {
-        "border-blue-500 bg-blue-50 border-solid"
+        "border-blue-500 bg-blue-900/20 border-solid"
     } else {
-        "border-gray-300 bg-white border-dashed"
+        "border-gray-600 border-dashed"
     };
 
     rsx! {
@@ -171,10 +171,10 @@ pub fn FolderSelector(on_select: EventHandler<String>, on_error: EventHandler<St
 
                 // Main text
                 div { class: "text-center space-y-2",
-                    h3 { class: "text-xl font-semibold text-gray-900",
+                    h3 { class: "text-lg font-semibold text-gray-200",
                         "Select your music folder"
                     }
-                    p { class: "text-sm text-gray-600",
+                    p { class: "text-sm text-gray-400",
                         "Click the button below to choose a folder containing your music files"
                     }
                 }
