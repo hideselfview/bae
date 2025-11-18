@@ -95,12 +95,12 @@ pub fn CdImport() -> Element {
         div { class: "space-y-6",
             // Phase 1: CD Drive Selection
             if *import_phase.read() == ImportPhase::FolderSelection {
-                CdRipper {
-                    on_drive_select: on_drive_select,
-                    on_error: {
-                        let import_context = import_context.clone();
-                        move |e: String| {
-                            import_context.set_import_error_message(Some(e));
+                    CdRipper {
+                        on_drive_select: on_drive_select,
+                        on_error: {
+                            let import_context = import_context.clone();
+                            move |e: String| {
+                                import_context.set_import_error_message(Some(e));
                         }
                     }
                 }

@@ -14,9 +14,7 @@ pub fn ImportPage() -> Element {
     let on_source_select = {
         let import_context = import_context.clone();
         move |source: ImportSource| {
-            import_context.set_selected_import_source(source);
-            // Reset import context when switching sources
-            import_context.reset();
+            import_context.try_switch_import_source(source);
         }
     };
 

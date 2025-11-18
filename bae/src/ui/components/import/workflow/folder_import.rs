@@ -67,12 +67,12 @@ pub fn FolderImport() -> Element {
         div { class: "space-y-6",
             // Phase 1: Folder Selection
             if *import_phase.read() == ImportPhase::FolderSelection {
-                FolderSelector {
-                    on_select: on_folder_select,
-                    on_error: {
-                        let import_context = import_context.clone();
-                        move |e: String| {
-                            import_context.set_import_error_message(Some(e));
+                    FolderSelector {
+                        on_select: on_folder_select,
+                        on_error: {
+                            let import_context = import_context.clone();
+                            move |e: String| {
+                                import_context.set_import_error_message(Some(e));
                         }
                     }
                 }

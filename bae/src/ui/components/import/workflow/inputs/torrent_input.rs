@@ -57,12 +57,20 @@ pub fn TorrentInput(
 
     let on_file_mode_click = {
         let import_context = import_context.clone();
-        move |_| import_context.set_torrent_input_mode(TorrentInputMode::File)
+        move |_| {
+            import_context.try_switch_torrent_input_mode(TorrentInputMode::File);
+        }
     };
 
     let on_magnet_mode_click = {
         let import_context = import_context.clone();
-        move |_| import_context.set_torrent_input_mode(TorrentInputMode::Magnet)
+        move |_| {
+            // Always allow switching to Magnet mode, but clear magnet link when switching from File
+            if *input_mode.read() == TorrentInputMode::File {
+                import_context.set_magnet_link(String::new());
+            }
+            import_context.set_torrent_input_mode(TorrentInputMode::Magnet);
+        }
     };
 
     let import_context_for_input = import_context.clone();

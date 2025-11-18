@@ -28,7 +28,6 @@ pub fn ImportSourceSelector(
                         "px-4 py-2 font-medium transition-colors text-gray-400 hover:text-gray-300"
                     },
                     onclick: move |_| {
-                        selected_source.set(ImportSource::Folder);
                         on_source_select.call(ImportSource::Folder);
                     },
                     "Folder"
@@ -40,7 +39,6 @@ pub fn ImportSourceSelector(
                         "px-4 py-2 font-medium transition-colors text-gray-400 hover:text-gray-300"
                     },
                     onclick: move |_| {
-                        selected_source.set(ImportSource::Torrent);
                         on_source_select.call(ImportSource::Torrent);
                     },
                     "Torrent"
@@ -52,7 +50,6 @@ pub fn ImportSourceSelector(
                         "px-4 py-2 font-medium transition-colors text-gray-400 hover:text-gray-300"
                     },
                     onclick: move |_| {
-                        selected_source.set(ImportSource::Cd);
                         on_source_select.call(ImportSource::Cd);
                     },
                     "CD"
