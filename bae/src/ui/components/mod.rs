@@ -1,6 +1,8 @@
 pub mod album_card;
 pub mod album_detail;
 pub mod app;
+pub mod dialog;
+pub mod dialog_context;
 pub mod import;
 pub mod import_hooks;
 pub mod library;
