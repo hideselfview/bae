@@ -9,8 +9,9 @@ use crate::library::SharedLibraryManager;
 use crate::musicbrainz::{lookup_by_discid, search_releases, MbRelease};
 use crate::torrent::ffi::TorrentInfo;
 use crate::torrent::{parse_torrent_info, TorrentManagerHandle};
+use crate::ui::components::dialog_context::DialogContext;
 use crate::ui::components::import::{FileInfo, ImportSource, SearchSource, TorrentInputMode};
-use crate::ui::Route;
+use crate::ui::{AppContext, Route};
 use dioxus::prelude::*;
 use dioxus::router::Navigator;
 use std::path::PathBuf;
@@ -68,6 +69,10 @@ pub struct ImportContext {
     selected_import_source: Signal<ImportSource>,
     search_source: Signal<SearchSource>,
     manual_match_candidates: Signal<Vec<MatchCandidate>>,
+    // Pending actions for dialog confirmations
+    pending_tab_source: Signal<Option<ImportSource>>,
+    pending_input_mode: Signal<Option<TorrentInputMode>>,
+    dialog: DialogContext,
     discogs_client: DiscogsClient,
     /// Handle to torrent manager service for all torrent operations
     torrent_manager: TorrentManagerHandle,
@@ -83,6 +88,7 @@ impl ImportContext {
         torrent_manager: TorrentManagerHandle,
         library_manager: SharedLibraryManager,
         import_service: ImportServiceHandle,
+        dialog: DialogContext,
     ) -> Self {
         use dioxus::prelude::*;
         Self {
@@ -118,6 +124,9 @@ impl ImportContext {
             selected_import_source: Signal::new(ImportSource::Folder),
             search_source: Signal::new(SearchSource::MusicBrainz),
             manual_match_candidates: Signal::new(Vec::new()),
+            pending_tab_source: Signal::new(None),
+            pending_input_mode: Signal::new(None),
+            dialog,
             discogs_client: DiscogsClient::new(config.discogs_api_key.clone()),
             torrent_manager,
             library_manager,
@@ -408,6 +417,96 @@ impl ImportContext {
         self.set_duplicate_album_id(None);
         self.set_import_phase(ImportPhase::MetadataDetection);
         self.set_is_detecting(true);
+    }
+
+    /// Check if there is unclean state for the current import source
+    /// Returns true if switching tabs would lose progress
+    fn has_unclean_state(&self) -> bool {
+        let current_source = self.selected_import_source.read().clone();
+        match current_source {
+            ImportSource::Folder => {
+                // Folder tab has unclean state if a folder is selected
+                !self.folder_path.read().is_empty()
+            }
+            ImportSource::Torrent => {
+                // Torrent tab has unclean state if a torrent is selected or magnet link is entered
+                self.torrent_source.read().is_some() || !self.magnet_link.read().is_empty()
+            }
+            ImportSource::Cd => {
+                // CD tab has unclean state if a drive is selected or TOC is loaded
+                !self.folder_path.read().is_empty() || self.cd_toc_info.read().is_some()
+            }
+        }
+    }
+
+    /// Try to switch import source, showing dialog if there's unclean state
+    pub fn try_switch_import_source(&self, source: ImportSource) {
+        // Don't show confirmation if switching to the same tab
+        if *self.selected_import_source.read() == source {
+            return;
+        }
+
+        // Check if there's unclean state
+        if self.has_unclean_state() {
+            // Show confirmation dialog
+            let mut pending_signal = self.pending_tab_source;
+            pending_signal.set(Some(source));
+            self.dialog.show(
+                "Caution".to_string(),
+                "You have unsaved work. Navigating away will discard your current progress."
+                    .to_string(),
+                "Switch Tab".to_string(),
+                "Cancel".to_string(),
+                "switch_import_tab".to_string(),
+            );
+        } else {
+            // No unclean state, proceed with switch
+            self.set_selected_import_source(source);
+            self.reset();
+        }
+    }
+
+    /// Confirm pending import source switch (called when dialog confirms)
+    pub fn confirm_pending_import_source_switch(&self) {
+        if let Some(source) = self.pending_tab_source.read().as_ref() {
+            self.set_selected_import_source(source.clone());
+            self.reset();
+            let mut pending_signal = self.pending_tab_source;
+            pending_signal.set(None);
+        }
+    }
+
+    /// Try to switch torrent input mode, showing dialog if magnet link is not empty
+    pub fn try_switch_torrent_input_mode(&self, mode: TorrentInputMode) {
+        let current_mode = self.torrent_input_mode.read().clone();
+
+        // Check if switching from Magnet mode and magnet link is not empty
+        if current_mode == TorrentInputMode::Magnet && !self.magnet_link.read().is_empty() {
+            let mut pending_signal = self.pending_input_mode;
+            pending_signal.set(Some(mode));
+            self.dialog.show(
+                "Watch out!".to_string(),
+                "If you switch to Torrent File mode, you will lose the magnet link you entered."
+                    .to_string(),
+                "Switch Mode".to_string(),
+                "Cancel".to_string(),
+                "switch_torrent_mode".to_string(),
+            );
+        } else {
+            // No magnet link text, proceed with switch and clear it
+            self.set_torrent_input_mode(mode);
+            self.set_magnet_link(String::new());
+        }
+    }
+
+    /// Confirm pending torrent mode switch (called when dialog confirms)
+    pub fn confirm_pending_torrent_mode_switch(&self) {
+        if let Some(mode) = self.pending_input_mode.read().as_ref() {
+            self.set_torrent_input_mode(mode.clone());
+            self.set_magnet_link(String::new());
+            let mut pending_signal = self.pending_input_mode;
+            pending_signal.set(None);
+        }
     }
 
     pub fn reset(&self) {
@@ -1294,17 +1393,21 @@ impl ImportContext {
 
 /// Provider component to make search context available throughout the app
 #[component]
-pub fn AlbumImportContextProvider(children: Element) -> Element {
+pub fn ImportContextProvider(children: Element) -> Element {
     let config = use_config();
-    let app_context = use_context::<crate::ui::AppContext>();
-    let album_import_ctx = ImportContext::new(
+
+    let app_context = use_context::<AppContext>();
+    let dialog = use_context::<DialogContext>();
+
+    let import_ctx = ImportContext::new(
         &config,
         app_context.torrent_manager.clone(),
         app_context.library_manager.clone(),
         app_context.import_handle.clone(),
+        dialog,
     );
 
-    use_context_provider(move || Rc::new(album_import_ctx));
+    use_context_provider(move || Rc::new(import_ctx));
 
     rsx! {
         {children}
