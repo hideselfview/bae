@@ -1,5 +1,5 @@
 ---
 alwaysApply: true
 ---
-When working on Dioxus components, write them to accept `ReadOnlySignal` props 
-so that they are reactive on props. 
+When working on Dioxus components, write them to accept `ReadSignal` props so
+that they are reactive on props. 

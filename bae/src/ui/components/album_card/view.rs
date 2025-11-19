@@ -16,35 +16,13 @@ pub fn AlbumCard(album: DbAlbum, artists: Vec<DbArtist>) -> Element {
     let is_loading = use_signal(|| false);
     let mut hover_cover = use_signal(|| false);
     let mut show_dropdown = use_signal(|| false);
-    let album_id = use_signal(|| album.id.clone());
     let mut releases_signal = use_signal(Vec::new);
-    let album_id_for_resource = album.id.clone();
-    let library_manager_for_resource = library_manager.clone();
 
-    // Load releases when dropdown opens
-    let mut releases_resource = use_resource(move || {
-        let library_manager = library_manager_for_resource.clone();
-        let album_id = album_id_for_resource.clone();
-        let should_load = show_dropdown();
-        async move {
-            if should_load {
-                library_manager
-                    .get()
-                    .get_releases_for_album(&album_id)
-                    .await
-                    .map_err(|e| e.to_string())
-            } else {
-                Ok::<Vec<_>, String>(Vec::new())
-            }
-        }
-    });
-
-    // Update releases signal when resource loads
-    use_effect(move || {
-        if let Some(Ok(releases)) = releases_resource.value().read().as_ref() {
-            releases_signal.set(releases.clone());
-        }
-    });
+    // Extract album fields to avoid move issues
+    let album_id = album.id.clone();
+    let album_title = album.title.clone();
+    let album_year = album.year;
+    let cover_art_url = album.cover_art_url.clone();
 
     // Format artist names
     let artist_name = if artists.is_empty() {
@@ -65,7 +43,7 @@ pub fn AlbumCard(album: DbAlbum, artists: Vec<DbArtist>) -> Element {
         div {
             class: "{card_class}",
             onclick: {
-                let album_id_clone = album.id.clone();
+                let album_id_clone = album_id;
                 let navigator = navigator();
                 move |_| {
                     navigator.push(Route::AlbumDetail {
@@ -85,10 +63,10 @@ pub fn AlbumCard(album: DbAlbum, artists: Vec<DbArtist>) -> Element {
                     }
                 },
 
-                if let Some(cover_url) = &album.cover_art_url {
+                if let Some(cover_url) = &cover_art_url {
                     img {
                         src: "{cover_url}",
-                        alt: "Album cover for {album.title}",
+                        alt: "Album cover for {album_title}",
                         class: "w-full h-full object-cover",
                     }
                 } else {
@@ -100,14 +78,26 @@ pub fn AlbumCard(album: DbAlbum, artists: Vec<DbArtist>) -> Element {
                     div { class: "absolute top-2 right-2 z-10",
                         button {
                             class: "w-8 h-8 bg-gray-800/40 hover:bg-gray-800/60 text-white rounded-lg flex items-center justify-center transition-colors",
-                            onclick: move |evt| {
+                            onclick: {
+                                let album_id_clone = album_id.clone();
+                                move |evt| {
                                 evt.stop_propagation();
                                 let was_open = show_dropdown();
                                 show_dropdown.set(!was_open);
                                 if !was_open {
-                                    releases_resource.restart();
+                                    let library_manager = library_manager.clone();
+                                    let album_id_for_spawn = album_id_clone.clone();
+                                    spawn(async move {
+                                        if let Ok(releases) = library_manager
+                                            .get()
+                                            .get_releases_for_album(&album_id_for_spawn)
+                                            .await
+                                        {
+                                            releases_signal.set(releases);
+                                        }
+                                    });
                                 }
-                            },
+                            }},
                             div { class: "flex flex-col gap-1",
                                 div { class: "w-1 h-1 bg-white rounded-full" }
                                 div { class: "w-1 h-1 bg-white rounded-full" }
@@ -118,7 +108,7 @@ pub fn AlbumCard(album: DbAlbum, artists: Vec<DbArtist>) -> Element {
                         // Dropdown menu
                         if show_dropdown() {
                             AlbumDropdownMenu {
-                                album_id,
+                                album_id: album_id.clone(),
                                 releases: ReadSignal::from(releases_signal),
                                 library_manager: library_manager.clone(),
                                 is_loading,
@@ -136,15 +126,15 @@ pub fn AlbumCard(album: DbAlbum, artists: Vec<DbArtist>) -> Element {
             div { class: "p-4",
                 h3 {
                     class: "font-bold text-white text-lg mb-1 truncate",
-                    title: "{album.title}",
-                    "{album.title}"
+                    title: "{album_title}",
+                    "{album_title}"
                 }
                 p {
                     class: "text-gray-400 text-sm truncate",
                     title: "{artist_name}",
                     "{artist_name}"
                 }
-                if let Some(year) = album.year {
+                if let Some(year) = album_year {
                     p { class: "text-gray-500 text-xs mt-1", "{year}" }
                 }
             }
