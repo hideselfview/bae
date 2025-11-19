@@ -715,6 +715,10 @@ impl ImportContext {
                 );
                 self.set_detected_metadata(Some(metadata.clone()));
 
+                // DEBUG: Always show loading state
+                self.set_import_phase(ImportPhase::ExactLookup);
+                self.set_is_looking_up(true);
+
                 // Try exact lookup if MB DiscID available
                 if let Some(ref mb_discid) = metadata.mb_discid {
                     self.set_is_looking_up(true);
