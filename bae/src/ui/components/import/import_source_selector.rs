@@ -1,13 +1,13 @@
 use dioxus::prelude::*;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ImportSource {
     Folder,
     Torrent,
     Cd,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TorrentInputMode {
     File,
     Magnet,

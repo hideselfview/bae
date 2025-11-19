@@ -69,9 +69,6 @@ pub struct ImportContext {
     selected_import_source: Signal<ImportSource>,
     search_source: Signal<SearchSource>,
     manual_match_candidates: Signal<Vec<MatchCandidate>>,
-    // Pending actions for dialog confirmations
-    pending_tab_source: Signal<Option<ImportSource>>,
-    pending_input_mode: Signal<Option<TorrentInputMode>>,
     dialog: DialogContext,
     discogs_client: DiscogsClient,
     /// Handle to torrent manager service for all torrent operations
@@ -124,8 +121,6 @@ impl ImportContext {
             selected_import_source: Signal::new(ImportSource::Folder),
             search_source: Signal::new(SearchSource::MusicBrainz),
             manual_match_candidates: Signal::new(Vec::new()),
-            pending_tab_source: Signal::new(None),
-            pending_input_mode: Signal::new(None),
             dialog,
             discogs_client: DiscogsClient::new(config.discogs_api_key.clone()),
             torrent_manager,
@@ -440,7 +435,7 @@ impl ImportContext {
     }
 
     /// Try to switch import source, showing dialog if there's unclean state
-    pub fn try_switch_import_source(&self, source: ImportSource) {
+    pub fn try_switch_import_source(self: &Rc<Self>, source: ImportSource) {
         // Don't show confirmation if switching to the same tab
         if *self.selected_import_source.read() == source {
             return;
@@ -448,16 +443,17 @@ impl ImportContext {
 
         // Check if there's unclean state
         if self.has_unclean_state() {
-            // Show confirmation dialog
-            let mut pending_signal = self.pending_tab_source;
-            pending_signal.set(Some(source));
-            self.dialog.show(
+            let self_for_callback = Rc::clone(self);
+            self.dialog.show_with_callback(
                 "Watch out!".to_string(),
                 "You have unsaved work. Navigating away will discard your current progress."
                     .to_string(),
                 "Switch Tab".to_string(),
                 "Cancel".to_string(),
-                "switch_import_tab".to_string(),
+                move || {
+                    self_for_callback.set_selected_import_source(source);
+                    self_for_callback.reset();
+                },
             );
         } else {
             // No unclean state, proceed with switch
@@ -466,54 +462,28 @@ impl ImportContext {
         }
     }
 
-    /// Confirm pending import source switch (called when dialog confirms)
-    pub fn confirm_pending_import_source_switch(&self) {
-        let source = {
-            let guard = self.pending_tab_source.read();
-            guard.clone()
-        };
-        if let Some(source) = source {
-            self.set_selected_import_source(source);
-            self.reset();
-            let mut pending_signal = self.pending_tab_source;
-            pending_signal.set(None);
-        }
-    }
-
     /// Try to switch torrent input mode, showing dialog if magnet link is not empty
-    pub fn try_switch_torrent_input_mode(&self, mode: TorrentInputMode) {
+    pub fn try_switch_torrent_input_mode(self: &Rc<Self>, mode: TorrentInputMode) {
         let current_mode = self.torrent_input_mode.read().clone();
 
         // Check if switching from Magnet mode and magnet link is not empty
         if current_mode == TorrentInputMode::Magnet && !self.magnet_link.read().is_empty() {
-            let mut pending_signal = self.pending_input_mode;
-            pending_signal.set(Some(mode));
-            self.dialog.show(
+            let self_for_callback = Rc::clone(self);
+            self.dialog.show_with_callback(
                 "Watch out!".to_string(),
                 "If you switch to Torrent File mode, you will lose the magnet link you entered."
                     .to_string(),
                 "Switch Mode".to_string(),
                 "Cancel".to_string(),
-                "switch_torrent_mode".to_string(),
+                move || {
+                    self_for_callback.set_torrent_input_mode(mode);
+                    self_for_callback.set_magnet_link(String::new());
+                },
             );
         } else {
             // No magnet link text, proceed with switch and clear it
             self.set_torrent_input_mode(mode);
             self.set_magnet_link(String::new());
-        }
-    }
-
-    /// Confirm pending torrent mode switch (called when dialog confirms)
-    pub fn confirm_pending_torrent_mode_switch(&self) {
-        let mode = {
-            let guard = self.pending_input_mode.read();
-            guard.clone()
-        };
-        if let Some(mode) = mode {
-            self.set_torrent_input_mode(mode);
-            self.set_magnet_link(String::new());
-            let mut pending_signal = self.pending_input_mode;
-            pending_signal.set(None);
         }
     }
 

@@ -1,65 +1,77 @@
 use dioxus::prelude::*;
+use std::cell::RefCell;
+use std::rc::Rc;
+
+type ConfirmCallback = Box<dyn Fn()>;
 
 #[derive(Clone)]
 pub struct DialogContext {
     pub is_open: Signal<bool>,
-    pub title: Signal<String>,
-    pub message: Signal<String>,
-    pub confirm_label: Signal<String>,
-    pub cancel_label: Signal<String>,
-    pub confirm_action_id: Signal<Option<String>>, // Simple identifier to trigger actions
+    title: Rc<RefCell<String>>,
+    message: Rc<RefCell<String>>,
+    confirm_label: Rc<RefCell<String>>,
+    cancel_label: Rc<RefCell<String>>,
+    on_confirm: Rc<RefCell<Option<Rc<ConfirmCallback>>>>,
+}
+
+impl Default for DialogContext {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DialogContext {
     pub fn new() -> Self {
         Self {
             is_open: Signal::new(false),
-            title: Signal::new(String::new()),
-            message: Signal::new(String::new()),
-            confirm_label: Signal::new("Confirm".to_string()),
-            cancel_label: Signal::new("Cancel".to_string()),
-            confirm_action_id: Signal::new(None),
+            title: Rc::new(RefCell::new(String::new())),
+            message: Rc::new(RefCell::new(String::new())),
+            confirm_label: Rc::new(RefCell::new("Confirm".to_string())),
+            cancel_label: Rc::new(RefCell::new("Cancel".to_string())),
+            on_confirm: Rc::new(RefCell::new(None)),
         }
     }
 
-    pub fn show(
+    pub fn title(&self) -> String {
+        self.title.borrow().clone()
+    }
+
+    pub fn message(&self) -> String {
+        self.message.borrow().clone()
+    }
+
+    pub fn confirm_label(&self) -> String {
+        self.confirm_label.borrow().clone()
+    }
+
+    pub fn cancel_label(&self) -> String {
+        self.cancel_label.borrow().clone()
+    }
+
+    pub fn on_confirm(&self) -> Option<Rc<ConfirmCallback>> {
+        self.on_confirm.borrow().clone()
+    }
+
+    pub fn show_with_callback(
         &self,
         title: String,
         message: String,
         confirm_label: String,
         cancel_label: String,
-        action_id: String,
+        on_confirm: impl Fn() + 'static,
     ) {
-        let mut title_signal = self.title;
-        let mut message_signal = self.message;
-        let mut confirm_label_signal = self.confirm_label;
-        let mut cancel_label_signal = self.cancel_label;
-        let mut action_id_signal = self.confirm_action_id;
-        let mut is_open_signal = self.is_open;
-
-        title_signal.set(title);
-        message_signal.set(message);
-        confirm_label_signal.set(confirm_label);
-        cancel_label_signal.set(cancel_label);
-        action_id_signal.set(Some(action_id));
-        is_open_signal.set(true);
+        *self.title.borrow_mut() = title;
+        *self.message.borrow_mut() = message;
+        *self.confirm_label.borrow_mut() = confirm_label;
+        *self.cancel_label.borrow_mut() = cancel_label;
+        *self.on_confirm.borrow_mut() = Some(Rc::new(Box::new(on_confirm)));
+        let mut is_open = self.is_open;
+        is_open.set(true);
     }
 
     pub fn hide(&self) {
-        let mut is_open_signal = self.is_open;
-        let mut action_id_signal = self.confirm_action_id;
-        is_open_signal.set(false);
-        action_id_signal.set(None);
-    }
-
-    pub fn confirm(&self) {
-        // Hide dialog but keep action_id set so components can react
-        let mut is_open_signal = self.is_open;
-        is_open_signal.set(false);
-    }
-
-    pub fn clear_action(&self) {
-        let mut action_id_signal = self.confirm_action_id;
-        action_id_signal.set(None);
+        let mut is_open = self.is_open;
+        is_open.set(false);
+        *self.on_confirm.borrow_mut() = None;
     }
 }
