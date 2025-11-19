@@ -1,7 +1,7 @@
 use super::state::ImportContext;
 use crate::discogs::client::DiscogsSearchResult;
 use crate::import::{FolderMetadata, MatchCandidate};
-use crate::musicbrainz::{lookup_by_discid, search_releases, MbRelease};
+use crate::musicbrainz::{search_releases, MbRelease};
 use crate::ui::components::import::SearchSource;
 use dioxus::prelude::*;
 use tracing::{info, warn};
@@ -77,37 +77,10 @@ pub async fn search_musicbrainz_by_metadata(
 ) -> Result<Vec<MbRelease>, String> {
     info!("🎵 Starting MusicBrainz search with metadata:");
     info!(
-        "   Artist: {:?}, Album: {:?}, Year: {:?}, MB DiscID: {:?}",
-        metadata.artist, metadata.album, metadata.year, metadata.mb_discid
+        "   Artist: {:?}, Album: {:?}, Year: {:?}",
+        metadata.artist, metadata.album, metadata.year
     );
 
-    // Try MB DiscID search first if available
-    if let Some(ref mb_discid) = metadata.mb_discid {
-        info!("🎯 Attempting MusicBrainz DiscID search: {}", mb_discid);
-        match lookup_by_discid(mb_discid).await {
-            Ok((releases, _external_urls)) => {
-                if !releases.is_empty() {
-                    info!(
-                        "✓ MusicBrainz DiscID search returned {} result(s)",
-                        releases.len()
-                    );
-                    return Ok(releases);
-                } else {
-                    warn!("✗ MusicBrainz DiscID search returned 0 results, falling back to text search");
-                }
-            }
-            Err(e) => {
-                warn!(
-                    "✗ MusicBrainz DiscID search failed: {}, falling back to text search",
-                    e
-                );
-            }
-        }
-    } else {
-        info!("No MusicBrainz DiscID available, using text search");
-    }
-
-    // Fall back to metadata search
     if let (Some(ref artist), Some(ref album)) = (&metadata.artist, &metadata.album) {
         info!(
             "🔎 Searching MusicBrainz by text: artist='{}', album='{}', year={:?}",

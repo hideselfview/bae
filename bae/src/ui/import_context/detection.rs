@@ -1,5 +1,4 @@
 use super::state::ImportContext;
-use super::types::ImportPhase;
 use crate::import::{cover_art, detect_metadata, MatchCandidate, MatchSource, TorrentSource};
 use crate::musicbrainz::{lookup_by_discid, ExternalUrls, MbRelease};
 use crate::torrent::parse_torrent_info;
@@ -8,21 +7,29 @@ use dioxus::prelude::*;
 use std::path::PathBuf;
 use tracing::{info, warn};
 
-/// Handle DiscID lookup result: process 0/1/multiple matches and update context
+pub enum DiscIdLookupResult {
+    NoMatches,
+    SingleMatch(Box<MatchCandidate>),
+    MultipleMatches(Vec<MatchCandidate>),
+}
+
+pub struct FolderDetectionResult {
+    pub metadata: crate::import::FolderMetadata,
+    pub files: Vec<FileInfo>,
+    pub discid_result: Option<DiscIdLookupResult>,
+}
+
+/// Handle DiscID lookup result: process 0/1/multiple matches and return result
 async fn handle_discid_lookup_result(
     ctx: &ImportContext,
     releases: Vec<MbRelease>,
     external_urls: ExternalUrls,
-    fallback_search_query: String,
-) {
-    ctx.set_is_looking_up(false);
-
+) -> DiscIdLookupResult {
     if releases.is_empty() {
-        info!("No exact matches found, proceeding to manual search");
-        ctx.set_search_query(fallback_search_query);
-        ctx.set_import_phase(ImportPhase::ManualSearch);
+        info!("No exact matches found");
+        DiscIdLookupResult::NoMatches
     } else if releases.len() == 1 {
-        info!("✅ Single exact match found, auto-proceeding");
+        info!("✅ Single exact match found");
         let mb_release = releases[0].clone();
         let cover_art_url = cover_art::fetch_cover_art_for_mb_release(
             &mb_release,
@@ -36,13 +43,9 @@ async fn handle_discid_lookup_result(
             match_reasons: vec!["Exact DiscID match".to_string()],
             cover_art_url,
         };
-        ctx.set_confirmed_candidate(Some(candidate));
-        ctx.set_import_phase(ImportPhase::Confirmation);
+        DiscIdLookupResult::SingleMatch(Box::new(candidate))
     } else {
-        info!(
-            "Found {} exact matches, showing for selection",
-            releases.len()
-        );
+        info!("Found {} exact matches", releases.len());
 
         let cover_art_futures: Vec<_> = releases
             .iter()
@@ -67,8 +70,7 @@ async fn handle_discid_lookup_result(
             })
             .collect();
 
-        ctx.set_exact_match_candidates(candidates);
-        ctx.set_import_phase(ImportPhase::ExactLookup);
+        DiscIdLookupResult::MultipleMatches(candidates)
     }
 }
 
@@ -154,17 +156,11 @@ pub async fn retry_torrent_metadata_detection(ctx: &ImportContext) -> Result<(),
     load_torrent_for_import(ctx, path_buf, seed_flag).await
 }
 
-/// Load a folder for import: read files, detect metadata, and start lookup flow.
-pub async fn load_folder_for_import(ctx: &ImportContext, path: String) -> Result<(), String> {
-    // Reset state for new folder selection
-    ctx.set_folder_path(path.clone());
-    ctx.set_detected_metadata(None);
-    ctx.set_exact_match_candidates(Vec::new());
-    ctx.set_selected_match_index(None);
-    ctx.set_confirmed_candidate(None);
-    ctx.set_import_error_message(None);
-    ctx.set_duplicate_album_id(None);
-    ctx.set_import_phase(ImportPhase::MetadataDetection);
+/// Load a folder for import: read files, detect metadata, and optionally lookup by DiscID
+pub async fn load_folder_for_import(
+    ctx: &ImportContext,
+    path: String,
+) -> Result<FolderDetectionResult, String> {
     ctx.set_is_detecting(true);
 
     // Read files from folder
@@ -189,7 +185,6 @@ pub async fn load_folder_for_import(ctx: &ImportContext, path: String) -> Result
         }
         files.sort_by(|a, b| a.name.cmp(&b.name));
     }
-    ctx.set_folder_files(files);
 
     let metadata = detect_metadata(PathBuf::from(path.clone()))
         .map_err(|e| format!("Failed to detect metadata: {}", e))?;
@@ -200,66 +195,53 @@ pub async fn load_folder_for_import(ctx: &ImportContext, path: String) -> Result
         "Detected metadata: artist={:?}, album={:?}, year={:?}, mb_discid={:?}",
         metadata.artist, metadata.album, metadata.year, metadata.mb_discid
     );
-    ctx.set_detected_metadata(Some(metadata.clone()));
 
-    let Some(mb_discid) = &metadata.mb_discid else {
-        info!("No MB DiscID found, proceeding to manual search");
-        ctx.init_search_query_from_metadata(&metadata);
-        ctx.set_import_phase(ImportPhase::ManualSearch);
-        return Ok(());
+    let discid_result = if let Some(ref mb_discid) = metadata.mb_discid {
+        ctx.set_is_looking_up(true);
+        info!("🎵 Found MB DiscID: {}, performing exact lookup", mb_discid);
+
+        let result = match lookup_by_discid(mb_discid).await {
+            Ok((releases, external_urls)) => {
+                handle_discid_lookup_result(ctx, releases, external_urls).await
+            }
+            Err(e) => {
+                info!("MB DiscID lookup failed: {}", e);
+                DiscIdLookupResult::NoMatches
+            }
+        };
+
+        ctx.set_is_looking_up(false);
+        Some(result)
+    } else {
+        info!("No MB DiscID found");
+        None
     };
 
-    ctx.set_is_looking_up(true);
-    info!("🎵 Found MB DiscID: {}, performing exact lookup", mb_discid);
-
-    ctx.init_search_query_from_metadata(&metadata);
-    let fallback_query = ctx.search_query().read().clone();
-
-    match lookup_by_discid(mb_discid).await {
-        Ok((releases, external_urls)) => {
-            handle_discid_lookup_result(ctx, releases, external_urls, fallback_query).await;
-        }
-        Err(e) => {
-            info!(
-                "MB DiscID lookup failed: {}, proceeding to manual search",
-                e
-            );
-            ctx.set_is_looking_up(false);
-            ctx.set_search_query(fallback_query);
-            ctx.set_import_phase(ImportPhase::ManualSearch);
-        }
-    }
-
-    Ok(())
+    Ok(FolderDetectionResult {
+        metadata,
+        files,
+        discid_result,
+    })
 }
 
-/// Load a CD for import: detect TOC, lookup by DiscID, and start import flow.
+/// Load a CD for import: lookup by DiscID
 pub async fn load_cd_for_import(
     ctx: &ImportContext,
-    drive_path: String,
     disc_id: String,
-) -> Result<(), String> {
-    // Reset state for new CD selection
-    ctx.set_folder_path(drive_path.clone());
-    ctx.set_detected_metadata(None);
-    ctx.set_exact_match_candidates(Vec::new());
-    ctx.set_selected_match_index(None);
-    ctx.set_confirmed_candidate(None);
-    ctx.set_import_error_message(None);
-    ctx.set_duplicate_album_id(None);
-    ctx.set_import_phase(ImportPhase::MetadataDetection);
+) -> Result<DiscIdLookupResult, String> {
     ctx.set_is_looking_up(true);
 
-    match lookup_by_discid(&disc_id).await {
+    let result = match lookup_by_discid(&disc_id).await {
         Ok((releases, external_urls)) => {
-            handle_discid_lookup_result(ctx, releases, external_urls, drive_path.clone()).await;
-            Ok(())
+            handle_discid_lookup_result(ctx, releases, external_urls).await
         }
         Err(e) => {
-            ctx.set_is_looking_up(false);
-            ctx.set_search_query(drive_path.clone());
-            ctx.set_import_phase(ImportPhase::ManualSearch);
-            Err(format!("Failed to lookup by DiscID: {}", e))
+            info!("MB DiscID lookup failed: {}", e);
+            DiscIdLookupResult::NoMatches
         }
-    }
+    };
+
+    ctx.set_is_looking_up(false);
+
+    Ok(result)
 }

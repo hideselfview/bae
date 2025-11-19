@@ -461,7 +461,37 @@ impl ImportContext {
     }
 
     pub async fn load_folder_for_import(&self, path: String) -> Result<(), String> {
-        detection::load_folder_for_import(self, path).await
+        // Reset state for new folder selection
+        self.set_folder_path(path.clone());
+        self.set_detected_metadata(None);
+        self.set_exact_match_candidates(Vec::new());
+        self.set_selected_match_index(None);
+        self.set_confirmed_candidate(None);
+        self.set_import_error_message(None);
+        self.set_duplicate_album_id(None);
+        self.set_import_phase(ImportPhase::MetadataDetection);
+
+        let result = detection::load_folder_for_import(self, path).await?;
+
+        self.set_folder_files(result.files);
+        self.set_detected_metadata(Some(result.metadata.clone()));
+
+        match result.discid_result {
+            None | Some(detection::DiscIdLookupResult::NoMatches) => {
+                self.init_search_query_from_metadata(&result.metadata);
+                self.set_import_phase(ImportPhase::ManualSearch);
+            }
+            Some(detection::DiscIdLookupResult::SingleMatch(candidate)) => {
+                self.set_confirmed_candidate(Some(*candidate));
+                self.set_import_phase(ImportPhase::Confirmation);
+            }
+            Some(detection::DiscIdLookupResult::MultipleMatches(candidates)) => {
+                self.set_exact_match_candidates(candidates);
+                self.set_import_phase(ImportPhase::ExactLookup);
+            }
+        }
+
+        Ok(())
     }
 
     pub async fn search_for_matches(
@@ -477,7 +507,34 @@ impl ImportContext {
         drive_path: String,
         disc_id: String,
     ) -> Result<(), String> {
-        detection::load_cd_for_import(self, drive_path, disc_id).await
+        // Reset state for new CD selection
+        self.set_folder_path(drive_path.clone());
+        self.set_detected_metadata(None);
+        self.set_exact_match_candidates(Vec::new());
+        self.set_selected_match_index(None);
+        self.set_confirmed_candidate(None);
+        self.set_import_error_message(None);
+        self.set_duplicate_album_id(None);
+        self.set_import_phase(ImportPhase::MetadataDetection);
+
+        let result = detection::load_cd_for_import(self, disc_id).await?;
+
+        match result {
+            detection::DiscIdLookupResult::NoMatches => {
+                self.set_search_query(drive_path.clone());
+                self.set_import_phase(ImportPhase::ManualSearch);
+            }
+            detection::DiscIdLookupResult::SingleMatch(candidate) => {
+                self.set_confirmed_candidate(Some(*candidate));
+                self.set_import_phase(ImportPhase::Confirmation);
+            }
+            detection::DiscIdLookupResult::MultipleMatches(candidates) => {
+                self.set_exact_match_candidates(candidates);
+                self.set_import_phase(ImportPhase::ExactLookup);
+            }
+        }
+
+        Ok(())
     }
 
     pub fn try_switch_import_source(self: &Rc<Self>, source: ImportSource) {
