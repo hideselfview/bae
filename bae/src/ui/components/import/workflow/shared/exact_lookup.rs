@@ -12,11 +12,7 @@ pub fn ExactLookup(
     if *is_looking_up.read() {
         rsx! {
             div { class: "bg-gray-800 rounded-lg shadow p-6 text-center",
-                div { class: "flex flex-col items-center gap-3",
-                    // Spinner
-                    div { class: "animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500" }
-                    p { class: "text-gray-400", "Looking up release..." }
-                }
+                p { class: "text-gray-400", "Looking up release by DiscID..." }
             }
         }
     } else if !exact_match_candidates.read().is_empty() {
