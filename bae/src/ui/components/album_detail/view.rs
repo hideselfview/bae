@@ -5,6 +5,7 @@ use dioxus::prelude::*;
 use rfd::AsyncFileDialog;
 use tracing::error;
 
+use super::super::dialog_context::DialogContext;
 use super::super::use_playback_service;
 use super::super::use_torrent_manager;
 use super::album_art::AlbumArt;
@@ -28,7 +29,7 @@ pub fn AlbumDetailView(
     let library_manager = use_library_manager();
     let app_context = use_context::<AppContext>();
     let torrent_manager = use_torrent_manager();
-    let mut show_delete_confirm = use_signal(|| false);
+    let dialog = use_context::<DialogContext>();
     let mut show_release_delete_confirm = use_signal(|| None::<String>);
     let mut is_deleting = use_signal(|| false);
     let mut show_dropdown = use_signal(|| false);
@@ -204,11 +205,46 @@ pub fn AlbumDetailView(
                                                 button {
                                                     class: "w-full px-4 py-3 text-left text-red-400 hover:bg-gray-600 transition-colors flex items-center gap-2",
                                                     disabled: is_deleting(),
-                                                    onclick: move |evt| {
-                                                        evt.stop_propagation();
-                                                        show_dropdown.set(false);
-                                                        if !is_deleting() {
-                                                            show_delete_confirm.set(true);
+                                                    onclick: {
+                                                        let album_id = album.id.clone();
+                                                        let album_title = album.title.clone();
+                                                        let dialog = dialog.clone();
+                                                        let library_manager = library_manager.clone();
+                                                        let is_deleting = is_deleting;
+                                                        let on_album_deleted = on_album_deleted;
+                                                        move |evt| {
+                                                            evt.stop_propagation();
+                                                            show_dropdown.set(false);
+                                                            if is_deleting() {
+                                                                return;
+                                                            }
+                                                            let album_id = album_id.clone();
+                                                            let library_manager = library_manager.clone();
+                                                            let mut is_deleting = is_deleting;
+                                                            let on_album_deleted = on_album_deleted;
+                                                            dialog.show_with_callback(
+                                                                "Delete Album?".to_string(),
+                                                                format!("Are you sure you want to delete \"{}\"? This will delete all releases, tracks, and associated data. This action cannot be undone.", album_title),
+                                                                "Delete".to_string(),
+                                                                "Cancel".to_string(),
+                                                                move || {
+                                                                    let album_id = album_id.clone();
+                                                                    let library_manager = library_manager.clone();
+                                                                    spawn(async move {
+                                                                        is_deleting.set(true);
+                                                                        match library_manager.get().delete_album(&album_id).await {
+                                                                            Ok(_) => {
+                                                                                is_deleting.set(false);
+                                                                                on_album_deleted.call(());
+                                                                            }
+                                                                            Err(e) => {
+                                                                                error!("Failed to delete album: {}", e);
+                                                                                is_deleting.set(false);
+                                                                            }
+                                                                        }
+                                                                    });
+                                                                },
+                                                            );
                                                         }
                                                     },
                                                     "Delete Album"
@@ -344,73 +380,6 @@ pub fn AlbumDetailView(
                         }
                     }
 
-                    // Delete confirmation dialog
-                    if show_delete_confirm() {
-                        div {
-                            class: "fixed inset-0 bg-black/50 flex items-center justify-center z-50",
-                            onclick: move |_| {
-                                if !is_deleting() {
-                                    show_delete_confirm.set(false);
-                                }
-                            },
-                            div {
-                                class: "bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4",
-                                onclick: move |evt| evt.stop_propagation(),
-                                h2 { class: "text-xl font-bold text-white mb-4", "Delete Album?" }
-                                p { class: "text-gray-300 mb-6",
-                                    "Are you sure you want to delete \"{album.title}\"? This will delete all releases, tracks, and associated data. This action cannot be undone."
-                                }
-                                div { class: "flex gap-3 justify-end",
-                                    button {
-                                        class: "px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg",
-                                        disabled: is_deleting(),
-                                        onclick: move |_| {
-                                            if !is_deleting() {
-                                                show_delete_confirm.set(false);
-                                            }
-                                        },
-                                        "Cancel"
-                                    }
-                                    button {
-                                        class: "px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg",
-                                        disabled: is_deleting(),
-                                        onclick: {
-                                            let album_id = album.id.clone();
-                                            let library_manager = library_manager.clone();
-                                            move |_| {
-                                                if is_deleting() {
-                                                    return;
-                                                }
-                                                is_deleting.set(true);
-                                                let album_id = album_id.clone();
-                                                let library_manager = library_manager.clone();
-                                                let mut is_deleting = is_deleting;
-                                                let mut show_delete_confirm = show_delete_confirm;
-                                                spawn(async move {
-                                                    match library_manager.get().delete_album(&album_id).await {
-                                                        Ok(_) => {
-                                                            show_delete_confirm.set(false);
-                                                            is_deleting.set(false);
-                                                            on_album_deleted.call(());
-                                                        }
-                                                        Err(e) => {
-                                                            error!("Failed to delete album: {}", e);
-                                                            is_deleting.set(false);
-                                                        }
-                                                    }
-                                                });
-                                            }
-                                        },
-                                        if is_deleting() {
-                                            "Deleting..."
-                                        } else {
-                                            "Delete"
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
                 }
             }
 
