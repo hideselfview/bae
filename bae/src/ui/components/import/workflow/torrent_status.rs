@@ -21,8 +21,8 @@ pub struct TorrentStatusState {
 #[component]
 pub fn TorrentStatus(info_hash: String, on_skip: Option<EventHandler<()>>) -> Element {
     let import_context = use_context::<std::rc::Rc<crate::ui::import_context::ImportContext>>();
-    let torrent_manager = import_context.torrent_manager();
-    let mut state = use_signal(|| TorrentStatusState {
+    let torrent_manager = import_context.torrent_manager.clone();
+    let state = use_signal(|| TorrentStatusState {
         info_hash: info_hash.clone(),
         name: String::new(),
         total_size: 0,
