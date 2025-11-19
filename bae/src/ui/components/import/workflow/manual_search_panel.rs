@@ -113,8 +113,8 @@ pub fn ManualSearchPanel(
     };
 
     rsx! {
-        div { class: "bg-white rounded-lg shadow p-6 space-y-4",
-            h3 { class: "text-lg font-semibold text-gray-900 mb-4", "Search for Release" }
+        div { class: "bg-gray-800 rounded-lg shadow p-6 space-y-4",
+            h3 { class: "text-lg font-semibold text-white mb-4", "Search for Release" }
 
             SearchSourceSelector {
                 selected_source: search_source,
@@ -129,7 +129,7 @@ pub fn ManualSearchPanel(
                 input {
                     r#type: "text",
                     id: "manual-search-input",
-                    class: "flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 placeholder-gray-500",
+                    class: "flex-1 px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-white placeholder-gray-400",
                     placeholder: "Enter artist and album name...",
                     value: "{search_query}",
                     oninput: move |e| search_query.set(e.value()),
@@ -148,17 +148,17 @@ pub fn ManualSearchPanel(
             }
 
             if let Some(ref error) = error_message.read().as_ref() {
-                div { class: "bg-red-50 border border-red-200 rounded-lg p-4",
-                    p { class: "text-sm text-red-700 select-text", "Error: {error}" }
+                div { class: "bg-red-900/30 border border-red-700 rounded-lg p-4",
+                    p { class: "text-sm text-red-300 select-text", "Error: {error}" }
                 }
             }
 
             if *is_searching.read() {
                 div { class: "text-center py-8",
-                    p { class: "text-gray-600", "Searching..." }
+                    p { class: "text-gray-400", "Searching..." }
                 }
             } else if !match_candidates.read().is_empty() {
-                div { class: "space-y-4",
+                div { class: "space-y-4 mt-4",
                     MatchList {
                         candidates: match_candidates.read().clone(),
                         selected_index: selected_index.read().as_ref().copied(),

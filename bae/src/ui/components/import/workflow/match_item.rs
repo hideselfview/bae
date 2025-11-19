@@ -8,9 +8,9 @@ pub fn MatchItem(
     on_select: EventHandler<()>,
 ) -> Element {
     let border_class = if is_selected {
-        "border-blue-500 bg-blue-50"
+        "border-blue-500 bg-blue-900/30"
     } else {
-        "border-gray-200"
+        "border-gray-700"
     };
 
     // Extract MusicBrainz-specific info for display
@@ -29,11 +29,11 @@ pub fn MatchItem(
 
     rsx! {
         div {
-            class: "border rounded-lg p-4 cursor-pointer hover:bg-gray-50 transition-colors {border_class}",
+            class: "border rounded-lg p-4 cursor-pointer hover:bg-gray-700 transition-colors {border_class}",
             onclick: move |_| on_select.call(()),
             div { class: "flex items-start gap-4",
                 // Album cover
-                div { class: "w-16 h-16 flex-shrink-0 bg-gray-200 rounded overflow-hidden",
+                div { class: "w-16 h-16 flex-shrink-0 bg-gray-700 rounded overflow-hidden",
                     if let Some(cover_url) = candidate.cover_art_url() {
                         img {
                             src: "{cover_url}",
@@ -41,18 +41,18 @@ pub fn MatchItem(
                             class: "w-full h-full object-cover",
                         }
                     } else {
-                        div { class: "w-full h-full flex items-center justify-center text-gray-400 text-2xl", "🎵" }
+                        div { class: "w-full h-full flex items-center justify-center text-gray-500 text-2xl", "🎵" }
                     }
                 }
 
                 div { class: "flex-1 min-w-0",
                     div { class: "flex items-center gap-2 mb-1",
-                        h4 { class: "text-lg font-semibold text-gray-900",
+                        h4 { class: "text-lg font-semibold text-white",
                             "{candidate.title()}"
                         }
                     }
 
-                    div { class: "text-sm text-gray-600 mb-2 space-y-1",
+                    div { class: "text-sm text-gray-400 mb-2 space-y-1",
                         if let Some(ref year) = candidate.year() {
                             p { "Year: {year}" }
                         }

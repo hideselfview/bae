@@ -24,7 +24,7 @@ pub fn SearchSourceSelector(
                         on_select.call(SearchSource::MusicBrainz);
                     }
                 }
-                span { class: "text-sm font-medium text-gray-700", "MusicBrainz" }
+                span { class: "text-sm font-medium text-gray-300", "MusicBrainz" }
             }
             label {
                 class: "flex items-center gap-2 cursor-pointer",
@@ -37,7 +37,7 @@ pub fn SearchSourceSelector(
                         on_select.call(SearchSource::Discogs);
                     }
                 }
-                span { class: "text-sm font-medium text-gray-700", "Discogs" }
+                span { class: "text-sm font-medium text-gray-300", "Discogs" }
             }
         }
     }

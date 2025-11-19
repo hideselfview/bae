@@ -10,16 +10,14 @@ pub fn MatchList(
 ) -> Element {
     if candidates.is_empty() {
         return rsx! {
-            div { class: "bg-white rounded-lg shadow p-6",
-                p { class: "text-gray-600 text-center", "No matches found. Try selecting a different folder or search manually." }
-            }
+            p { class: "text-gray-400 text-center", "No matches found. Try selecting a different folder or search manually." }
         };
     }
 
     rsx! {
-        div { class: "bg-white rounded-lg shadow p-6",
-            h3 { class: "text-lg font-semibold text-gray-900 mb-2", "Possible matches" }
-            p { class: "text-sm text-gray-500 mb-4", "Select a release continue" }
+        div {
+            h3 { class: "text-lg font-semibold text-white mb-2", "Possible matches" }
+            p { class: "text-sm text-gray-400 mb-4", "Select a release continue" }
 
             div { class: "space-y-3",
                 for (index, candidate) in candidates.iter().enumerate() {
