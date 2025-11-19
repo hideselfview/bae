@@ -724,6 +724,7 @@ impl ImportContext {
                         Ok((releases, external_urls)) => {
                             if releases.is_empty() {
                                 info!("No exact matches found, proceeding to manual search");
+                                self.set_is_looking_up(false);
                                 self.init_search_query_from_metadata(&metadata);
                                 self.set_import_phase(ImportPhase::ManualSearch);
                             } else if releases.len() == 1 {
@@ -736,6 +737,7 @@ impl ImportContext {
                                     Some(&self.discogs_client),
                                 )
                                 .await;
+                                self.set_is_looking_up(false);
                                 let candidate = MatchCandidate {
                                     source: MatchSource::MusicBrainz(mb_release),
                                     confidence: 100.0,
@@ -774,10 +776,10 @@ impl ImportContext {
                                         cover_art_url,
                                     })
                                     .collect();
+                                self.set_is_looking_up(false);
                                 self.set_exact_match_candidates(candidates);
                                 self.set_import_phase(ImportPhase::ExactLookup);
                             }
-                            self.set_is_looking_up(false);
                         }
                         Err(e) => {
                             info!(
@@ -1282,10 +1284,9 @@ impl ImportContext {
         // Lookup by disc_id via MusicBrainz
         match lookup_by_discid(&disc_id).await {
             Ok((releases, external_urls)) => {
-                self.set_is_looking_up(false);
-
                 if releases.is_empty() {
                     // No matches - proceed to manual search
+                    self.set_is_looking_up(false);
                     self.set_search_query(drive_path.clone());
                     self.set_import_phase(ImportPhase::ManualSearch);
                 } else if releases.len() == 1 {
@@ -1297,6 +1298,7 @@ impl ImportContext {
                         Some(&self.discogs_client),
                     )
                     .await;
+                    self.set_is_looking_up(false);
                     let candidate = MatchCandidate {
                         source: MatchSource::MusicBrainz(mb_release),
                         confidence: 100.0,
@@ -1320,16 +1322,17 @@ impl ImportContext {
                         .collect();
                     let cover_art_urls: Vec<_> = futures::future::join_all(cover_art_futures).await;
 
-                                let candidates: Vec<MatchCandidate> = releases
-                                    .into_iter()
-                                    .zip(cover_art_urls.into_iter())
-                                    .map(|(mb_release, cover_art_url)| MatchCandidate {
-                                        source: MatchSource::MusicBrainz(mb_release),
-                                        confidence: 100.0,
-                                        match_reasons: vec!["Exact DiscID match".to_string()],
-                                        cover_art_url,
-                                    })
-                                    .collect();
+                    let candidates: Vec<MatchCandidate> = releases
+                        .into_iter()
+                        .zip(cover_art_urls.into_iter())
+                        .map(|(mb_release, cover_art_url)| MatchCandidate {
+                            source: MatchSource::MusicBrainz(mb_release),
+                            confidence: 100.0,
+                            match_reasons: vec!["Exact DiscID match".to_string()],
+                            cover_art_url,
+                        })
+                        .collect();
+                    self.set_is_looking_up(false);
                     self.set_exact_match_candidates(candidates);
                     self.set_import_phase(ImportPhase::ExactLookup);
                 }
