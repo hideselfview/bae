@@ -724,9 +724,9 @@ impl ImportContext {
                         Ok((releases, external_urls)) => {
                             if releases.is_empty() {
                                 info!("No exact matches found, proceeding to manual search");
-                                self.set_is_looking_up(false);
                                 self.init_search_query_from_metadata(&metadata);
                                 self.set_import_phase(ImportPhase::ManualSearch);
+                                self.set_is_looking_up(false);
                             } else if releases.len() == 1 {
                                 // Single exact match - auto-proceed to confirmation
                                 info!("✅ Single exact match found, auto-proceeding");
@@ -737,7 +737,6 @@ impl ImportContext {
                                     Some(&self.discogs_client),
                                 )
                                 .await;
-                                self.set_is_looking_up(false);
                                 let candidate = MatchCandidate {
                                     source: MatchSource::MusicBrainz(mb_release),
                                     confidence: 100.0,
@@ -746,6 +745,7 @@ impl ImportContext {
                                 };
                                 self.set_confirmed_candidate(Some(candidate));
                                 self.set_import_phase(ImportPhase::Confirmation);
+                                self.set_is_looking_up(false);
                             } else {
                                 // Multiple exact matches - show for selection
                                 info!(
@@ -776,9 +776,9 @@ impl ImportContext {
                                         cover_art_url,
                                     })
                                     .collect();
-                                self.set_is_looking_up(false);
                                 self.set_exact_match_candidates(candidates);
                                 self.set_import_phase(ImportPhase::ExactLookup);
+                                self.set_is_looking_up(false);
                             }
                         }
                         Err(e) => {
@@ -1286,9 +1286,9 @@ impl ImportContext {
             Ok((releases, external_urls)) => {
                 if releases.is_empty() {
                     // No matches - proceed to manual search
-                    self.set_is_looking_up(false);
                     self.set_search_query(drive_path.clone());
                     self.set_import_phase(ImportPhase::ManualSearch);
+                    self.set_is_looking_up(false);
                 } else if releases.len() == 1 {
                     // Single exact match - auto-proceed to confirmation
                     let mb_release = releases[0].clone();
@@ -1298,7 +1298,6 @@ impl ImportContext {
                         Some(&self.discogs_client),
                     )
                     .await;
-                    self.set_is_looking_up(false);
                     let candidate = MatchCandidate {
                         source: MatchSource::MusicBrainz(mb_release),
                         confidence: 100.0,
@@ -1307,6 +1306,7 @@ impl ImportContext {
                     };
                     self.set_confirmed_candidate(Some(candidate));
                     self.set_import_phase(ImportPhase::Confirmation);
+                    self.set_is_looking_up(false);
                 } else {
                     // Multiple exact matches - show for selection
                     // Fetch cover art for all releases in parallel
@@ -1332,9 +1332,9 @@ impl ImportContext {
                             cover_art_url,
                         })
                         .collect();
-                    self.set_is_looking_up(false);
                     self.set_exact_match_candidates(candidates);
                     self.set_import_phase(ImportPhase::ExactLookup);
+                    self.set_is_looking_up(false);
                 }
                 Ok(())
             }
