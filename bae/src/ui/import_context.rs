@@ -468,8 +468,12 @@ impl ImportContext {
 
     /// Confirm pending import source switch (called when dialog confirms)
     pub fn confirm_pending_import_source_switch(&self) {
-        if let Some(source) = self.pending_tab_source.read().as_ref() {
-            self.set_selected_import_source(source.clone());
+        let source = {
+            let guard = self.pending_tab_source.read();
+            guard.clone()
+        };
+        if let Some(source) = source {
+            self.set_selected_import_source(source);
             self.reset();
             let mut pending_signal = self.pending_tab_source;
             pending_signal.set(None);
@@ -501,8 +505,12 @@ impl ImportContext {
 
     /// Confirm pending torrent mode switch (called when dialog confirms)
     pub fn confirm_pending_torrent_mode_switch(&self) {
-        if let Some(mode) = self.pending_input_mode.read().as_ref() {
-            self.set_torrent_input_mode(mode.clone());
+        let mode = {
+            let guard = self.pending_input_mode.read();
+            guard.clone()
+        };
+        if let Some(mode) = mode {
+            self.set_torrent_input_mode(mode);
             self.set_magnet_link(String::new());
             let mut pending_signal = self.pending_input_mode;
             pending_signal.set(None);
