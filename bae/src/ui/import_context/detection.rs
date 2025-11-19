@@ -1,5 +1,7 @@
 use super::state::ImportContext;
-use crate::import::{cover_art, detect_metadata, MatchCandidate, MatchSource, TorrentSource};
+use crate::import::{
+    cover_art, detect_folder_contents, MatchCandidate, MatchSource, TorrentSource,
+};
 use crate::musicbrainz::{lookup_by_discid, ExternalUrls, MbRelease};
 use crate::torrent::parse_torrent_info;
 use crate::ui::components::import::FileInfo;
@@ -163,33 +165,23 @@ pub async fn load_folder_for_import(
 ) -> Result<FolderDetectionResult, String> {
     ctx.set_is_detecting(true);
 
-    // Read files from folder
-    let mut files = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&path) {
-        for entry in entries.flatten() {
-            let entry_path = entry.path();
-            if entry_path.is_file() {
-                let name = entry_path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown")
-                    .to_string();
-                let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-                let format = entry_path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("")
-                    .to_uppercase();
-                files.push(FileInfo { name, size, format });
-            }
-        }
-        files.sort_by(|a, b| a.name.cmp(&b.name));
-    }
-
-    let metadata = detect_metadata(PathBuf::from(path.clone()))
-        .map_err(|e| format!("Failed to detect metadata: {}", e))?;
+    let folder_contents = detect_folder_contents(PathBuf::from(path.clone()))
+        .map_err(|e| format!("Failed to detect folder contents: {}", e))?;
 
     ctx.set_is_detecting(false);
+
+    // Convert FileEntry to UI FileInfo
+    let files: Vec<FileInfo> = folder_contents
+        .files
+        .into_iter()
+        .map(|entry| FileInfo {
+            name: entry.name,
+            size: entry.size,
+            format: entry.extension.to_uppercase(),
+        })
+        .collect();
+
+    let metadata = folder_contents.metadata;
 
     info!(
         "Detected metadata: artist={:?}, album={:?}, year={:?}, mb_discid={:?}",

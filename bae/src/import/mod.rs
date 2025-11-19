@@ -47,8 +47,8 @@ mod types;
 // Public API exports
 pub use discogs_matcher::{rank_discogs_matches, rank_mb_matches, MatchCandidate, MatchSource};
 pub use folder_metadata_detector::{
-    calculate_mb_discid_from_cue_flac, calculate_mb_discid_from_log, detect_metadata,
-    FolderMetadata,
+    calculate_mb_discid_from_cue_flac, calculate_mb_discid_from_log, detect_folder_contents,
+    detect_metadata, FileEntry, FolderContents, FolderMetadata,
 };
 pub use handle::{ImportServiceHandle, TorrentFileMetadata, TorrentImportMetadata};
 pub use service::{ImportConfig, ImportService};

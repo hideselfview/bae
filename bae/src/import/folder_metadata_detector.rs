@@ -15,6 +15,19 @@ pub struct FolderMetadata {
     pub confidence: f32, // 0-100%
 }
 
+#[derive(Debug, Clone)]
+pub struct FileEntry {
+    pub name: String,
+    pub size: u64,
+    pub extension: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct FolderContents {
+    pub files: Vec<FileEntry>,
+    pub metadata: FolderMetadata,
+}
+
 #[derive(Debug, Error)]
 pub enum MetadataDetectionError {
     #[error("IO error: {0}")]
@@ -654,6 +667,42 @@ fn parse_folder_name(folder_path: &Path) -> (Option<String>, Option<String>) {
         }
     }
     (None, None)
+}
+
+/// Detect folder contents and metadata from a folder containing audio files
+pub fn detect_folder_contents(
+    folder_path: PathBuf,
+) -> Result<FolderContents, MetadataDetectionError> {
+    // Read files from folder
+    let mut files = Vec::new();
+    if let Ok(entries) = fs::read_dir(&folder_path) {
+        for entry in entries.flatten() {
+            let entry_path = entry.path();
+            if entry_path.is_file() {
+                let name = entry_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                let extension = entry_path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                files.push(FileEntry {
+                    name,
+                    size,
+                    extension,
+                });
+            }
+        }
+        files.sort_by(|a, b| a.name.cmp(&b.name));
+    }
+
+    let metadata = detect_metadata(folder_path)?;
+
+    Ok(FolderContents { files, metadata })
 }
 
 /// Detect metadata from a folder containing audio files
