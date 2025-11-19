@@ -13,6 +13,7 @@ pub struct MatchCandidate {
     pub source: MatchSource,
     pub confidence: f32, // 0-100%
     pub match_reasons: Vec<String>,
+    pub cover_art_url: Option<String>,
 }
 
 impl MatchCandidate {
@@ -31,16 +32,7 @@ impl MatchCandidate {
     }
 
     pub fn cover_art_url(&self) -> Option<String> {
-        match &self.source {
-            MatchSource::Discogs(result) => {
-                result.cover_image.clone().or_else(|| result.thumb.clone())
-            }
-            MatchSource::MusicBrainz(_) => {
-                // MusicBrainz doesn't provide cover art URLs directly
-                // Could fetch from Cover Art Archive API, but for now return None
-                None
-            }
-        }
+        self.cover_art_url.clone()
     }
 }
 
@@ -172,6 +164,7 @@ pub fn rank_mb_matches(
                 source: MatchSource::MusicBrainz(result),
                 confidence,
                 match_reasons,
+                cover_art_url: None, // Will be populated by caller
             }
         })
         .collect();
@@ -275,10 +268,12 @@ pub fn rank_discogs_matches(
                 confidence, match_reasons
             );
 
+            let cover_art_url = result.cover_image.clone().or_else(|| result.thumb.clone());
             MatchCandidate {
                 source: MatchSource::Discogs(result),
                 confidence,
                 match_reasons,
+                cover_art_url,
             }
         })
         .collect();

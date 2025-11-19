@@ -31,6 +31,7 @@
 // - `ImportProgress`: Real-time progress updates with phase information
 
 mod album_chunk_layout;
+pub mod cover_art;
 mod discogs_matcher;
 mod discogs_parser;
 mod folder_metadata_detector;

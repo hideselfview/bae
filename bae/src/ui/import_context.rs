@@ -2,7 +2,7 @@ use crate::config::use_config;
 use crate::discogs::client::DiscogsSearchResult;
 use crate::discogs::{DiscogsClient, DiscogsRelease};
 use crate::import::{
-    detect_metadata, FolderMetadata, ImportRequest, ImportServiceHandle, MatchCandidate,
+    cover_art, detect_metadata, FolderMetadata, ImportRequest, ImportServiceHandle, MatchCandidate,
     MatchSource, TorrentImportMetadata, TorrentSource,
 };
 use crate::library::SharedLibraryManager;
@@ -721,7 +721,7 @@ impl ImportContext {
                     info!("🎵 Found MB DiscID: {}, performing exact lookup", mb_discid);
 
                     match lookup_by_discid(mb_discid).await {
-                        Ok((releases, _external_urls)) => {
+                        Ok((releases, external_urls)) => {
                             if releases.is_empty() {
                                 info!("No exact matches found, proceeding to manual search");
                                 self.init_search_query_from_metadata(&metadata);
@@ -730,10 +730,17 @@ impl ImportContext {
                                 // Single exact match - auto-proceed to confirmation
                                 info!("✅ Single exact match found, auto-proceeding");
                                 let mb_release = releases[0].clone();
+                                let cover_art_url = cover_art::fetch_cover_art_for_mb_release(
+                                    &mb_release,
+                                    &external_urls,
+                                    Some(&self.discogs_client),
+                                )
+                                .await;
                                 let candidate = MatchCandidate {
                                     source: MatchSource::MusicBrainz(mb_release),
                                     confidence: 100.0,
                                     match_reasons: vec!["Exact DiscID match".to_string()],
+                                    cover_art_url,
                                 };
                                 self.set_confirmed_candidate(Some(candidate));
                                 self.set_import_phase(ImportPhase::Confirmation);
@@ -743,12 +750,28 @@ impl ImportContext {
                                     "Found {} exact matches, showing for selection",
                                     releases.len()
                                 );
+                                // Fetch cover art for all releases in parallel
+                                let cover_art_futures: Vec<_> = releases
+                                    .iter()
+                                    .map(|mb_release| {
+                                        cover_art::fetch_cover_art_for_mb_release(
+                                            mb_release,
+                                            &external_urls,
+                                            Some(&self.discogs_client),
+                                        )
+                                    })
+                                    .collect();
+                                let cover_art_urls: Vec<_> =
+                                    futures::future::join_all(cover_art_futures).await;
+
                                 let candidates: Vec<MatchCandidate> = releases
                                     .into_iter()
-                                    .map(|mb_release| MatchCandidate {
+                                    .zip(cover_art_urls.into_iter())
+                                    .map(|(mb_release, cover_art_url)| MatchCandidate {
                                         source: MatchSource::MusicBrainz(mb_release),
                                         confidence: 100.0,
                                         match_reasons: vec!["Exact DiscID match".to_string()],
+                                        cover_art_url,
                                     })
                                     .collect();
                                 self.set_exact_match_candidates(candidates);
@@ -1258,7 +1281,7 @@ impl ImportContext {
 
         // Lookup by disc_id via MusicBrainz
         match lookup_by_discid(&disc_id).await {
-            Ok((releases, _external_urls)) => {
+            Ok((releases, external_urls)) => {
                 self.set_is_looking_up(false);
 
                 if releases.is_empty() {
@@ -1268,23 +1291,45 @@ impl ImportContext {
                 } else if releases.len() == 1 {
                     // Single exact match - auto-proceed to confirmation
                     let mb_release = releases[0].clone();
+                    let cover_art_url = cover_art::fetch_cover_art_for_mb_release(
+                        &mb_release,
+                        &external_urls,
+                        Some(&self.discogs_client),
+                    )
+                    .await;
                     let candidate = MatchCandidate {
                         source: MatchSource::MusicBrainz(mb_release),
                         confidence: 100.0,
                         match_reasons: vec!["Exact DiscID match".to_string()],
+                        cover_art_url,
                     };
                     self.set_confirmed_candidate(Some(candidate));
                     self.set_import_phase(ImportPhase::Confirmation);
                 } else {
                     // Multiple exact matches - show for selection
-                    let candidates: Vec<MatchCandidate> = releases
-                        .into_iter()
-                        .map(|mb_release| MatchCandidate {
-                            source: MatchSource::MusicBrainz(mb_release),
-                            confidence: 100.0,
-                            match_reasons: vec!["Exact DiscID match".to_string()],
+                    // Fetch cover art for all releases in parallel
+                    let cover_art_futures: Vec<_> = releases
+                        .iter()
+                        .map(|mb_release| {
+                            cover_art::fetch_cover_art_for_mb_release(
+                                mb_release,
+                                &external_urls,
+                                Some(&self.discogs_client),
+                            )
                         })
                         .collect();
+                    let cover_art_urls: Vec<_> = futures::future::join_all(cover_art_futures).await;
+
+                                let candidates: Vec<MatchCandidate> = releases
+                                    .into_iter()
+                                    .zip(cover_art_urls.into_iter())
+                                    .map(|(mb_release, cover_art_url)| MatchCandidate {
+                                        source: MatchSource::MusicBrainz(mb_release),
+                                        confidence: 100.0,
+                                        match_reasons: vec!["Exact DiscID match".to_string()],
+                                        cover_art_url,
+                                    })
+                                    .collect();
                     self.set_exact_match_candidates(candidates);
                     self.set_import_phase(ImportPhase::ExactLookup);
                 }
