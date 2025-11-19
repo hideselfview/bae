@@ -15,7 +15,7 @@ pub fn GlobalDialog() -> Element {
     rsx! {
         if *dialog.is_open.read() {
             div {
-                class: "fixed inset-0 bg-black/50 flex items-center justify-center z-[40]",
+                class: "fixed inset-0 bg-black/50 flex items-center justify-center z-[3000]",
                 onclick: move |_| {
                     dialog_for_overlay.hide();
                 },
