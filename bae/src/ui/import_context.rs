@@ -452,7 +452,7 @@ impl ImportContext {
             let mut pending_signal = self.pending_tab_source;
             pending_signal.set(Some(source));
             self.dialog.show(
-                "Caution".to_string(),
+                "Watch out!".to_string(),
                 "You have unsaved work. Navigating away will discard your current progress."
                     .to_string(),
                 "Switch Tab".to_string(),
