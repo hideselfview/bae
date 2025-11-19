@@ -65,6 +65,34 @@ pub trait CloudStorage: Send + Sync {
     async fn delete_chunk(&self, storage_location: &str) -> Result<(), CloudStorageError>;
 }
 
+/// Format AWS SDK error for better debugging
+fn format_error_details(err: &dyn std::fmt::Debug) -> String {
+    let err_str = format!("{:?}", err);
+
+    // Check for common errors and provide helpful messages
+    if err_str.contains("RequestTimeTooSkewed") {
+        return format!(
+            "RequestTimeTooSkewed: Clock skew detected. Your system clock and MinIO server clock are out of sync (difference > 15 minutes). \
+            Please sync your system clock or the MinIO server clock. Error details: {}",
+            err_str
+        );
+    }
+
+    // Try to extract error code and message from the debug string
+    if let Some(code_start) = err_str.find("code: Some(\"") {
+        let code_end = err_str[code_start + 11..].find('"').unwrap_or(0);
+        let code = &err_str[code_start + 11..code_start + 11 + code_end];
+
+        if let Some(msg_start) = err_str.find("message: Some(\"") {
+            let msg_end = err_str[msg_start + 15..].find('"').unwrap_or(0);
+            let msg = &err_str[msg_start + 15..msg_start + 15 + msg_end];
+            return format!("{}: {}", code, msg);
+        }
+    }
+
+    err_str
+}
+
 /// Production S3 cloud storage implementation
 pub struct S3CloudStorage {
     client: Client,
@@ -125,7 +153,8 @@ impl S3CloudStorage {
                     info!("Bucket '{}' already exists", bucket_name);
                 }
                 Err(e) => {
-                    debug!("Bucket check failed: {:?}", e);
+                    let err_details = format_error_details(&e);
+                    debug!("Bucket check failed: {} ({:?})", err_details, e);
                     info!("Creating bucket '{}'", bucket_name);
 
                     match client.create_bucket().bucket(&bucket_name).send().await {
@@ -133,6 +162,7 @@ impl S3CloudStorage {
                             info!("Bucket '{}' created successfully", bucket_name);
                         }
                         Err(create_err) => {
+                            let create_err_details = format_error_details(&create_err);
                             // Check if the error is because bucket already exists
                             let err_str = format!("{:?}", create_err);
                             if err_str.contains("BucketAlreadyOwnedByYou")
@@ -140,13 +170,13 @@ impl S3CloudStorage {
                             {
                                 info!(
                                     "Bucket '{}' already exists (create returned: {})",
-                                    bucket_name, err_str
+                                    bucket_name, create_err_details
                                 );
                             } else {
                                 // Try to use the bucket anyway - maybe we have access
                                 warn!(
                                     "Failed to create bucket '{}': {}. Attempting to use it anyway...",
-                                    bucket_name, create_err
+                                    bucket_name, create_err_details
                                 );
 
                                 // Test if we can actually use the bucket by listing objects
