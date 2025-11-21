@@ -21,61 +21,6 @@ pub struct FolderDetectionResult {
     pub discid_result: Option<DiscIdLookupResult>,
 }
 
-/// Handle DiscID lookup result: process 0/1/multiple matches and return result
-async fn handle_discid_lookup_result(
-    ctx: &ImportContext,
-    releases: Vec<MbRelease>,
-    external_urls: ExternalUrls,
-) -> DiscIdLookupResult {
-    if releases.is_empty() {
-        info!("No exact matches found");
-        DiscIdLookupResult::NoMatches
-    } else if releases.len() == 1 {
-        info!("✅ Single exact match found");
-        let mb_release = releases[0].clone();
-        let cover_art_url = cover_art::fetch_cover_art_for_mb_release(
-            &mb_release,
-            &external_urls,
-            Some(&ctx.discogs_client),
-        )
-        .await;
-        let candidate = MatchCandidate {
-            source: MatchSource::MusicBrainz(mb_release),
-            confidence: 100.0,
-            match_reasons: vec!["Exact DiscID match".to_string()],
-            cover_art_url,
-        };
-        DiscIdLookupResult::SingleMatch(Box::new(candidate))
-    } else {
-        info!("Found {} exact matches", releases.len());
-
-        let cover_art_futures: Vec<_> = releases
-            .iter()
-            .map(|mb_release| {
-                cover_art::fetch_cover_art_for_mb_release(
-                    mb_release,
-                    &external_urls,
-                    Some(&ctx.discogs_client),
-                )
-            })
-            .collect();
-        let cover_art_urls: Vec<_> = futures::future::join_all(cover_art_futures).await;
-
-        let candidates: Vec<MatchCandidate> = releases
-            .into_iter()
-            .zip(cover_art_urls.into_iter())
-            .map(|(mb_release, cover_art_url)| MatchCandidate {
-                source: MatchSource::MusicBrainz(mb_release),
-                confidence: 100.0,
-                match_reasons: vec!["Exact DiscID match".to_string()],
-                cover_art_url,
-            })
-            .collect();
-
-        DiscIdLookupResult::MultipleMatches(candidates)
-    }
-}
-
 /// Load torrent for import: parse torrent file and extract info
 pub async fn load_torrent_for_import(
     ctx: &ImportContext,
@@ -236,4 +181,47 @@ pub async fn load_cd_for_import(
     ctx.set_is_looking_up(false);
 
     Ok(result)
+}
+
+/// Handle DiscID lookup result: process 0/1/multiple matches and return result
+async fn handle_discid_lookup_result(
+    ctx: &ImportContext,
+    releases: Vec<MbRelease>,
+    external_urls: ExternalUrls,
+) -> DiscIdLookupResult {
+    if releases.is_empty() {
+        info!("No exact matches found");
+        return DiscIdLookupResult::NoMatches;
+    }
+
+    info!("Found {} exact matches", releases.len());
+
+    let cover_art_futures: Vec<_> = releases
+        .iter()
+        .map(|mb_release| {
+            cover_art::fetch_cover_art_for_mb_release(
+                mb_release,
+                &external_urls,
+                Some(&ctx.discogs_client),
+            )
+        })
+        .collect();
+    let cover_art_urls: Vec<_> = futures::future::join_all(cover_art_futures).await;
+
+    let candidates: Vec<MatchCandidate> = releases
+        .into_iter()
+        .zip(cover_art_urls.into_iter())
+        .map(|(mb_release, cover_art_url)| MatchCandidate {
+            source: MatchSource::MusicBrainz(mb_release),
+            confidence: 100.0,
+            match_reasons: vec!["Exact DiscID match".to_string()],
+            cover_art_url,
+        })
+        .collect();
+
+    if candidates.len() == 1 {
+        DiscIdLookupResult::SingleMatch(Box::new(candidates[0].clone()))
+    } else {
+        DiscIdLookupResult::MultipleMatches(candidates)
+    }
 }
