@@ -1,8 +1,8 @@
-use super::file_list::FileList;
 use super::inputs::FolderSelector;
 use super::shared::{
     Confirmation, DetectingMetadata, ErrorDisplay, ExactLookup, ManualSearch, SelectedSource,
 };
+use super::smart_file_display::SmartFileDisplay;
 use crate::import::MatchCandidate;
 use crate::ui::components::import::ImportSource;
 use crate::ui::import_context::{ImportContext, ImportPhase};
@@ -92,9 +92,10 @@ pub fn FolderImport() -> Element {
                         } else if !folder_files.read().is_empty() {
                             Some(rsx! {
                                 div { class: "mt-4",
-                                    h4 { class: "text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3", "Files" }
-                                    FileList {
+                                    h4 { class: "text-sm font-semibold text-gray-300 uppercase tracking-wide mb-3", "Files" }
+                                    SmartFileDisplay {
                                         files: folder_files.read().clone(),
+                                        folder_path: folder_path.read().clone(),
                                     }
                                 }
                             })

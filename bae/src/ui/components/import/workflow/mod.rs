@@ -8,7 +8,9 @@ mod match_list;
 mod metadata_display;
 mod page;
 mod shared;
+mod smart_file_display;
 mod source_selector;
+mod text_file_modal;
 mod torrent_import;
 mod torrent_status;
 
