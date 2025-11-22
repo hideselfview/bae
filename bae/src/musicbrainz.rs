@@ -9,6 +9,7 @@ pub struct MbRelease {
     pub title: String,
     pub artist: String,
     pub date: Option<String>,
+    pub first_release_date: Option<String>,
     pub format: Option<String>,
     pub country: Option<String>,
     pub label: Option<String>,
@@ -131,6 +132,14 @@ pub async fn lookup_by_discid(
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
+                // Extract first release date from release-group
+                let first_release_date = release_json
+                    .get("release-group")
+                    .and_then(|rg| rg.get("first-release-date"))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string());
+
                 // Extract country
                 let country = release_json
                     .get("country")
@@ -179,6 +188,7 @@ pub async fn lookup_by_discid(
                     title: title.to_string(),
                     artist,
                     date,
+                    first_release_date,
                     format,
                     country,
                     label,
@@ -348,6 +358,14 @@ pub async fn lookup_release_by_id(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
+    // Extract first release date from release-group
+    let first_release_date = json
+        .get("release-group")
+        .and_then(|rg| rg.get("first-release-date"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
     // Extract country
     let country = json
         .get("country")
@@ -497,6 +515,7 @@ pub async fn lookup_release_by_id(
         title,
         artist,
         date,
+        first_release_date,
         format,
         country,
         label,
@@ -621,6 +640,14 @@ pub async fn search_releases(
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
+                // Extract first release date from release-group
+                let first_release_date = release_json
+                    .get("release-group")
+                    .and_then(|rg| rg.get("first-release-date"))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string());
+
                 // Extract country
                 let country = release_json
                     .get("country")
@@ -669,6 +696,7 @@ pub async fn search_releases(
                     title: title.to_string(),
                     artist,
                     date,
+                    first_release_date,
                     format,
                     country,
                     label,

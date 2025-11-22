@@ -35,7 +35,6 @@ pub struct ImportContext {
     pub(crate) exact_match_candidates: Signal<Vec<MatchCandidate>>,
     pub(crate) selected_match_index: Signal<Option<usize>>,
     pub(crate) confirmed_candidate: Signal<Option<MatchCandidate>>,
-    pub(crate) original_album_year: Signal<Option<String>>,
     pub(crate) is_detecting: Signal<bool>,
     pub(crate) is_looking_up: Signal<bool>,
     pub(crate) import_error_message: Signal<Option<String>>,
@@ -90,7 +89,6 @@ impl ImportContext {
             exact_match_candidates: Signal::new(Vec::new()),
             selected_match_index: Signal::new(None),
             confirmed_candidate: Signal::new(None),
-            original_album_year: Signal::new(None),
             is_detecting: Signal::new(false),
             is_looking_up: Signal::new(false),
             import_error_message: Signal::new(None),
@@ -142,10 +140,6 @@ impl ImportContext {
 
     pub fn confirmed_candidate(&self) -> Signal<Option<MatchCandidate>> {
         self.confirmed_candidate
-    }
-
-    pub fn original_album_year(&self) -> Signal<Option<String>> {
-        self.original_album_year
     }
 
     pub fn is_detecting(&self) -> Signal<bool> {
@@ -256,11 +250,6 @@ impl ImportContext {
 
     pub fn set_confirmed_candidate(&self, value: Option<MatchCandidate>) {
         let mut signal = self.confirmed_candidate;
-        signal.set(value);
-    }
-
-    pub fn set_original_album_year(&self, value: Option<String>) {
-        let mut signal = self.original_album_year;
         signal.set(value);
     }
 
@@ -390,7 +379,6 @@ impl ImportContext {
         self.set_exact_match_candidates(Vec::new());
         self.set_selected_match_index(None);
         self.set_confirmed_candidate(None);
-        self.set_original_album_year(None);
         self.set_is_detecting(false);
         self.set_is_looking_up(false);
         self.set_import_error_message(None);

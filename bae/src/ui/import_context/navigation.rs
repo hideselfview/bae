@@ -1,11 +1,9 @@
 use super::state::ImportContext;
 use super::types::ImportPhase;
-use crate::import::{MatchCandidate, MatchSource};
-use crate::musicbrainz;
+use crate::import::MatchCandidate;
 use crate::ui::components::import::{ImportSource, TorrentInputMode};
 use dioxus::prelude::*;
 use std::rc::Rc;
-use tracing::warn;
 
 /// Check if there is unclean state for the current import source
 /// Returns true if switching tabs would lose progress
@@ -88,22 +86,6 @@ pub fn select_exact_match(ctx: &ImportContext, index: usize) {
     if let Some(candidate) = ctx.exact_match_candidates().read().get(index).cloned() {
         ctx.set_confirmed_candidate(Some(candidate.clone()));
         ctx.set_import_phase(ImportPhase::Confirmation);
-
-        // Fetch original album year for MusicBrainz releases
-        if let MatchSource::MusicBrainz(ref release) = candidate.source {
-            let release_group_id = release.release_group_id.clone();
-            let mut original_album_year = ctx.original_album_year;
-            spawn(async move {
-                match musicbrainz::fetch_release_group_first_date(&release_group_id).await {
-                    Ok(first_date) => {
-                        original_album_year.set(first_date);
-                    }
-                    Err(e) => {
-                        warn!("Failed to fetch original album year: {}", e);
-                    }
-                }
-            });
-        }
     }
 }
 
@@ -111,24 +93,8 @@ pub fn select_exact_match(ctx: &ImportContext, index: usize) {
 ///
 /// This is used when confirming from manual search results.
 pub fn confirm_candidate(ctx: &ImportContext, candidate: MatchCandidate) {
-    ctx.set_confirmed_candidate(Some(candidate.clone()));
+    ctx.set_confirmed_candidate(Some(candidate));
     ctx.set_import_phase(ImportPhase::Confirmation);
-
-    // Fetch original album year for MusicBrainz releases
-    if let MatchSource::MusicBrainz(ref release) = candidate.source {
-        let release_group_id = release.release_group_id.clone();
-        let mut original_album_year = ctx.original_album_year;
-        spawn(async move {
-            match musicbrainz::fetch_release_group_first_date(&release_group_id).await {
-                Ok(first_date) => {
-                    original_album_year.set(first_date);
-                }
-                Err(e) => {
-                    warn!("Failed to fetch original album year: {}", e);
-                }
-            }
-        });
-    }
 }
 
 /// Reject the current confirmation and go back to previous phase.

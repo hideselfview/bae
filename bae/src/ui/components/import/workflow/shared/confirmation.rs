@@ -1,7 +1,5 @@
 use crate::import::{MatchCandidate, MatchSource};
-use crate::ui::import_context::ImportContext;
 use dioxus::prelude::*;
-use std::rc::Rc;
 
 #[component]
 pub fn Confirmation(
@@ -9,12 +7,13 @@ pub fn Confirmation(
     on_edit: EventHandler<()>,
     on_confirm: EventHandler<()>,
 ) -> Element {
-    let import_context = use_context::<Rc<ImportContext>>();
-    let original_album_year = import_context.original_album_year();
-
     if let Some(candidate) = confirmed_candidate.read().as_ref() {
         let cover_url = candidate.cover_art_url();
         let release_year = candidate.year();
+        let original_year = match &candidate.source {
+            MatchSource::MusicBrainz(release) => release.first_release_date.clone(),
+            MatchSource::Discogs(_) => None,
+        };
 
         rsx! {
             div { class: "bg-gray-800 rounded-lg shadow p-6",
@@ -38,7 +37,7 @@ pub fn Confirmation(
                             p { class: "text-xl font-semibold text-white", "{candidate.title()}" }
                             div { class: "space-y-1 text-sm text-gray-300",
                                 // Original album year (MusicBrainz only)
-                                if let Some(ref orig_year) = original_album_year.read().as_ref() {
+                                if let Some(ref orig_year) = original_year {
                                     p {
                                         span { class: "text-gray-400", "Original: " }
                                         span { class: "text-white", "{orig_year}" }
