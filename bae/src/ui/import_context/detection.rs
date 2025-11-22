@@ -129,6 +129,10 @@ pub async fn load_folder_for_import(
         metadata.artist, metadata.album, metadata.year, metadata.mb_discid
     );
 
+    // Set files and metadata immediately so UI can show them
+    ctx.set_folder_files(files.clone());
+    ctx.set_detected_metadata(Some(metadata.clone()));
+
     let discid_result = if let Some(ref mb_discid) = metadata.mb_discid {
         ctx.set_is_looking_up(true);
         info!("🎵 Found MB DiscID: {}, performing exact lookup", mb_discid);

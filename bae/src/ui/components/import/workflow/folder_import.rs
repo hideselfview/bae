@@ -83,13 +83,7 @@ pub fn FolderImport() -> Element {
                         title: "Selected Folder".to_string(),
                         path: folder_path,
                         on_clear: on_change_folder,
-                        children: if *is_detecting.read() {
-                            Some(rsx! {
-                                DetectingMetadata {
-                                    message: "Detecting metadata...".to_string(),
-                                }
-                            })
-                        } else if !folder_files.read().is_empty() {
+                        children: if !folder_files.read().is_empty() {
                             Some(rsx! {
                                 div { class: "mt-4",
                                     h4 { class: "text-sm font-semibold text-gray-300 uppercase tracking-wide mb-3", "Files" }
@@ -102,6 +96,13 @@ pub fn FolderImport() -> Element {
                         } else {
                             None
                         },
+                    }
+
+                    // Show detecting message during MusicBrainz lookup
+                    if *is_looking_up.read() && *import_phase.read() == ImportPhase::MetadataDetection {
+                        DetectingMetadata {
+                            message: "Looking up release...".to_string(),
+                        }
                     }
 
                     // Phase 2: Exact Lookup
