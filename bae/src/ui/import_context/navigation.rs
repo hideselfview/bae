@@ -92,10 +92,11 @@ pub fn select_exact_match(ctx: &ImportContext, index: usize) {
         // Fetch original album year for MusicBrainz releases
         if let MatchSource::MusicBrainz(ref release) = candidate.source {
             let release_group_id = release.release_group_id.clone();
+            let mut original_album_year = ctx.original_album_year;
             spawn(async move {
                 match musicbrainz::fetch_release_group_first_date(&release_group_id).await {
                     Ok(first_date) => {
-                        use_context::<Rc<ImportContext>>().set_original_album_year(first_date);
+                        original_album_year.set(first_date);
                     }
                     Err(e) => {
                         warn!("Failed to fetch original album year: {}", e);
@@ -116,10 +117,11 @@ pub fn confirm_candidate(ctx: &ImportContext, candidate: MatchCandidate) {
     // Fetch original album year for MusicBrainz releases
     if let MatchSource::MusicBrainz(ref release) = candidate.source {
         let release_group_id = release.release_group_id.clone();
+        let mut original_album_year = ctx.original_album_year;
         spawn(async move {
             match musicbrainz::fetch_release_group_first_date(&release_group_id).await {
                 Ok(first_date) => {
-                    use_context::<Rc<ImportContext>>().set_original_album_year(first_date);
+                    original_album_year.set(first_date);
                 }
                 Err(e) => {
                     warn!("Failed to fetch original album year: {}", e);
