@@ -470,8 +470,13 @@ impl ImportContext {
         self.set_import_error_message(None);
         self.set_duplicate_album_id(None);
         self.set_import_phase(ImportPhase::MetadataDetection);
+        self.set_is_detecting(true);
 
-        let result = detection::load_folder_for_import(self, path).await?;
+        let result = detection::load_folder_for_import(self, path).await;
+
+        self.set_is_detecting(false);
+
+        let result = result?;
 
         self.set_folder_files(result.files);
         self.set_detected_metadata(Some(result.metadata.clone()));

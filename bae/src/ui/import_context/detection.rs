@@ -108,12 +108,8 @@ pub async fn load_folder_for_import(
     ctx: &ImportContext,
     path: String,
 ) -> Result<FolderDetectionResult, String> {
-    ctx.set_is_detecting(true);
-
     let folder_contents = detect_folder_contents(PathBuf::from(path.clone()))
         .map_err(|e| format!("Failed to detect folder contents: {}", e))?;
-
-    ctx.set_is_detecting(false);
 
     // Convert FileEntry to UI FileInfo
     let files: Vec<FileInfo> = folder_contents

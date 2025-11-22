@@ -323,10 +323,6 @@ fn render_file_group(
                         div { class: "flex-1 min-w-0",
                             div { class: "flex items-center gap-2 mb-1",
                                 span { class: "text-sm font-semibold text-purple-300", "CUE/FLAC" }
-                                // span {
-                                //     class: "px-2 py-0.5 bg-purple-600/50 text-purple-200 text-xs rounded",
-                                //     "Single File"
-                                // }
                             }
                             div { class: "text-sm text-gray-300 space-y-0.5",
                                 div { class: "font-medium truncate", {cue_flac.flac_file.name.clone()} }
