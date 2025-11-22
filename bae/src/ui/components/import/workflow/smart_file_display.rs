@@ -79,7 +79,8 @@ fn is_sequential_track(name: &str) -> bool {
 }
 
 fn group_files(files: &[FileInfo], folder_path: &str) -> Vec<FileGroup> {
-    let mut groups = Vec::new();
+    let mut primary_groups = Vec::new();
+    let mut other_groups = Vec::new();
     let mut processed_indices = std::collections::HashSet::new();
 
     // Detect CUE/FLAC pairs
@@ -117,7 +118,7 @@ fn group_files(files: &[FileInfo], folder_path: &str) -> Vec<FileGroup> {
             let flac_file = files[flac_idx].clone();
             let total_size = cue_file.size + flac_file.size;
 
-            groups.push(FileGroup::CueFlac(CueFlacGroup {
+            primary_groups.push(FileGroup::CueFlac(CueFlacGroup {
                 cue_file,
                 flac_file,
                 total_size,
@@ -144,14 +145,14 @@ fn group_files(files: &[FileInfo], folder_path: &str) -> Vec<FileGroup> {
     if track_files.len() >= 3 {
         // Only group if there are at least 3 tracks
         let total_size = track_files.iter().map(|f| f.size).sum();
-        groups.push(FileGroup::Tracks(TrackGroup {
+        primary_groups.push(FileGroup::Tracks(TrackGroup {
             files: track_files,
             total_size,
         }));
     } else {
         // Add them back as individual files
         for file in track_files {
-            groups.push(FileGroup::Other(OtherFile {
+            other_groups.push(FileGroup::Other(OtherFile {
                 file,
                 is_noise: false,
             }));
@@ -165,18 +166,20 @@ fn group_files(files: &[FileInfo], folder_path: &str) -> Vec<FileGroup> {
         }
 
         if is_image_file(&file.name) {
-            groups.push(FileGroup::Image(ImageFile { file: file.clone() }));
+            primary_groups.push(FileGroup::Image(ImageFile { file: file.clone() }));
         } else if is_text_file(&file.name) {
-            groups.push(FileGroup::Text(TextFile { file: file.clone() }));
+            primary_groups.push(FileGroup::Text(TextFile { file: file.clone() }));
         } else {
-            groups.push(FileGroup::Other(OtherFile {
+            other_groups.push(FileGroup::Other(OtherFile {
                 file: file.clone(),
                 is_noise: is_noise_file(&file.name),
             }));
         }
     }
 
-    groups
+    // Combine primary groups first, then other groups at the end
+    primary_groups.extend(other_groups);
+    primary_groups
 }
 
 fn format_file_size(bytes: u64) -> String {
@@ -225,6 +228,7 @@ async fn read_text_file_with_encoding(path: &str) -> Result<String, String> {
 #[component]
 pub fn SmartFileDisplay(files: Vec<FileInfo>, folder_path: String) -> Element {
     let mut modal_state = use_signal(|| None::<(String, String)>);
+    let mut show_other_files = use_signal(|| false);
 
     let on_text_file_click = move |filename: String, filepath: String| {
         spawn(async move {
@@ -240,6 +244,9 @@ pub fn SmartFileDisplay(files: Vec<FileInfo>, folder_path: String) -> Element {
     };
 
     let groups = group_files(&files, &folder_path);
+    let (primary_groups, other_groups): (Vec<_>, Vec<_>) = groups
+        .iter()
+        .partition(|g| !matches!(g, FileGroup::Other(_)));
 
     rsx! {
         if files.is_empty() {
@@ -248,8 +255,39 @@ pub fn SmartFileDisplay(files: Vec<FileInfo>, folder_path: String) -> Element {
             }
         } else {
             div { class: "space-y-3",
-                for group in groups.iter() {
+                // Primary groups (CUE/FLAC, tracks, images, text files)
+                for group in primary_groups.iter() {
                     {render_file_group(group, folder_path.clone(), on_text_file_click)}
+                }
+
+                // Other files section (initially hidden)
+                if !other_groups.is_empty() {
+                    div { class: "pt-2",
+                        button {
+                            class: "w-full px-3 py-2 text-sm text-gray-400 hover:text-gray-300 bg-gray-900/50 hover:bg-gray-800/50 border border-gray-800 hover:border-gray-700 rounded transition-colors",
+                            onclick: move |_| show_other_files.set(!show_other_files()),
+                            div { class: "flex items-center justify-between",
+                                span {
+                                    if show_other_files() {
+                                        "Hide other files ({other_groups.len()})"
+                                    } else {
+                                        "Show other files ({other_groups.len()})"
+                                    }
+                                }
+                                span { class: "text-xs",
+                                    if show_other_files() { "▲" } else { "▼" }
+                                }
+                            }
+                        }
+
+                        if show_other_files() {
+                            div { class: "mt-3 space-y-2",
+                                for group in other_groups.iter() {
+                                    {render_file_group(group, folder_path.clone(), on_text_file_click)}
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -272,6 +310,8 @@ fn render_file_group(
 ) -> Element {
     match group {
         FileGroup::CueFlac(cue_flac) => {
+            let cue_path = format!("{}/{}", folder_path, cue_flac.cue_file.name);
+            let cue_filename = cue_flac.cue_file.name.clone();
             rsx! {
                 div {
                     class: "p-4 bg-gradient-to-r from-purple-900/30 to-blue-900/30 border border-purple-500/50 rounded-lg",
@@ -282,15 +322,19 @@ fn render_file_group(
                         }
                         div { class: "flex-1 min-w-0",
                             div { class: "flex items-center gap-2 mb-1",
-                                span { class: "text-sm font-semibold text-purple-300", "CUE/FLAC Album" }
-                                span {
-                                    class: "px-2 py-0.5 bg-purple-600/50 text-purple-200 text-xs rounded",
-                                    "Single File"
-                                }
+                                span { class: "text-sm font-semibold text-purple-300", "CUE/FLAC" }
+                                // span {
+                                //     class: "px-2 py-0.5 bg-purple-600/50 text-purple-200 text-xs rounded",
+                                //     "Single File"
+                                // }
                             }
                             div { class: "text-sm text-gray-300 space-y-0.5",
                                 div { class: "font-medium truncate", {cue_flac.flac_file.name.clone()} }
-                                div { class: "text-xs text-gray-400 truncate", {cue_flac.cue_file.name.clone()} }
+                                div {
+                                    class: "text-xs text-gray-400 truncate hover:text-purple-300 cursor-pointer transition-colors",
+                                    onclick: move |_| on_text_file_click(cue_filename.clone(), cue_path.clone()),
+                                    {cue_flac.cue_file.name.clone()}
+                                }
                             }
                             div { class: "text-xs text-gray-400 mt-2",
                                 {format_file_size(cue_flac.total_size)}
