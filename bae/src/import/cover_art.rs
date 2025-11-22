@@ -1,5 +1,6 @@
 use crate::discogs::client::DiscogsClient;
 use crate::musicbrainz::{ExternalUrls, MbRelease};
+use crate::network::upgrade_to_https;
 use tracing::{debug, warn};
 
 /// Fetch cover art URL from Cover Art Archive for a MusicBrainz release
@@ -33,20 +34,21 @@ pub async fn fetch_cover_art_from_archive(release_id: &str) -> Option<String> {
                                         image.get("image").and_then(|i| i.as_str())
                                     {
                                         debug!("Found front cover art: {}", image_url);
-                                        return Some(image_url.to_string());
+                                        let secure_url = upgrade_to_https(image_url);
+                                        return Some(secure_url);
                                     }
                                     // Try thumbnails if full image not available
                                     if let Some(thumb_url) =
                                         image.get("thumb").and_then(|t| t.as_str())
                                     {
                                         debug!("Using thumbnail: {}", thumb_url);
-                                        return Some(thumb_url.to_string());
+                                        return Some(upgrade_to_https(thumb_url));
                                     }
                                     if let Some(small_url) =
                                         image.get("small").and_then(|s| s.as_str())
                                     {
                                         debug!("Using small image: {}", small_url);
-                                        return Some(small_url.to_string());
+                                        return Some(upgrade_to_https(small_url));
                                     }
                                 }
                             }
@@ -57,13 +59,13 @@ pub async fn fetch_cover_art_from_archive(release_id: &str) -> Option<String> {
                                 first_image.get("image").and_then(|i| i.as_str())
                             {
                                 debug!("Using first available cover art: {}", image_url);
-                                return Some(image_url.to_string());
+                                return Some(upgrade_to_https(image_url));
                             }
                             if let Some(thumb_url) =
                                 first_image.get("thumb").and_then(|t| t.as_str())
                             {
                                 debug!("Using first thumbnail: {}", thumb_url);
-                                return Some(thumb_url.to_string());
+                                return Some(upgrade_to_https(thumb_url));
                             }
                         }
                     }
@@ -106,7 +108,10 @@ pub async fn fetch_cover_art_from_discogs(
     debug!("Fetching cover art from Discogs release ID: {}", release_id);
 
     match discogs_client.get_release(release_id).await {
-        Ok(release) => release.cover_image.or_else(|| release.thumb),
+        Ok(release) => release
+            .cover_image
+            .or_else(|| release.thumb)
+            .map(|url| upgrade_to_https(&url)),
         Err(e) => {
             debug!("Failed to fetch Discogs release {}: {}", release_id, e);
             None

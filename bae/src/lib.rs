@@ -18,6 +18,7 @@ pub mod encryption;
 pub mod import;
 pub mod library;
 pub mod musicbrainz;
+pub mod network;
 pub mod torrent;
 
 // Optional modules

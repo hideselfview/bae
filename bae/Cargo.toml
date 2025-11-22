@@ -45,6 +45,8 @@ libflac-sys = "0.3.4"    # FFI bindings to libFLAC for seektable generation
 libc = "0.2"            # C types for libflac-sys FFI
 crc32fast = "1.4"       # Fast CRC32 calculation for EAC-style log files
 if-addrs = "0.14"       # Network interface enumeration for validation
+chardetng = "0.1"       # Encoding detection for text files
+encoding_rs = "0.8"     # Character encoding conversion
 
 [target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))'.dependencies]
 libcdio-sys = "0.5"     # FFI bindings to libcdio for CD drive access (requires libcdio system library)

@@ -1,5 +1,6 @@
 use crate::cue_flac::CueFlacProcessor;
 use crate::ui::components::import::FileInfo;
+use chardetng::EncodingDetector;
 use dioxus::prelude::*;
 use std::path::PathBuf;
 use tracing::warn;
@@ -190,13 +191,44 @@ fn format_file_size(bytes: u64) -> String {
     }
 }
 
+/// Read a text file with automatic encoding detection
+async fn read_text_file_with_encoding(path: &str) -> Result<String, String> {
+    // Read the raw bytes
+    let bytes = tokio::fs::read(path)
+        .await
+        .map_err(|e| format!("Failed to read file: {}", e))?;
+
+    // Try UTF-8 first (fast path)
+    if let Ok(content) = String::from_utf8(bytes.clone()) {
+        return Ok(content);
+    }
+
+    // Use encoding detection
+    let mut detector = EncodingDetector::new();
+    detector.feed(&bytes, true);
+    let encoding = detector.guess(None, true);
+
+    // Decode using detected encoding
+    let (decoded, _, had_errors) = encoding.decode(&bytes);
+
+    if had_errors {
+        warn!(
+            "Decoding errors occurred while reading {} with encoding {}",
+            path,
+            encoding.name()
+        );
+    }
+
+    Ok(decoded.into_owned())
+}
+
 #[component]
 pub fn SmartFileDisplay(files: Vec<FileInfo>, folder_path: String) -> Element {
     let mut modal_state = use_signal(|| None::<(String, String)>);
 
     let on_text_file_click = move |filename: String, filepath: String| {
         spawn(async move {
-            match tokio::fs::read_to_string(&filepath).await {
+            match read_text_file_with_encoding(&filepath).await {
                 Ok(content) => {
                     modal_state.set(Some((filename, content)));
                 }

@@ -1,6 +1,15 @@
 use if_addrs::get_if_addrs;
 use std::net::{IpAddr, SocketAddr};
 
+/// Upgrade HTTP URLs to HTTPS for App Transport Security compliance
+pub fn upgrade_to_https(url: &str) -> String {
+    if url.starts_with("http://") {
+        url.replace("http://", "https://")
+    } else {
+        url.to_string()
+    }
+}
+
 /// Get network interfaces with error handling
 fn get_interfaces() -> Result<Vec<if_addrs::Interface>, String> {
     get_if_addrs().map_err(|e| format!("Failed to enumerate network interfaces: {}", e))

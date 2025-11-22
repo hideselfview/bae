@@ -1,14 +1,16 @@
 use super::state::ImportContext;
 use super::types::ImportPhase;
-use crate::import::MatchCandidate;
+use crate::import::{MatchCandidate, MatchSource};
+use crate::musicbrainz;
 use crate::ui::components::import::{ImportSource, TorrentInputMode};
 use dioxus::prelude::*;
 use std::rc::Rc;
+use tracing::warn;
 
 /// Check if there is unclean state for the current import source
 /// Returns true if switching tabs would lose progress
 fn has_unclean_state(ctx: &ImportContext) -> bool {
-    let current_source = ctx.selected_import_source().read().clone();
+    let current_source = *ctx.selected_import_source().read();
     match current_source {
         ImportSource::Folder => {
             // Folder tab has unclean state if a folder is selected
@@ -55,7 +57,7 @@ pub fn try_switch_import_source(ctx: &Rc<ImportContext>, source: ImportSource) {
 
 /// Try to switch torrent input mode, showing dialog if magnet link is not empty
 pub fn try_switch_torrent_input_mode(ctx: &Rc<ImportContext>, mode: TorrentInputMode) {
-    let current_mode = ctx.torrent_input_mode().read().clone();
+    let current_mode = *ctx.torrent_input_mode().read();
 
     // Check if switching from Magnet mode and magnet link is not empty
     if current_mode == TorrentInputMode::Magnet && !ctx.magnet_link().read().is_empty() {
@@ -83,9 +85,24 @@ pub fn try_switch_torrent_input_mode(ctx: &Rc<ImportContext>, mode: TorrentInput
 /// This transitions from ExactLookup phase to Confirmation phase.
 pub fn select_exact_match(ctx: &ImportContext, index: usize) {
     ctx.set_selected_match_index(Some(index));
-    if let Some(candidate) = ctx.exact_match_candidates().read().get(index) {
+    if let Some(candidate) = ctx.exact_match_candidates().read().get(index).cloned() {
         ctx.set_confirmed_candidate(Some(candidate.clone()));
         ctx.set_import_phase(ImportPhase::Confirmation);
+
+        // Fetch original album year for MusicBrainz releases
+        if let MatchSource::MusicBrainz(ref release) = candidate.source {
+            let release_group_id = release.release_group_id.clone();
+            spawn(async move {
+                match musicbrainz::fetch_release_group_first_date(&release_group_id).await {
+                    Ok(first_date) => {
+                        use_context::<Rc<ImportContext>>().set_original_album_year(first_date);
+                    }
+                    Err(e) => {
+                        warn!("Failed to fetch original album year: {}", e);
+                    }
+                }
+            });
+        }
     }
 }
 
@@ -93,8 +110,23 @@ pub fn select_exact_match(ctx: &ImportContext, index: usize) {
 ///
 /// This is used when confirming from manual search results.
 pub fn confirm_candidate(ctx: &ImportContext, candidate: MatchCandidate) {
-    ctx.set_confirmed_candidate(Some(candidate));
+    ctx.set_confirmed_candidate(Some(candidate.clone()));
     ctx.set_import_phase(ImportPhase::Confirmation);
+
+    // Fetch original album year for MusicBrainz releases
+    if let MatchSource::MusicBrainz(ref release) = candidate.source {
+        let release_group_id = release.release_group_id.clone();
+        spawn(async move {
+            match musicbrainz::fetch_release_group_first_date(&release_group_id).await {
+                Ok(first_date) => {
+                    use_context::<Rc<ImportContext>>().set_original_album_year(first_date);
+                }
+                Err(e) => {
+                    warn!("Failed to fetch original album year: {}", e);
+                }
+            }
+        });
+    }
 }
 
 /// Reject the current confirmation and go back to previous phase.

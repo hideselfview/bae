@@ -1,6 +1,7 @@
 use crate::discogs::client::DiscogsSearchResult;
 use crate::import::folder_metadata_detector::FolderMetadata;
 use crate::musicbrainz::MbRelease;
+use crate::network::upgrade_to_https;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MatchSource {
@@ -268,7 +269,11 @@ pub fn rank_discogs_matches(
                 confidence, match_reasons
             );
 
-            let cover_art_url = result.cover_image.clone().or_else(|| result.thumb.clone());
+            let cover_art_url = result
+                .cover_image
+                .clone()
+                .or_else(|| result.thumb.clone())
+                .map(|url| upgrade_to_https(&url));
             MatchCandidate {
                 source: MatchSource::Discogs(result),
                 confidence,

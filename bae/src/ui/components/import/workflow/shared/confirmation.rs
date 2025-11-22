@@ -1,5 +1,7 @@
 use crate::import::{MatchCandidate, MatchSource};
+use crate::ui::import_context::ImportContext;
 use dioxus::prelude::*;
+use std::rc::Rc;
 
 #[component]
 pub fn Confirmation(
@@ -7,38 +9,75 @@ pub fn Confirmation(
     on_edit: EventHandler<()>,
     on_confirm: EventHandler<()>,
 ) -> Element {
+    let import_context = use_context::<Rc<ImportContext>>();
+    let original_album_year = import_context.original_album_year();
+
     if let Some(candidate) = confirmed_candidate.read().as_ref() {
+        let cover_url = candidate.cover_art_url();
+        let release_year = candidate.year();
+
         rsx! {
-            div { class: "space-y-4",
-                div { class: "bg-blue-50 border-2 border-blue-500 rounded-lg p-6",
-                    div { class: "flex items-start justify-between mb-4",
-                        div { class: "flex-1",
-                            h3 { class: "text-lg font-semibold text-gray-900 mb-2",
-                                "Selected Release"
+            div { class: "bg-gray-800 rounded-lg shadow p-6",
+                h3 { class: "text-sm font-semibold text-gray-300 uppercase tracking-wide mb-4",
+                    "Selected Release"
+                }
+                div { class: "bg-gray-900 rounded-lg p-5 mb-4 border border-gray-700",
+                    div { class: "flex gap-6",
+                        // Album art
+                        if let Some(ref url) = cover_url {
+                            div { class: "flex-shrink-0 w-32 h-32 rounded-lg border border-gray-600 shadow-lg overflow-hidden",
+                                img {
+                                    src: "{url}",
+                                    alt: "Album cover",
+                                    class: "w-full h-full object-cover",
+                                }
                             }
-                            div { class: "text-sm text-gray-600 space-y-1",
-                                p { class: "text-lg font-medium text-gray-900", "{candidate.title()}" }
-                                if let Some(ref year) = candidate.year() {
-                                    p { "Year: {year}" }
+                        }
+                        // Release info
+                        div { class: "flex-1 space-y-3",
+                            p { class: "text-xl font-semibold text-white", "{candidate.title()}" }
+                            div { class: "space-y-1 text-sm text-gray-300",
+                                // Original album year (MusicBrainz only)
+                                if let Some(ref orig_year) = original_album_year.read().as_ref() {
+                                    p {
+                                        span { class: "text-gray-400", "Original: " }
+                                        span { class: "text-white", "{orig_year}" }
+                                    }
+                                }
+                                // This release year
+                                if let Some(ref year) = release_year {
+                                    p {
+                                        span { class: "text-gray-400", "This Release: " }
+                                        span { class: "text-white", "{year}" }
+                                    }
                                 }
                                 {
                                     let (format_text, country_text, label_text) = match &candidate.source {
                                         MatchSource::MusicBrainz(release) => (
-                                            release.format.as_ref().map(|f| format!("Format: {}", f)),
-                                            release.country.as_ref().map(|c| format!("Country: {}", c)),
-                                            release.label.as_ref().map(|l| format!("Label: {}", l)),
+                                            release.format.as_ref().map(|f| f.clone()),
+                                            release.country.as_ref().map(|c| c.clone()),
+                                            release.label.as_ref().map(|l| l.clone()),
                                         ),
                                         MatchSource::Discogs(_) => (None, None, None),
                                     };
                                     rsx! {
                                         if let Some(ref fmt) = format_text {
-                                            p { "{fmt}" }
+                                            p {
+                                                span { class: "text-gray-400", "Format: " }
+                                                span { class: "text-white", "{fmt}" }
+                                            }
                                         }
                                         if let Some(ref country) = country_text {
-                                            p { "{country}" }
+                                            p {
+                                                span { class: "text-gray-400", "Country: " }
+                                                span { class: "text-white", "{country}" }
+                                            }
                                         }
                                         if let Some(ref label) = label_text {
-                                            p { "{label}" }
+                                            p {
+                                                span { class: "text-gray-400", "Label: " }
+                                                span { class: "text-white", "{label}" }
+                                            }
                                         }
                                     }
                                 }
@@ -48,12 +87,12 @@ pub fn Confirmation(
                 }
                 div { class: "flex justify-end gap-3",
                     button {
-                        class: "px-6 py-2 bg-gray-600 text-white rounded hover:bg-gray-700",
+                        class: "px-6 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition-colors border border-gray-600",
                         onclick: move |_| on_edit.call(()),
                         "Edit"
                     }
                     button {
-                        class: "px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700",
+                        class: "px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors",
                         onclick: move |_| on_confirm.call(()),
                         "Import"
                     }
