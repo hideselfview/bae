@@ -107,6 +107,7 @@ pub async fn confirm_and_start_import(
                         mb_release: None,
                         folder: PathBuf::from(folder_path),
                         master_year,
+                        cover_art_url: candidate.cover_art_url.clone(),
                     }
                 }
                 MatchSource::MusicBrainz(mb_release) => {
@@ -120,6 +121,7 @@ pub async fn confirm_and_start_import(
                         mb_release: Some(mb_release.clone()),
                         folder: PathBuf::from(folder_path),
                         master_year,
+                        cover_art_url: candidate.cover_art_url.clone(),
                     }
                 }
             }
@@ -156,6 +158,7 @@ pub async fn confirm_and_start_import(
                         master_year,
                         seed_after_download,
                         torrent_metadata,
+                        cover_art_url: candidate.cover_art_url.clone(),
                     }
                 }
                 MatchSource::MusicBrainz(mb_release) => {
@@ -171,6 +174,7 @@ pub async fn confirm_and_start_import(
                         master_year,
                         seed_after_download,
                         torrent_metadata,
+                        cover_art_url: candidate.cover_art_url.clone(),
                     }
                 }
             }
@@ -192,6 +196,7 @@ pub async fn confirm_and_start_import(
                         mb_release: Some(mb_release.clone()),
                         drive_path: PathBuf::from(folder_path),
                         master_year,
+                        cover_art_url: candidate.cover_art_url.clone(),
                     }
                 }
             }

@@ -51,6 +51,7 @@ pub enum ImportRequest {
         mb_release: Option<MbRelease>,
         folder: PathBuf,
         master_year: u32,
+        cover_art_url: Option<String>,
     },
     Torrent {
         torrent_source: TorrentSource,
@@ -59,12 +60,14 @@ pub enum ImportRequest {
         master_year: u32,
         seed_after_download: bool,
         torrent_metadata: TorrentImportMetadata,
+        cover_art_url: Option<String>,
     },
     CD {
         discogs_release: Option<DiscogsRelease>,
         mb_release: Option<MbRelease>,
         drive_path: PathBuf,
         master_year: u32,
+        cover_art_url: Option<String>,
     },
 }
 

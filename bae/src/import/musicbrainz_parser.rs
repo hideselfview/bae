@@ -16,9 +16,12 @@ pub type ParsedMbAlbum = (
 ///
 /// If the MB release has Discogs URLs in relationships, optionally fetches Discogs data
 /// to populate both discogs_release and musicbrainz_release fields in DbAlbum.
+///
+/// cover_art_url: Optional cover art URL that was already fetched during detection phase
 pub async fn fetch_and_parse_mb_release(
     release_id: &str,
     master_year: u32,
+    cover_art_url: Option<String>,
 ) -> Result<ParsedMbAlbum, String> {
     // Fetch full release with recordings and URL relationships
     // The JSON is already included in the response, so we don't need a second HTTP request
@@ -50,16 +53,14 @@ pub async fn fetch_and_parse_mb_release(
         None
     };
 
-    // Fetch cover art from Cover Art Archive
-    let cover_art_url = fetch_cover_art_for_mb_release(&mb_release, &external_urls, None).await;
+    // Use provided cover_art_url (already fetched during detection) or fetch if not provided
+    let cover_art = if cover_art_url.is_none() {
+        fetch_cover_art_for_mb_release(&mb_release, &external_urls, None).await
+    } else {
+        cover_art_url
+    };
 
-    parse_mb_release_from_json(
-        &json,
-        &mb_release,
-        master_year,
-        discogs_release,
-        cover_art_url,
-    )
+    parse_mb_release_from_json(&json, &mb_release, master_year, discogs_release, cover_art)
 }
 
 /// Parse MusicBrainz release JSON into database models

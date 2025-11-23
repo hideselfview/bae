@@ -82,9 +82,16 @@ impl ImportServiceHandle {
                 mb_release,
                 folder,
                 master_year,
+                cover_art_url,
             } => {
-                self.send_folder_request(discogs_release, mb_release, folder, master_year)
-                    .await
+                self.send_folder_request(
+                    discogs_release,
+                    mb_release,
+                    folder,
+                    master_year,
+                    cover_art_url,
+                )
+                .await
             }
             ImportRequest::Torrent {
                 torrent_source,
@@ -93,6 +100,7 @@ impl ImportServiceHandle {
                 master_year,
                 seed_after_download,
                 torrent_metadata,
+                cover_art_url,
             } => {
                 self.send_torrent_request(
                     torrent_source,
@@ -101,6 +109,7 @@ impl ImportServiceHandle {
                     master_year,
                     seed_after_download,
                     torrent_metadata,
+                    cover_art_url,
                 )
                 .await
             }
@@ -109,9 +118,16 @@ impl ImportServiceHandle {
                 mb_release,
                 drive_path,
                 master_year,
+                cover_art_url,
             } => {
-                self.send_cd_request(discogs_release, mb_release, drive_path, master_year)
-                    .await
+                self.send_cd_request(
+                    discogs_release,
+                    mb_release,
+                    drive_path,
+                    master_year,
+                    cover_art_url,
+                )
+                .await
             }
         }
     }
@@ -122,6 +138,7 @@ impl ImportServiceHandle {
         mb_release: Option<MbRelease>,
         folder: std::path::PathBuf,
         master_year: u32,
+        cover_art_url: Option<String>,
     ) -> Result<(String, String), String> {
         // Validate that at least one release is provided
         if discogs_release.is_none() && mb_release.is_none() {
@@ -139,7 +156,8 @@ impl ImportServiceHandle {
                 parse_discogs_release(discogs_rel, master_year)?
             } else if let Some(ref mb_rel) = mb_release {
                 use crate::import::musicbrainz_parser::fetch_and_parse_mb_release;
-                fetch_and_parse_mb_release(&mb_rel.release_id, master_year).await?
+                fetch_and_parse_mb_release(&mb_rel.release_id, master_year, cover_art_url.clone())
+                    .await?
             } else {
                 return Err("No release provided".to_string());
             };
@@ -242,6 +260,7 @@ impl ImportServiceHandle {
         master_year: u32,
         seed_after_download: bool,
         torrent_metadata: TorrentImportMetadata,
+        cover_art_url: Option<String>,
     ) -> Result<(String, String), String> {
         // Validate that at least one release is provided
         if discogs_release.is_none() && mb_release.is_none() {
@@ -268,7 +287,8 @@ impl ImportServiceHandle {
                 parse_discogs_release(discogs_rel, master_year)?
             } else if let Some(ref mb_rel) = mb_release {
                 use crate::import::musicbrainz_parser::fetch_and_parse_mb_release;
-                fetch_and_parse_mb_release(&mb_rel.release_id, master_year).await?
+                fetch_and_parse_mb_release(&mb_rel.release_id, master_year, cover_art_url.clone())
+                    .await?
             } else {
                 return Err("No release provided".to_string());
             };
@@ -404,6 +424,7 @@ impl ImportServiceHandle {
         mb_release: Option<MbRelease>,
         drive_path: std::path::PathBuf,
         master_year: u32,
+        cover_art_url: Option<String>,
     ) -> Result<(String, String), String> {
         // Validate that at least one release is provided
         if discogs_release.is_none() && mb_release.is_none() {
@@ -434,7 +455,8 @@ impl ImportServiceHandle {
             if let Some(ref discogs_rel) = discogs_release {
                 parse_discogs_release(discogs_rel, master_year)?
             } else if let Some(ref mb_rel) = mb_release {
-                fetch_and_parse_mb_release(&mb_rel.release_id, master_year).await?
+                fetch_and_parse_mb_release(&mb_rel.release_id, master_year, cover_art_url.clone())
+                    .await?
             } else {
                 return Err("No release provided".to_string());
             };
