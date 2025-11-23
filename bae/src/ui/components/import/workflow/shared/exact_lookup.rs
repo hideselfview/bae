@@ -17,7 +17,7 @@ pub fn ExactLookup(
         }
     } else if !exact_match_candidates.read().is_empty() {
         rsx! {
-            div { class: "bg-gray-800 rounded-lg shadow p-6",
+            div { class: "bg-gray-900 rounded-lg shadow p-6",
                 h3 { class: "text-lg font-semibold text-white mb-4", "Multiple Exact Matches Found" }
                 p { class: "text-sm text-gray-400 mb-4", "Select the correct release:" }
                 div { class: "mt-4",
