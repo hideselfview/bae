@@ -37,6 +37,7 @@ pub struct ImportContext {
     pub(crate) confirmed_candidate: Signal<Option<MatchCandidate>>,
     pub(crate) is_detecting: Signal<bool>,
     pub(crate) is_looking_up: Signal<bool>,
+    pub(crate) is_importing: Signal<bool>,
     pub(crate) import_error_message: Signal<Option<String>>,
     pub(crate) duplicate_album_id: Signal<Option<String>>,
     pub(crate) folder_files: Signal<Vec<FileInfo>>,
@@ -91,6 +92,7 @@ impl ImportContext {
             confirmed_candidate: Signal::new(None),
             is_detecting: Signal::new(false),
             is_looking_up: Signal::new(false),
+            is_importing: Signal::new(false),
             import_error_message: Signal::new(None),
             duplicate_album_id: Signal::new(None),
             folder_files: Signal::new(Vec::new()),
@@ -148,6 +150,10 @@ impl ImportContext {
 
     pub fn is_looking_up(&self) -> Signal<bool> {
         self.is_looking_up
+    }
+
+    pub fn is_importing(&self) -> Signal<bool> {
+        self.is_importing
     }
 
     pub fn error_message(&self) -> Signal<Option<String>> {
@@ -260,6 +266,11 @@ impl ImportContext {
 
     pub fn set_is_looking_up(&self, value: bool) {
         let mut signal = self.is_looking_up;
+        signal.set(value);
+    }
+
+    pub fn set_is_importing(&self, value: bool) {
+        let mut signal = self.is_importing;
         signal.set(value);
     }
 
@@ -381,6 +392,7 @@ impl ImportContext {
         self.set_confirmed_candidate(None);
         self.set_is_detecting(false);
         self.set_is_looking_up(false);
+        self.set_is_importing(false);
         self.set_import_error_message(None);
         self.set_duplicate_album_id(None);
         self.set_folder_files(Vec::new());

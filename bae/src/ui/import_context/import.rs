@@ -38,6 +38,8 @@ pub async fn confirm_and_start_import(
     import_source: ImportSource,
     navigator: Navigator,
 ) -> Result<(), String> {
+    ctx.set_is_importing(true);
+
     // Check for duplicates before importing
     match &candidate.source {
         MatchSource::Discogs(discogs_result) => {
@@ -50,6 +52,7 @@ pub async fn confirm_and_start_import(
                 .find_duplicate_by_discogs(master_id.as_deref(), release_id.as_deref())
                 .await
             {
+                ctx.set_is_importing(false);
                 ctx.set_duplicate_album_id(Some(duplicate.id));
                 ctx.set_import_error_message(Some(format!(
                     "This release already exists in your library: {}",
@@ -68,6 +71,7 @@ pub async fn confirm_and_start_import(
                 .find_duplicate_by_musicbrainz(release_id.as_deref(), release_group_id.as_deref())
                 .await
             {
+                ctx.set_is_importing(false);
                 ctx.set_duplicate_album_id(Some(duplicate.id));
                 ctx.set_import_error_message(Some(format!(
                     "This release already exists in your library: {}",
@@ -198,16 +202,8 @@ pub async fn confirm_and_start_import(
     match ctx.import_service.send_request(request).await {
         Ok((album_id, _release_id)) => {
             info!("Import started, navigating to album: {}", album_id);
-            // Reset import state before navigating
-            // We need to call reset() here. Since reset() is on ImportContext, we can call it if it's public.
-            // But reset() is in navigation.rs (planned) or state.rs?
-            // I'll put reset() in navigation.rs and call it here.
-            // Or I can put reset() in state.rs as it just resets state.
-            // Let's assume reset() is available on ctx (I'll add it to state.rs or navigation.rs).
-            // If it's in navigation.rs, I need to import it.
-            // For now, I'll assume I can call a reset function.
-            // I'll use a placeholder and fix it later.
-            // Actually, I'll put reset() in state.rs because it touches almost all fields.
+
+            ctx.set_is_importing(false);
             ctx.reset();
             navigator.push(Route::AlbumDetail {
                 album_id,
@@ -218,6 +214,8 @@ pub async fn confirm_and_start_import(
         Err(e) => {
             let error_msg = format!("Failed to start import: {}", e);
             error!("{}", error_msg);
+
+            ctx.set_is_importing(false);
             ctx.set_import_error_message(Some(error_msg.clone()));
             Err(error_msg)
         }

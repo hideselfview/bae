@@ -1,5 +1,7 @@
 use crate::import::{MatchCandidate, MatchSource};
+use crate::ui::import_context::ImportContext;
 use dioxus::prelude::*;
+use std::rc::Rc;
 
 #[component]
 pub fn Confirmation(
@@ -7,6 +9,8 @@ pub fn Confirmation(
     on_edit: EventHandler<()>,
     on_confirm: EventHandler<()>,
 ) -> Element {
+    let import_context = use_context::<Rc<ImportContext>>();
+    let is_importing = import_context.is_importing();
     if let Some(candidate) = confirmed_candidate.read().as_ref() {
         let cover_url = candidate.cover_art_url();
         let release_year = candidate.year();
@@ -87,12 +91,21 @@ pub fn Confirmation(
                 div { class: "flex justify-end gap-3",
                     button {
                         class: "px-6 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-600 transition-colors border border-gray-600",
+                        disabled: *is_importing.read(),
                         onclick: move |_| on_edit.call(()),
                         "Edit"
                     }
                     button {
-                        class: "px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors",
+                        class: if *is_importing.read() {
+                            "px-6 py-2 bg-green-600 text-white rounded-lg transition-colors opacity-75 cursor-not-allowed flex items-center gap-2"
+                        } else {
+                            "px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2"
+                        },
+                        disabled: *is_importing.read(),
                         onclick: move |_| on_confirm.call(()),
+                        if *is_importing.read() {
+                            div { class: "animate-spin rounded-full h-4 w-4 border-b-2 border-white" }
+                        }
                         "Import"
                     }
                 }

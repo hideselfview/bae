@@ -45,10 +45,10 @@ use crate::import::metadata_persister::MetadataPersister;
 use crate::import::pipeline;
 use crate::import::progress::ImportProgressTracker;
 use crate::import::types::{
-    CueFlacLayoutData, CueFlacMetadata, DiscoveredFile, FileToChunks, ImportCommand,
-    ImportProgress, TorrentSource, TrackFile,
+    CueFlacMetadata, DiscoveredFile, FileToChunks, ImportCommand, ImportProgress, TorrentSource,
+    TrackFile,
 };
-use crate::library::{LibraryManager, SharedLibraryManager};
+use crate::library::SharedLibraryManager;
 use crate::torrent::TorrentManagerHandle;
 use futures::stream::StreamExt;
 use tokio::sync::mpsc;
@@ -687,64 +687,24 @@ impl ImportService {
             result?;
         }
 
-        info!("All chunks uploaded successfully, persisting metadata...");
+        info!("All chunks uploaded successfully, persisting release metadata...");
 
-        // ========== PERSIST METADATA ==========
-        // Layout already computed at the beginning, just persist it now
+        // ========== PERSIST RELEASE METADATA ==========
+        // Track metadata was already persisted by the pipeline as tracks completed.
+        // Now persist release-level metadata (files) and mark release complete.
 
-        self.persist_metadata_from_layout(
-            library_manager,
-            &db_release.id,
-            tracks_to_files,
-            &chunk_layout.files_to_chunks,
-            &chunk_layout.cue_flac_data,
-        )
-        .await?;
-
-        Ok(())
-    }
-
-    /// Persist metadata from an already-computed chunk layout.
-    ///
-    /// Used by folder imports where layout is computed upfront for accurate progress tracking.
-    async fn persist_metadata_from_layout(
-        &self,
-        library_manager: &LibraryManager,
-        release_id: &str,
-        tracks_to_files: &[TrackFile],
-        files_to_chunks: &[FileToChunks],
-        cue_flac_data: &HashMap<PathBuf, CueFlacLayoutData>,
-    ) -> Result<(), String> {
-        // Persist track metadata for all tracks
         let persister = MetadataPersister::new(library_manager);
-        for track_file in tracks_to_files {
-            persister
-                .persist_track_metadata(
-                    release_id,
-                    &track_file.db_track_id,
-                    tracks_to_files,
-                    files_to_chunks,
-                    self.config.chunk_size_bytes,
-                    cue_flac_data,
-                )
-                .await
-                .map_err(|e| format!("Failed to persist track metadata: {}", e))?;
-
-            // Mark track complete
-            library_manager
-                .mark_track_complete(&track_file.db_track_id)
-                .await
-                .map_err(|e| format!("Failed to mark track complete: {}", e))?;
-        }
-
-        // Persist release-level metadata
         persister
-            .persist_release_metadata(release_id, tracks_to_files, files_to_chunks)
+            .persist_release_metadata(
+                &db_release.id,
+                tracks_to_files,
+                &chunk_layout.files_to_chunks,
+            )
             .await?;
 
         // Mark release complete
         library_manager
-            .mark_release_complete(release_id)
+            .mark_release_complete(&db_release.id)
             .await
             .map_err(|e| format!("Failed to mark release complete: {}", e))?;
 
