@@ -1,4 +1,5 @@
 use crate::db::{DbAlbum, DbAlbumArtist, DbArtist, DbRelease, DbTrack};
+use crate::import::cover_art::fetch_cover_art_for_mb_release;
 use crate::musicbrainz::lookup_release_by_id;
 use uuid::Uuid;
 
@@ -49,21 +50,32 @@ pub async fn fetch_and_parse_mb_release(
         None
     };
 
-    parse_mb_release_from_json(&json, &mb_release, master_year, discogs_release)
+    // Fetch cover art from Cover Art Archive
+    let cover_art_url = fetch_cover_art_for_mb_release(&mb_release, &external_urls, None).await;
+
+    parse_mb_release_from_json(
+        &json,
+        &mb_release,
+        master_year,
+        discogs_release,
+        cover_art_url,
+    )
 }
 
 /// Parse MusicBrainz release JSON into database models
 ///
 /// discogs_release: Optional Discogs release data to populate both fields in DbAlbum
+/// cover_art_url: Optional cover art URL fetched from Cover Art Archive
 fn parse_mb_release_from_json(
     json: &serde_json::Value,
     mb_release: &crate::musicbrainz::MbRelease,
     master_year: u32,
     discogs_release: Option<crate::discogs::DiscogsRelease>,
+    cover_art_url: Option<String>,
 ) -> Result<ParsedMbAlbum, String> {
     // Create album record
     // If we have Discogs data, populate both fields
-    let album = if let Some(ref discogs_rel) = discogs_release {
+    let mut album = if let Some(ref discogs_rel) = discogs_release {
         // Create album with both MB and Discogs data
         let mut album = DbAlbum::from_mb_release(mb_release, master_year);
         // Add Discogs data
@@ -75,6 +87,11 @@ fn parse_mb_release_from_json(
     } else {
         DbAlbum::from_mb_release(mb_release, master_year)
     };
+
+    // Set cover art URL if we fetched one
+    if let Some(url) = cover_art_url {
+        album.cover_art_url = Some(url);
+    }
 
     // Create release record
     let db_release = DbRelease::from_mb_release(&album.id, mb_release);
