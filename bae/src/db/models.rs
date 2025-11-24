@@ -377,9 +377,9 @@ impl DbAlbum {
             release_id: release.release_id.clone(),
         };
 
-        // Extract year from date string if available
+        // Use first_release_date (original album year) for the album, not the specific release date
         let year = release
-            .date
+            .first_release_date
             .as_ref()
             .and_then(|d| d.split('-').next().and_then(|y| y.parse::<i32>().ok()))
             .or(Some(master_year as i32));
