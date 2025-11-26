@@ -134,9 +134,8 @@ pub fn AlbumCard(album: DbAlbum, artists: Vec<DbArtist>) -> Element {
                     title: "{artist_name}",
                     "{artist_name}"
                 }
-                YearDisplay {
-                    album_id: album_id.clone(),
-                    album_year: album_year,
+                if let Some(year) = album_year {
+                    p { class: "text-gray-500 text-xs mt-1", "{year}" }
                 }
             }
 
@@ -149,59 +148,6 @@ pub fn AlbumCard(album: DbAlbum, artists: Vec<DbArtist>) -> Element {
                         hover_cover.set(false);
                     }
                 }
-            }
-        }
-    }
-}
-
-/// Display year information for an album, showing both original and release year if different
-#[component]
-fn YearDisplay(album_id: String, album_year: Option<i32>) -> Element {
-    let library_manager = use_library_manager();
-    let mut release_year = use_signal(|| None::<i32>);
-
-    // Fetch the first release's year to show release-specific year
-    use_effect({
-        let library_manager = library_manager.clone();
-        let album_id = album_id.clone();
-        move || {
-            let library_manager = library_manager.clone();
-            let album_id = album_id.clone();
-            spawn(async move {
-                if let Ok(releases) = library_manager
-                    .get()
-                    .get_releases_for_album(&album_id)
-                    .await
-                {
-                    if let Some(first_release) = releases.first() {
-                        release_year.set(first_release.year);
-                    }
-                }
-            });
-        }
-    });
-
-    let release_yr = *release_year.read();
-
-    rsx! {
-        div { class: "text-gray-500 text-xs mt-1",
-            // Show both years if they differ, otherwise just show one
-            if let Some(album_yr) = album_year {
-                if let Some(rel_yr) = release_yr {
-                    if album_yr != rel_yr {
-                        // Different years - show both
-                        span { "Original: {album_yr} • This Release: {rel_yr}" }
-                    } else {
-                        // Same year - show once
-                        span { "{album_yr}" }
-                    }
-                } else {
-                    // Only album year available
-                    span { "{album_yr}" }
-                }
-            } else if let Some(rel_yr) = release_yr {
-                // Only release year available
-                span { "{rel_yr}" }
             }
         }
     }

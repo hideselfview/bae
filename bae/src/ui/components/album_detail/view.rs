@@ -74,6 +74,7 @@ pub fn AlbumDetailView(
                         album: album.clone(),
                         artists: artists.clone(),
                         track_count: tracks.len(),
+                        selected_release: releases.iter().find(|r| Some(r.id.clone()) == selected_release_id).cloned(),
                     }
 
                     PlayAlbumButton {
