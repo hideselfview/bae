@@ -120,6 +120,11 @@ impl Database {
                 year INTEGER,
                 discogs_release_id TEXT,
                 bandcamp_release_id TEXT,
+                format TEXT,
+                label TEXT,
+                catalog_number TEXT,
+                country TEXT,
+                barcode TEXT,
                 import_status TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
@@ -608,8 +613,9 @@ impl Database {
             r#"
             INSERT INTO releases (
                 id, album_id, release_name, year, discogs_release_id,
-                bandcamp_release_id, import_status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                bandcamp_release_id, format, label, catalog_number, country, barcode,
+                import_status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&release.id)
@@ -618,6 +624,11 @@ impl Database {
         .bind(release.year)
         .bind(&release.discogs_release_id)
         .bind(&release.bandcamp_release_id)
+        .bind(&release.format)
+        .bind(&release.label)
+        .bind(&release.catalog_number)
+        .bind(&release.country)
+        .bind(&release.barcode)
         .bind(release.import_status)
         .bind(release.created_at.to_rfc3339())
         .bind(release.updated_at.to_rfc3339())
@@ -719,8 +730,9 @@ impl Database {
             r#"
             INSERT INTO releases (
                 id, album_id, release_name, year, discogs_release_id,
-                bandcamp_release_id, import_status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                bandcamp_release_id, format, label, catalog_number, country, barcode,
+                import_status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&release.id)
@@ -729,6 +741,11 @@ impl Database {
         .bind(release.year)
         .bind(&release.discogs_release_id)
         .bind(&release.bandcamp_release_id)
+        .bind(&release.format)
+        .bind(&release.label)
+        .bind(&release.catalog_number)
+        .bind(&release.country)
+        .bind(&release.barcode)
         .bind(release.import_status)
         .bind(release.created_at.to_rfc3339())
         .bind(release.updated_at.to_rfc3339())
@@ -943,6 +960,11 @@ impl Database {
                 year: row.get("year"),
                 discogs_release_id: row.get("discogs_release_id"),
                 bandcamp_release_id: row.get("bandcamp_release_id"),
+                format: row.get("format"),
+                label: row.get("label"),
+                catalog_number: row.get("catalog_number"),
+                country: row.get("country"),
+                barcode: row.get("barcode"),
                 import_status: row.get("import_status"),
                 created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
                     .unwrap()

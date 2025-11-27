@@ -167,6 +167,16 @@ pub struct DbRelease {
     pub discogs_release_id: Option<String>,
     /// Bandcamp release ID (optional, for future multi-source support)
     pub bandcamp_release_id: Option<String>,
+    /// Format (e.g., "CD", "Vinyl", "Digital")
+    pub format: Option<String>,
+    /// Record label
+    pub label: Option<String>,
+    /// Catalog number
+    pub catalog_number: Option<String>,
+    /// Country of release
+    pub country: Option<String>,
+    /// Barcode
+    pub barcode: Option<String>,
     pub import_status: ImportStatus,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -410,6 +420,11 @@ impl DbRelease {
             year: None,
             discogs_release_id: None,
             bandcamp_release_id: None,
+            format: None,
+            label: None,
+            catalog_number: None,
+            country: None,
+            barcode: None,
             import_status: ImportStatus::Queued,
             created_at: now,
             updated_at: now,
@@ -426,6 +441,11 @@ impl DbRelease {
             year: release.year.map(|y| y as i32),
             discogs_release_id: Some(release.id.clone()),
             bandcamp_release_id: None,
+            format: None,         // TODO: Extract from Discogs release format data
+            label: None,          // TODO: Extract from Discogs release labels
+            catalog_number: None, // TODO: Extract from Discogs release
+            country: None,        // TODO: Extract from Discogs release country
+            barcode: None,        // TODO: Extract from Discogs release identifiers
             import_status: ImportStatus::Queued,
             created_at: now,
             updated_at: now,
@@ -448,6 +468,11 @@ impl DbRelease {
             year,
             discogs_release_id: None,
             bandcamp_release_id: None,
+            format: release.format.clone(),
+            label: release.label.clone(),
+            catalog_number: release.catalog_number.clone(),
+            country: release.country.clone(),
+            barcode: release.barcode.clone(),
             import_status: ImportStatus::Queued,
             created_at: now,
             updated_at: now,

@@ -20,72 +20,107 @@ pub fn AlbumMetadata(
             .join(", ")
     };
 
+    let mut is_expanded = use_signal(|| false);
+    let expanded = *is_expanded.read();
+
     rsx! {
         div {
+            // Simple top section - always visible
             h1 { class: "text-2xl font-bold text-white mb-2", "{album.title}" }
-            p { class: "text-lg text-gray-300 mb-4", "{artist_name}" }
+            p { class: "text-lg text-gray-300 mb-2", "{artist_name}" }
+            if let Some(year) = album.year {
+                p { class: "text-gray-400 text-sm mb-4", "{year}" }
+            }
 
-            div { class: "space-y-2 text-sm text-gray-400",
-                // Show both album year (original) and release year if different
-                if let Some(album_year) = album.year {
-                    if let Some(ref release) = selected_release {
-                        if let Some(release_year) = release.year {
-                            if album_year != release_year {
-                                // Different years - show both
-                                div {
-                                    span { class: "font-medium", "Original Release: " }
-                                    span { "{album_year}" }
-                                }
-                                div {
-                                    span { class: "font-medium", "This Release: " }
-                                    span { "{release_year}" }
-                                }
-                            } else {
-                                // Same year - show once
-                                div {
-                                    span { class: "font-medium", "Year: " }
-                                    span { "{album_year}" }
-                                }
-                            }
-                        } else {
-                            // Only album year available
-                            div {
-                                span { class: "font-medium", "Year: " }
-                                span { "{album_year}" }
-                            }
-                        }
-                    } else {
-                        // No release selected, show album year
-                        div {
-                            span { class: "font-medium", "Year: " }
-                            span { "{album_year}" }
-                        }
-                    }
-                }
-
-                // Show MusicBrainz release details if available
-                if let Some(ref mb_release) = album.musicbrainz_release {
-                    if let Some(ref release) = selected_release {
-                        // Get the MbRelease from the musicbrainz module to show format, label, etc.
-                        // For now, just show the IDs
-                        div {
-                            span { class: "font-medium", "MusicBrainz Release: " }
-                            span { class: "text-xs font-mono", "{mb_release.release_id}" }
-                        }
-                    }
-                }
-
-                // Show Discogs info if available
-                if let Some(discogs_release) = &album.discogs_release {
-                    div {
-                        span { class: "font-medium", "Discogs Master: " }
-                        span { "{discogs_release.master_id}" }
-                    }
-                }
-
+            // Collapsible Release Details box
+            if let Some(ref release) = selected_release {
                 div {
-                    span { class: "font-medium", "Tracks: " }
-                    span { "{track_count}" }
+                    class: "mt-4 border border-gray-700 rounded-lg bg-gray-800/50",
+
+                    // Header - clickable to expand/collapse
+                    button {
+                        class: "w-full px-4 py-3 flex items-center justify-between hover:bg-gray-700/30 transition-colors rounded-lg",
+                        onclick: move |_| {
+                            is_expanded.set(!expanded);
+                        },
+
+                        div { class: "flex items-center gap-2",
+                            span { class: "text-lg", "ℹ️" }
+                            span { class: "text-sm font-medium text-gray-300", "Release Details" }
+                        }
+
+                        span { class: "text-gray-400 text-sm",
+                            if expanded { "▲" } else { "▼" }
+                        }
+                    }
+
+                    // Expanded content
+                    if expanded {
+                        div { class: "px-4 pb-4 space-y-3",
+
+                            // Release year and format
+                            if release.year.is_some() || release.format.is_some() {
+                                div { class: "text-gray-300",
+                                    if let Some(year) = release.year {
+                                        span { "{year}" }
+                                        if release.format.is_some() {
+                                            span { " " }
+                                        }
+                                    }
+                                    if let Some(ref format) = release.format {
+                                        span { "{format}" }
+                                    }
+                                }
+                            }
+
+                            // Label and catalog number
+                            if release.label.is_some() || release.catalog_number.is_some() {
+                                div { class: "text-sm text-gray-400",
+                                    if let Some(ref label) = release.label {
+                                        span { "{label}" }
+                                        if release.catalog_number.is_some() {
+                                            span { " • " }
+                                        }
+                                    }
+                                    if let Some(ref catalog) = release.catalog_number {
+                                        span { "{catalog}" }
+                                    }
+                                }
+                            }
+
+                            // Country
+                            if let Some(ref country) = release.country {
+                                div { class: "text-sm text-gray-400",
+                                    span { "{country}" }
+                                }
+                            }
+
+                            // External links
+                            div { class: "pt-2 space-y-2",
+                                // MusicBrainz link
+                                if let Some(ref mb_release) = album.musicbrainz_release {
+                                    a {
+                                        href: "https://musicbrainz.org/release/{mb_release.release_id}",
+                                        target: "_blank",
+                                        class: "flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300 transition-colors",
+                                        span { "🔗" }
+                                        span { "MusicBrainz Release" }
+                                    }
+                                }
+
+                                // Discogs link
+                                if let Some(ref discogs) = album.discogs_release {
+                                    a {
+                                        href: "https://www.discogs.com/release/{discogs.release_id}",
+                                        target: "_blank",
+                                        class: "flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300 transition-colors",
+                                        span { "🔗" }
+                                        span { "Discogs Release" }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
