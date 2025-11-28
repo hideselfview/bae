@@ -9,7 +9,7 @@ use super::export_error_toast::ExportErrorToast;
 use super::play_album_button::PlayAlbumButton;
 use super::release_tabs_section::ReleaseTabsSection;
 use super::track_row::TrackRow;
-use super::ViewFilesModal;
+use super::ReleaseInfoModal;
 
 /// Album detail view component
 #[component]
@@ -26,7 +26,7 @@ pub fn AlbumDetailView(
     let library_manager = use_library_manager();
     let is_deleting = use_signal(|| false);
     let mut show_release_delete_confirm = use_signal(|| None::<String>);
-    let mut show_view_files_modal = use_signal(|| None::<String>);
+    let mut show_release_info_modal = use_signal(|| None::<String>);
     let is_exporting = use_signal(|| false);
     let mut export_error = use_signal(|| None::<String>);
 
@@ -99,7 +99,7 @@ pub fn AlbumDetailView(
                             is_deleting,
                             is_exporting,
                             export_error,
-                            on_view_files: move |id| show_view_files_modal.set(Some(id)),
+                            on_view_files: move |id| show_release_info_modal.set(Some(id)),
                             on_delete_release: move |id| show_release_delete_confirm.set(Some(id)),
                             torrents_resource,
                         }
@@ -141,11 +141,12 @@ pub fn AlbumDetailView(
             }
         }
 
-        // View Files Modal
-        if let Some(release_id) = show_view_files_modal() {
-            ViewFilesModal {
+        // Release Info Modal
+        if let Some(release_id) = show_release_info_modal() {
+            ReleaseInfoModal {
+                album: album.clone(),
                 release_id: release_id.clone(),
-                on_close: move |_| show_view_files_modal.set(None),
+                on_close: move |_| show_release_info_modal.set(None),
             }
         }
 

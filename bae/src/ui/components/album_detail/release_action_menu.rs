@@ -40,7 +40,7 @@ pub fn ReleaseActionMenu(
                         }
                     }
                 },
-                "View Files"
+                "Release Info"
             }
             if has_torrent {
                 if is_seeding {

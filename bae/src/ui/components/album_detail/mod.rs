@@ -9,6 +9,7 @@ mod loading;
 mod page;
 mod play_album_button;
 mod release_action_menu;
+mod release_info_modal;
 mod release_tabs_section;
 mod track_row;
 pub mod utils;
@@ -16,4 +17,5 @@ mod view;
 mod view_files_modal;
 
 pub use page::AlbumDetail;
+pub use release_info_modal::ReleaseInfoModal;
 pub use view_files_modal::ViewFilesModal;

@@ -24,7 +24,7 @@ pub fn AlbumCoverSection(
     let dialog = use_context::<DialogContext>();
     let mut show_dropdown = use_signal(|| false);
     let mut hover_cover = use_signal(|| false);
-    let mut show_view_files_modal = use_signal(|| None::<String>);
+    let mut show_release_info_modal = use_signal(|| None::<String>);
 
     rsx! {
         div {
@@ -74,11 +74,11 @@ pub fn AlbumCoverSection(
                                                 evt.stop_propagation();
                                                 show_dropdown.set(false);
                                                 if !is_deleting() && !is_exporting() {
-                                                    show_view_files_modal.set(Some(release_id.clone()));
+                                                    show_release_info_modal.set(Some(release_id.clone()));
                                                 }
                                             }
                                         },
-                                        "View Files"
+                                        "Release Info"
                                     }
                                     button {
                                         class: "w-full px-4 py-3 text-left text-white hover:bg-gray-600 transition-colors flex items-center gap-2",
@@ -199,11 +199,12 @@ pub fn AlbumCoverSection(
             }
         }
 
-        // View Files Modal
-        if let Some(release_id) = show_view_files_modal() {
-            super::ViewFilesModal {
+        // Release Info Modal
+        if let Some(release_id) = show_release_info_modal() {
+            super::ReleaseInfoModal {
+                album: album.clone(),
                 release_id: release_id.clone(),
-                on_close: move |_| show_view_files_modal.set(None),
+                on_close: move |_| show_release_info_modal.set(None),
             }
         }
     }
