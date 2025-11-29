@@ -1,7 +1,7 @@
 use crate::cache::CacheManager;
 use crate::cloud_storage::{CloudStorageError, CloudStorageManager};
 use crate::db::{
-    Database, DbAlbum, DbAlbumArtist, DbArtist, DbAudioFormat, DbChunk, DbFile, DbRelease,
+    Database, DbAlbum, DbAlbumArtist, DbArtist, DbAudioFormat, DbChunk, DbFile, DbImage, DbRelease,
     DbTorrent, DbTrack, DbTrackArtist, DbTrackChunkCoords, ImportStatus,
 };
 use crate::encryption::EncryptionService;
@@ -351,6 +351,41 @@ impl LibraryManager {
         track_id: &str,
     ) -> Result<Vec<DbArtist>, LibraryError> {
         Ok(self.database.get_artists_for_track(track_id).await?)
+    }
+
+    /// Add an image to a release
+    pub async fn add_image(&self, image: &DbImage) -> Result<(), LibraryError> {
+        self.database.insert_image(image).await?;
+        Ok(())
+    }
+
+    /// Get all images for a release
+    pub async fn get_images_for_release(
+        &self,
+        release_id: &str,
+    ) -> Result<Vec<DbImage>, LibraryError> {
+        Ok(self.database.get_images_for_release(release_id).await?)
+    }
+
+    /// Get the cover image for a release
+    pub async fn get_cover_image_for_release(
+        &self,
+        release_id: &str,
+    ) -> Result<Option<DbImage>, LibraryError> {
+        Ok(self
+            .database
+            .get_cover_image_for_release(release_id)
+            .await?)
+    }
+
+    /// Set an image as the cover for a release
+    pub async fn set_cover_image(
+        &self,
+        release_id: &str,
+        image_id: &str,
+    ) -> Result<(), LibraryError> {
+        self.database.set_cover_image(release_id, image_id).await?;
+        Ok(())
     }
 
     /// Delete a release and its associated data

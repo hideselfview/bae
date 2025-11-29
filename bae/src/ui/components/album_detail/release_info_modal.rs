@@ -1,5 +1,6 @@
-use crate::db::{DbAlbum, DbFile, DbRelease};
+use crate::db::{DbAlbum, DbFile, DbImage, DbRelease};
 use crate::library::use_library_manager;
+use crate::ui::local_file_url;
 use dioxus::prelude::*;
 use tracing::error;
 
@@ -7,6 +8,7 @@ use tracing::error;
 enum Tab {
     Details,
     Files,
+    Gallery,
 }
 
 /// Modal component with tabs for release details and files
@@ -18,8 +20,11 @@ pub fn ReleaseInfoModal(album: DbAlbum, release_id: String, on_close: EventHandl
     // Fetch release data
     let release = use_signal(|| None::<DbRelease>);
     let files = use_signal(Vec::<DbFile>::new);
+    let images = use_signal(Vec::<DbImage>::new);
     let is_loading_files = use_signal(|| false);
+    let is_loading_images = use_signal(|| false);
     let error_message = use_signal(|| None::<String>);
+    let images_error = use_signal(|| None::<String>);
 
     // Fetch release details
     use_effect({
@@ -90,6 +95,43 @@ pub fn ReleaseInfoModal(album: DbAlbum, release_id: String, on_close: EventHandl
         }
     });
 
+    // Fetch images when Gallery tab is active
+    use_effect({
+        let release_id_clone = release_id.clone();
+        let library_manager_clone = library_manager.clone();
+        let mut images_signal = images;
+        let mut is_loading_signal = is_loading_images;
+        let mut error_signal = images_error;
+        let tab = *active_tab.read();
+
+        move || {
+            if tab == Tab::Gallery {
+                let release_id = release_id_clone.clone();
+                let library_manager = library_manager_clone.clone();
+                spawn(async move {
+                    is_loading_signal.set(true);
+                    error_signal.set(None);
+
+                    match library_manager
+                        .get()
+                        .get_images_for_release(&release_id)
+                        .await
+                    {
+                        Ok(release_images) => {
+                            images_signal.set(release_images);
+                            is_loading_signal.set(false);
+                        }
+                        Err(e) => {
+                            error!("Failed to load images: {}", e);
+                            error_signal.set(Some(format!("Failed to load images: {}", e)));
+                            is_loading_signal.set(false);
+                        }
+                    }
+                });
+            }
+        }
+    });
+
     let current_tab = *active_tab.read();
 
     rsx! {
@@ -134,22 +176,41 @@ pub fn ReleaseInfoModal(album: DbAlbum, release_id: String, on_close: EventHandl
                             onclick: move |_| active_tab.set(Tab::Files),
                             "Files"
                         }
+                        button {
+                            class: if current_tab == Tab::Gallery {
+                                "px-4 py-2 text-sm font-medium text-white border-b-2 border-blue-500"
+                            } else {
+                                "px-4 py-2 text-sm font-medium text-gray-400 hover:text-white border-b-2 border-transparent"
+                            },
+                            onclick: move |_| active_tab.set(Tab::Gallery),
+                            "Gallery"
+                        }
                     }
                 }
 
                 // Tab content
                 div { class: "p-6 overflow-y-auto flex-1",
-                    if current_tab == Tab::Details {
-                        DetailsTab {
-                            album: album.clone(),
-                            release: release().clone(),
-                        }
-                    } else {
-                        FilesTab {
-                            files,
-                            is_loading: is_loading_files,
-                            error_message,
-                        }
+                    match current_tab {
+                        Tab::Details => rsx! {
+                            DetailsTab {
+                                album: album.clone(),
+                                release: release().clone(),
+                            }
+                        },
+                        Tab::Files => rsx! {
+                            FilesTab {
+                                files,
+                                is_loading: is_loading_files,
+                                error_message,
+                            }
+                        },
+                        Tab::Gallery => rsx! {
+                            GalleryTab {
+                                images,
+                                is_loading: is_loading_images,
+                                error_message: images_error,
+                            }
+                        },
                     }
                 }
             }
@@ -301,5 +362,92 @@ fn format_file_size(bytes: i64) -> String {
         format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
     } else {
         format!("{:.1} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+    }
+}
+
+#[component]
+fn GalleryTab(
+    images: ReadOnlySignal<Vec<DbImage>>,
+    is_loading: ReadOnlySignal<bool>,
+    error_message: ReadOnlySignal<Option<String>>,
+) -> Element {
+    let images = images();
+    let is_loading = is_loading();
+    let error_message = error_message();
+
+    rsx! {
+        if is_loading {
+            div {
+                class: "text-gray-400 text-center py-8",
+                "Loading images..."
+            }
+        } else if let Some(ref error) = error_message {
+            div {
+                class: "text-red-400 text-center py-8",
+                {error.clone()}
+            }
+        } else if images.is_empty() {
+            div {
+                class: "text-gray-400 text-center py-8",
+                "No images found"
+            }
+        } else {
+            div {
+                class: "grid grid-cols-2 sm:grid-cols-3 gap-4",
+                for image in images.iter() {
+                    {render_gallery_image(image)}
+                }
+            }
+        }
+    }
+}
+
+fn render_gallery_image(image: &DbImage) -> Element {
+    // For now, we don't have the full path context, so we'll need to construct
+    // a URL that works. Since DbImage stores relative filenames, we'd need
+    // the release's source path to construct the full URL.
+    // TODO: Store full path or add a way to resolve image paths
+    let is_cover = image.is_cover;
+    let filename = image.filename.clone();
+    let source_label = match image.source {
+        crate::db::ImageSource::Local => "Local",
+        crate::db::ImageSource::MusicBrainz => "MusicBrainz",
+        crate::db::ImageSource::Discogs => "Discogs",
+    };
+
+    rsx! {
+        div {
+            class: "relative group",
+            div {
+                class: if is_cover {
+                    "aspect-square bg-gray-700 rounded-lg overflow-hidden ring-2 ring-blue-500"
+                } else {
+                    "aspect-square bg-gray-700 rounded-lg overflow-hidden"
+                },
+                // Placeholder - actual image serving will be implemented when we have
+                // chunk-based image retrieval or local path resolution
+                div {
+                    class: "w-full h-full flex items-center justify-center text-gray-500",
+                    "🖼️"
+                }
+            }
+            // Overlay with info
+            div {
+                class: "absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-2",
+                div { class: "text-xs text-white truncate", {filename} }
+                div { class: "flex items-center gap-2 mt-1",
+                    if is_cover {
+                        span {
+                            class: "text-xs px-1.5 py-0.5 bg-blue-500 text-white rounded",
+                            "Cover"
+                        }
+                    }
+                    span {
+                        class: "text-xs text-gray-400",
+                        {source_label}
+                    }
+                }
+            }
+        }
     }
 }

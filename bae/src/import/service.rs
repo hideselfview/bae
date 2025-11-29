@@ -172,6 +172,7 @@ impl ImportService {
                 torrent_source,
                 torrent_metadata,
                 seed_after_download,
+                cover_art_url,
             } => {
                 info!("Starting torrent import pipeline for '{}'", db_album.title);
                 self.import_album_from_torrent(
@@ -181,6 +182,7 @@ impl ImportService {
                     torrent_source,
                     torrent_metadata,
                     seed_after_download,
+                    cover_art_url,
                 )
                 .await
             }
@@ -268,6 +270,7 @@ impl ImportService {
         torrent_source: TorrentSource,
         torrent_metadata: TorrentImportMetadata,
         seed_after_download: bool,
+        cover_art_url: Option<String>,
     ) -> Result<(), String> {
         let library_manager = self.library_manager.get();
 
@@ -325,7 +328,7 @@ impl ImportService {
         // Wait a bit for libtorrent to finish writing files to disk
         tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
 
-        info!("Torrent download (acquire phase) complete, starting chunk phase");
+        info!("Torrent download (acquire phase) complete");
 
         // Get file list from torrent to construct discovered_files
         let torrent_files = torrent_handle
@@ -335,13 +338,46 @@ impl ImportService {
 
         // Convert torrent files to DiscoveredFile format
         let temp_dir = std::env::temp_dir();
-        let discovered_files: Vec<DiscoveredFile> = torrent_files
+        let torrent_save_dir = temp_dir.join(&torrent_metadata.torrent_name);
+        let mut discovered_files: Vec<DiscoveredFile> = torrent_files
             .iter()
             .map(|tf| DiscoveredFile {
                 path: temp_dir.join(&tf.path),
                 size: tf.size as u64,
             })
             .collect();
+
+        // Download cover art to .bae/ folder in the torrent's temp directory
+        if let Some(ref url) = cover_art_url {
+            use crate::db::ImageSource;
+            use crate::import::cover_art::download_cover_art_to_bae_folder;
+
+            // Determine source based on URL pattern
+            let source = if url.contains("coverartarchive.org") || url.contains("musicbrainz") {
+                ImageSource::MusicBrainz
+            } else {
+                ImageSource::Discogs
+            };
+
+            match download_cover_art_to_bae_folder(url, &torrent_save_dir, source).await {
+                Ok(downloaded) => {
+                    info!("Downloaded cover art to {:?}", downloaded.path);
+                    // Add the downloaded cover art to discovered_files so it gets chunked
+                    if let Ok(metadata) = tokio::fs::metadata(&downloaded.path).await {
+                        discovered_files.push(DiscoveredFile {
+                            path: downloaded.path,
+                            size: metadata.len(),
+                        });
+                    }
+                }
+                Err(e) => {
+                    // Non-fatal - continue import without cover art
+                    warn!("Failed to download cover art: {}", e);
+                }
+            }
+        }
+
+        info!("Starting chunk phase");
 
         // Detect and parse CUE/FLAC files
         let file_paths: Vec<PathBuf> = discovered_files.iter().map(|f| f.path.clone()).collect();
@@ -390,9 +426,7 @@ impl ImportService {
 
         // ========== CLEANUP TEMPORARY FILES ==========
 
-        // Clean up temporary downloaded files
-        let temp_dir = std::env::temp_dir();
-        let torrent_save_dir = temp_dir.join(&torrent_metadata.torrent_name);
+        // Clean up temporary downloaded files (torrent_save_dir was defined earlier)
         if torrent_save_dir.exists() {
             match tokio::fs::remove_dir_all(&torrent_save_dir).await {
                 Ok(_) => {

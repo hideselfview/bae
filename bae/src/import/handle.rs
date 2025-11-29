@@ -4,8 +4,9 @@
 // Provides the public API for interacting with the import service.
 
 use crate::cue_flac::CueFlacProcessor;
-use crate::db::DbTorrent;
+use crate::db::{DbTorrent, ImageSource};
 use crate::discogs::DiscogsRelease;
+use crate::import::cover_art::download_cover_art_to_bae_folder;
 use crate::import::discogs_parser::parse_discogs_release;
 use crate::import::musicbrainz_parser::fetch_and_parse_mb_release;
 use crate::import::progress::ImportProgressHandle;
@@ -162,7 +163,28 @@ impl ImportServiceHandle {
                 return Err("No release provided".to_string());
             };
 
-        // 2. Discover files
+        // 2. Download cover art to .bae/ folder if we have a URL
+        // This happens before file discovery so the downloaded image is included
+        if let Some(ref url) = cover_art_url {
+            // Determine source based on which release we're importing
+            let source = if mb_release.is_some() {
+                ImageSource::MusicBrainz
+            } else {
+                ImageSource::Discogs
+            };
+
+            match download_cover_art_to_bae_folder(url, &folder, source).await {
+                Ok(downloaded) => {
+                    info!("Downloaded cover art to {:?}", downloaded.path);
+                }
+                Err(e) => {
+                    // Non-fatal - continue import without cover art
+                    warn!("Failed to download cover art: {}", e);
+                }
+            }
+        }
+
+        // 3. Discover files (will now include downloaded cover art from .bae/)
         let discovered_files = discover_folder_files(&folder)?;
 
         // 3. Build track-to-file mapping (validates and parses CUE sheets if present)
@@ -412,6 +434,7 @@ impl ImportServiceHandle {
                 torrent_source: torrent_source_for_request,
                 torrent_metadata,
                 seed_after_download,
+                cover_art_url,
             })
             .map_err(|_| "Failed to queue validated torrent for import".to_string())?;
 

@@ -10,7 +10,7 @@ use crate::torrent::ffi::TorrentInfo;
 use crate::torrent::TorrentManagerHandle;
 use crate::ui::components::dialog_context::DialogContext;
 use crate::ui::components::import::{
-    CategorizedFileInfo, FileInfo, ImportSource, SearchSource, TorrentInputMode,
+    CategorizedFileInfo, ImportSource, SearchSource, TorrentInputMode,
 };
 use dioxus::prelude::*;
 use dioxus::router::Navigator;
@@ -54,6 +54,8 @@ pub struct ImportContext {
     pub(crate) import_error_message: Signal<Option<String>>,
     pub(crate) duplicate_album_id: Signal<Option<String>>,
     pub(crate) folder_files: Signal<CategorizedFileInfo>,
+    /// Selected cover image: None = use remote URL, Some(index) = use local artwork at index
+    pub(crate) selected_cover_index: Signal<Option<usize>>,
     // Torrent-specific state
     pub(crate) torrent_source: Signal<Option<TorrentSource>>,
     pub(crate) seed_after_download: Signal<bool>,
@@ -118,6 +120,7 @@ impl ImportContext {
             import_error_message: Signal::new(None),
             duplicate_album_id: Signal::new(None),
             folder_files: Signal::new(CategorizedFileInfo::default()),
+            selected_cover_index: Signal::new(None),
             torrent_source: Signal::new(None),
             seed_after_download: Signal::new(true),
             torrent_metadata: Signal::new(None),
@@ -228,6 +231,10 @@ impl ImportContext {
 
     pub fn folder_files(&self) -> Signal<CategorizedFileInfo> {
         self.folder_files
+    }
+
+    pub fn selected_cover_index(&self) -> Signal<Option<usize>> {
+        self.selected_cover_index
     }
 
     pub fn torrent_source(&self) -> Signal<Option<TorrentSource>> {

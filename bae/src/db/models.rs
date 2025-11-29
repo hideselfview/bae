@@ -686,3 +686,71 @@ impl DbTorrentPieceMapping {
         serde_json::from_str(&self.chunk_ids)
     }
 }
+
+/// Source of an image file
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[sqlx(type_name = "TEXT", rename_all = "lowercase")]
+pub enum ImageSource {
+    /// Image came with the release files (scans, artwork folder, etc.)
+    Local,
+    /// Fetched from MusicBrainz Cover Art Archive
+    MusicBrainz,
+    /// Fetched from Discogs
+    Discogs,
+}
+
+impl ImageSource {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ImageSource::Local => "local",
+            ImageSource::MusicBrainz => "musicbrainz",
+            ImageSource::Discogs => "discogs",
+        }
+    }
+}
+
+/// Image metadata for a release
+///
+/// Tracks all images associated with a release, including:
+/// - Local images that came with the release (scans, artwork, etc.)
+/// - Fetched images from MusicBrainz or Discogs stored in .bae/ folder
+///
+/// One image per release is designated as the cover (is_cover = true).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbImage {
+    pub id: String,
+    /// Release this image belongs to
+    pub release_id: String,
+    /// Relative path from release root (e.g., "cover.jpg", ".bae/front-mb.jpg", "Artwork/front.jpg")
+    pub filename: String,
+    /// True if this is the designated cover image for the release
+    pub is_cover: bool,
+    /// Where this image came from
+    pub source: ImageSource,
+    /// Image width in pixels (if known)
+    pub width: Option<i32>,
+    /// Image height in pixels (if known)
+    pub height: Option<i32>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl DbImage {
+    pub fn new(release_id: &str, filename: &str, is_cover: bool, source: ImageSource) -> Self {
+        DbImage {
+            id: Uuid::new_v4().to_string(),
+            release_id: release_id.to_string(),
+            filename: filename.to_string(),
+            is_cover,
+            source,
+            width: None,
+            height: None,
+            created_at: Utc::now(),
+        }
+    }
+
+    pub fn with_dimensions(mut self, width: i32, height: i32) -> Self {
+        self.width = Some(width);
+        self.height = Some(height);
+        self
+    }
+}

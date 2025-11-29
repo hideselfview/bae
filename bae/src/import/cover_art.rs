@@ -1,7 +1,9 @@
+use crate::db::ImageSource;
 use crate::discogs::client::DiscogsClient;
 use crate::musicbrainz::{ExternalUrls, MbRelease};
 use crate::network::upgrade_to_https;
-use tracing::{debug, warn};
+use std::path::{Path, PathBuf};
+use tracing::{debug, info, warn};
 
 /// Fetch cover art URL from Cover Art Archive for a MusicBrainz release
 pub async fn fetch_cover_art_from_archive(release_id: &str) -> Option<String> {
@@ -141,4 +143,101 @@ pub async fn fetch_cover_art_for_mb_release(
     }
 
     None
+}
+
+/// Result of downloading cover art to local storage
+#[derive(Debug, Clone)]
+pub struct DownloadedCoverArt {
+    /// Path to the downloaded file (e.g., "/path/to/album/.bae/cover-mb.jpg")
+    pub path: PathBuf,
+    /// Source of the cover art
+    pub source: ImageSource,
+}
+
+/// Download cover art from a URL to the .bae/ folder in the release directory.
+///
+/// Creates the .bae/ directory if it doesn't exist.
+/// Returns the path to the downloaded file and its source.
+pub async fn download_cover_art_to_bae_folder(
+    cover_art_url: &str,
+    release_folder: &Path,
+    source: ImageSource,
+) -> Result<DownloadedCoverArt, String> {
+    // Create .bae directory
+    let bae_dir = release_folder.join(".bae");
+    tokio::fs::create_dir_all(&bae_dir)
+        .await
+        .map_err(|e| format!("Failed to create .bae directory: {}", e))?;
+
+    // Determine filename based on source and URL extension
+    let extension = cover_art_url
+        .split('.')
+        .last()
+        .and_then(|ext| {
+            let ext_lower = ext.to_lowercase();
+            // Only accept common image extensions
+            if ["jpg", "jpeg", "png", "gif", "webp"].contains(&ext_lower.as_str()) {
+                Some(ext_lower)
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "jpg".to_string());
+
+    let filename = match source {
+        ImageSource::MusicBrainz => format!("cover-mb.{}", extension),
+        ImageSource::Discogs => format!("cover-discogs.{}", extension),
+        ImageSource::Local => format!("cover.{}", extension),
+    };
+
+    let file_path = bae_dir.join(&filename);
+
+    // Download the image
+    info!(
+        "Downloading cover art from {} to {:?}",
+        cover_art_url, file_path
+    );
+
+    let client = reqwest::Client::builder()
+        .user_agent("bae/1.0 +https://github.com/hideselfview/bae")
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let response = client
+        .get(cover_art_url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch cover art: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "Cover art download failed with status {}",
+            response.status()
+        ));
+    }
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read cover art response: {}", e))?;
+
+    // Validate it's actually an image (basic check)
+    if bytes.len() < 100 {
+        return Err("Downloaded file too small to be a valid image".to_string());
+    }
+
+    tokio::fs::write(&file_path, &bytes)
+        .await
+        .map_err(|e| format!("Failed to write cover art file: {}", e))?;
+
+    info!(
+        "Downloaded cover art ({} bytes) to {:?}",
+        bytes.len(),
+        file_path
+    );
+
+    Ok(DownloadedCoverArt {
+        path: file_path,
+        source,
+    })
 }

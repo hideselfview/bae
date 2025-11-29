@@ -252,6 +252,8 @@ pub enum ImportCommand {
         torrent_metadata: TorrentImportMetadata,
         /// Whether to start seeding after download completes
         seed_after_download: bool,
+        /// Cover art URL to download after torrent completes
+        cover_art_url: Option<String>,
     },
     /// CD-based import: service will rip CD first (acquire phase), then process like folder import
     CD {

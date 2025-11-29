@@ -363,6 +363,29 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
+        // Images table (release artwork and cover art)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS images (
+                id TEXT PRIMARY KEY,
+                release_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                is_cover BOOLEAN NOT NULL DEFAULT FALSE,
+                source TEXT NOT NULL,
+                width INTEGER,
+                height INTEGER,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (release_id) REFERENCES releases (id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_images_release_id ON images (release_id)")
+            .execute(&self.pool)
+            .await?;
+
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_track_chunk_coords_track_id ON track_chunk_coords (track_id)",
         )
@@ -1760,5 +1783,118 @@ impl Database {
                     .with_timezone(&Utc),
             })
             .collect())
+    }
+
+    // ========== Image methods ==========
+
+    /// Insert an image record
+    pub async fn insert_image(&self, image: &DbImage) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO images (
+                id, release_id, filename, is_cover, source, width, height, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&image.id)
+        .bind(&image.release_id)
+        .bind(&image.filename)
+        .bind(image.is_cover)
+        .bind(image.source)
+        .bind(image.width)
+        .bind(image.height)
+        .bind(image.created_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Get all images for a release
+    pub async fn get_images_for_release(
+        &self,
+        release_id: &str,
+    ) -> Result<Vec<DbImage>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT * FROM images WHERE release_id = ? ORDER BY is_cover DESC, filename",
+        )
+        .bind(release_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut images = Vec::new();
+        for row in rows {
+            images.push(DbImage {
+                id: row.get("id"),
+                release_id: row.get("release_id"),
+                filename: row.get("filename"),
+                is_cover: row.get("is_cover"),
+                source: row.get("source"),
+                width: row.get("width"),
+                height: row.get("height"),
+                created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
+                    .unwrap()
+                    .with_timezone(&Utc),
+            });
+        }
+
+        Ok(images)
+    }
+
+    /// Get the cover image for a release
+    pub async fn get_cover_image_for_release(
+        &self,
+        release_id: &str,
+    ) -> Result<Option<DbImage>, sqlx::Error> {
+        let row = sqlx::query("SELECT * FROM images WHERE release_id = ? AND is_cover = TRUE")
+            .bind(release_id)
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(row.map(|row| DbImage {
+            id: row.get("id"),
+            release_id: row.get("release_id"),
+            filename: row.get("filename"),
+            is_cover: row.get("is_cover"),
+            source: row.get("source"),
+            width: row.get("width"),
+            height: row.get("height"),
+            created_at: DateTime::parse_from_rfc3339(&row.get::<String, _>("created_at"))
+                .unwrap()
+                .with_timezone(&Utc),
+        }))
+    }
+
+    /// Set an image as the cover (and unset any previous cover)
+    pub async fn set_cover_image(
+        &self,
+        release_id: &str,
+        image_id: &str,
+    ) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+
+        // Unset any existing cover for this release
+        sqlx::query("UPDATE images SET is_cover = FALSE WHERE release_id = ? AND is_cover = TRUE")
+            .bind(release_id)
+            .execute(&mut *tx)
+            .await?;
+
+        // Set the new cover
+        sqlx::query("UPDATE images SET is_cover = TRUE WHERE id = ?")
+            .bind(image_id)
+            .execute(&mut *tx)
+            .await?;
+
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Delete an image by ID
+    pub async fn delete_image(&self, image_id: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM images WHERE id = ?")
+            .bind(image_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 }
