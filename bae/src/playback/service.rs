@@ -273,12 +273,27 @@ impl PlaybackService {
                         if let Ok(mut release_tracks) =
                             self.library_manager.get_tracks(&track.release_id).await
                         {
-                            // Sort tracks by track_number for proper ordering
-                            release_tracks.sort_by(|a, b| match (a.track_number, b.track_number) {
-                                (Some(a_num), Some(b_num)) => a_num.cmp(&b_num),
-                                (Some(_), None) => std::cmp::Ordering::Less,
-                                (None, Some(_)) => std::cmp::Ordering::Greater,
-                                (None, None) => std::cmp::Ordering::Equal,
+                            // Sort tracks by disc_number then track_number for proper ordering
+                            release_tracks.sort_by(|a, b| {
+                                // First compare disc numbers
+                                let disc_cmp = match (a.disc_number, b.disc_number) {
+                                    (Some(a_disc), Some(b_disc)) => a_disc.cmp(&b_disc),
+                                    (Some(_), None) => std::cmp::Ordering::Less,
+                                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                                    (None, None) => std::cmp::Ordering::Equal,
+                                };
+
+                                // If disc numbers are equal, compare track numbers
+                                if disc_cmp == std::cmp::Ordering::Equal {
+                                    match (a.track_number, b.track_number) {
+                                        (Some(a_num), Some(b_num)) => a_num.cmp(&b_num),
+                                        (Some(_), None) => std::cmp::Ordering::Less,
+                                        (None, Some(_)) => std::cmp::Ordering::Greater,
+                                        (None, None) => std::cmp::Ordering::Equal,
+                                    }
+                                } else {
+                                    disc_cmp
+                                }
                             });
 
                             // If we don't have a previous track (starting fresh), set it based on album order
