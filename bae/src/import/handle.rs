@@ -666,7 +666,7 @@ fn extract_duration_from_file(file_path: &Path) -> Option<i64> {
 ///
 /// Files are sorted by path for consistent ordering across runs.
 fn discover_folder_files(folder: &Path) -> Result<Vec<DiscoveredFile>, String> {
-    use crate::import::folder_scanner;
+    use crate::import::folder_scanner::{self, AudioContent};
 
     // Use the folder scanner to collect files recursively (already categorized)
     let categorized = folder_scanner::collect_release_files(folder)?;
@@ -675,12 +675,30 @@ fn discover_folder_files(folder: &Path) -> Result<Vec<DiscoveredFile>, String> {
     // For import purposes, we need all files (tracks are the important ones)
     let mut files: Vec<DiscoveredFile> = Vec::new();
 
-    for f in categorized.tracks {
-        files.push(DiscoveredFile {
-            path: f.path,
-            size: f.size,
-        });
+    // Add audio files based on content type
+    match categorized.audio {
+        AudioContent::CueFlacPairs(pairs) => {
+            for pair in pairs {
+                files.push(DiscoveredFile {
+                    path: pair.cue_file.path,
+                    size: pair.cue_file.size,
+                });
+                files.push(DiscoveredFile {
+                    path: pair.audio_file.path,
+                    size: pair.audio_file.size,
+                });
+            }
+        }
+        AudioContent::TrackFiles(tracks) => {
+            for f in tracks {
+                files.push(DiscoveredFile {
+                    path: f.path,
+                    size: f.size,
+                });
+            }
+        }
     }
+
     for f in categorized.artwork {
         files.push(DiscoveredFile {
             path: f.path,

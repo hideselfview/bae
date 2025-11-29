@@ -158,16 +158,29 @@ pub fn TorrentStatus(info_hash: String, on_skip: Option<EventHandler<()>>) -> El
             }
 
             // Files section - show track count
-            if !state_read.files.tracks.is_empty() {
-                div { class: "border-b border-gray-200 pb-4",
-                    h5 { class: "text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2", "Files" }
-                    div { class: "text-sm text-gray-600",
-                        {format!("{} tracks, {} artwork, {} documents",
-                            state_read.files.tracks.len(),
-                            state_read.files.artwork.len(),
-                            state_read.files.documents.len()
-                        )}
+            {
+                let audio_count = match &state_read.files.audio {
+                    crate::ui::components::import::AudioContentInfo::CueFlacPairs(pairs) => {
+                        pairs.iter().map(|p| p.track_count).sum::<usize>()
                     }
+                    crate::ui::components::import::AudioContentInfo::TrackFiles(tracks) => tracks.len(),
+                };
+                let has_files = audio_count > 0 || !state_read.files.artwork.is_empty();
+                if has_files {
+                    rsx! {
+                        div { class: "border-b border-gray-200 pb-4",
+                            h5 { class: "text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2", "Files" }
+                            div { class: "text-sm text-gray-600",
+                                {format!("{} tracks, {} artwork, {} documents",
+                                    audio_count,
+                                    state_read.files.artwork.len(),
+                                    state_read.files.documents.len()
+                                )}
+                            }
+                        }
+                    }
+                } else {
+                    rsx! {}
                 }
             }
 

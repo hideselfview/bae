@@ -14,6 +14,6 @@ mod text_file_modal;
 mod torrent_import;
 mod torrent_status;
 
-pub use file_list::{CategorizedFileInfo, FileInfo};
+pub use file_list::{AudioContentInfo, CategorizedFileInfo, CueFlacPairInfo, FileInfo};
 pub use page::ImportPage;
 pub use source_selector::SearchSource;

@@ -795,7 +795,18 @@ pub fn detect_folder_contents(
         }
     };
 
-    files.extend(categorized.tracks.iter().map(to_file_entry));
+    // Add audio files based on content type
+    match &categorized.audio {
+        folder_scanner::AudioContent::CueFlacPairs(pairs) => {
+            for pair in pairs {
+                files.push(to_file_entry(&pair.cue_file));
+                files.push(to_file_entry(&pair.audio_file));
+            }
+        }
+        folder_scanner::AudioContent::TrackFiles(tracks) => {
+            files.extend(tracks.iter().map(to_file_entry));
+        }
+    }
     files.extend(categorized.artwork.iter().map(to_file_entry));
     files.extend(categorized.documents.iter().map(to_file_entry));
     files.extend(categorized.other.iter().map(to_file_entry));
@@ -830,18 +841,38 @@ pub fn detect_metadata(folder_path: PathBuf) -> Result<FolderMetadata, MetadataD
         .map_err(|e| MetadataDetectionError::Io(std::io::Error::other(e)))?;
 
     // Extract files by type from categorized structure
-    let audio_files: Vec<PathBuf> = categorized.tracks.iter().map(|f| f.path.clone()).collect();
+    let (audio_files, cue_files): (Vec<PathBuf>, Vec<PathBuf>) = match &categorized.audio {
+        folder_scanner::AudioContent::CueFlacPairs(pairs) => {
+            let audio: Vec<PathBuf> = pairs.iter().map(|p| p.audio_file.path.clone()).collect();
+            let cues: Vec<PathBuf> = pairs.iter().map(|p| p.cue_file.path.clone()).collect();
+            (audio, cues)
+        }
+        folder_scanner::AudioContent::TrackFiles(tracks) => {
+            let audio: Vec<PathBuf> = tracks.iter().map(|f| f.path.clone()).collect();
+            // For file-per-track, CUE files are in documents (documentation-only)
+            let cues: Vec<PathBuf> = categorized
+                .documents
+                .iter()
+                .filter(|d| {
+                    d.path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| e.to_lowercase() == "cue")
+                        .unwrap_or(false)
+                })
+                .map(|d| d.path.clone())
+                .collect();
+            (audio, cues)
+        }
+    };
 
-    // Extract CUE and LOG files from documents
-    let mut cue_files = Vec::new();
+    // Extract LOG files from documents
     let mut log_files = Vec::new();
 
     for doc in &categorized.documents {
         if let Some(ext) = doc.path.extension().and_then(|e| e.to_str()) {
-            match ext.to_lowercase().as_str() {
-                "cue" => cue_files.push(doc.path.clone()),
-                "log" => log_files.push(doc.path.clone()),
-                _ => {}
+            if ext.to_lowercase() == "log" {
+                log_files.push(doc.path.clone());
             }
         }
     }

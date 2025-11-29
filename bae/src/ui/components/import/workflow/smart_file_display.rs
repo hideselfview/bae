@@ -1,4 +1,4 @@
-use crate::ui::components::import::{CategorizedFileInfo, FileInfo};
+use crate::ui::components::import::{AudioContentInfo, CategorizedFileInfo, FileInfo};
 use chardetng::EncodingDetector;
 use dioxus::prelude::*;
 use tracing::warn;
@@ -14,6 +14,72 @@ fn format_file_size(bytes: u64) -> String {
         format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
     } else {
         format!("{:.1} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+    }
+}
+
+/// Render audio content based on type (CUE/FLAC pairs or track files)
+fn render_audio_content(audio: &AudioContentInfo) -> Element {
+    match audio {
+        AudioContentInfo::CueFlacPairs(pairs) => {
+            rsx! {
+                for pair in pairs.iter() {
+                    div {
+                        class: "p-4 bg-gray-800/50 border border-purple-500/30 rounded-lg",
+                        div { class: "flex items-start gap-3",
+                            div {
+                                class: "flex-shrink-0 w-10 h-10 bg-purple-600 rounded flex items-center justify-center",
+                                span { class: "text-white text-lg", "💿" }
+                            }
+                            div { class: "flex-1",
+                                div { class: "flex items-center gap-2 mb-1",
+                                    span { class: "text-sm font-semibold text-purple-300", "CUE/FLAC" }
+                                    span {
+                                        class: "px-2 py-0.5 bg-purple-600/50 text-purple-200 text-xs rounded",
+                                        {format!("{} tracks", pair.track_count)}
+                                    }
+                                }
+                                div { class: "text-xs text-gray-400",
+                                    {format!("{} total", format_file_size(pair.total_size))}
+                                }
+                                div { class: "text-xs text-gray-500 mt-1 truncate",
+                                    {pair.flac_name.clone()}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        AudioContentInfo::TrackFiles(tracks) if !tracks.is_empty() => {
+            let total_size: u64 = tracks.iter().map(|f| f.size).sum();
+            rsx! {
+                div {
+                    class: "p-4 bg-gray-800/50 border border-blue-500/30 rounded-lg",
+                    div { class: "flex items-start gap-3",
+                        div {
+                            class: "flex-shrink-0 w-10 h-10 bg-blue-600 rounded flex items-center justify-center",
+                            span { class: "text-white text-lg", "🎼" }
+                        }
+                        div { class: "flex-1",
+                            div { class: "flex items-center gap-2 mb-1",
+                                span { class: "text-sm font-semibold text-blue-300", "Track Files" }
+                                span {
+                                    class: "px-2 py-0.5 bg-blue-600/50 text-blue-200 text-xs rounded",
+                                    {format!("{} tracks", tracks.len())}
+                                }
+                            }
+                            div { class: "text-xs text-gray-400",
+                                {format!("{} total", format_file_size(total_size))}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        AudioContentInfo::TrackFiles(_) => {
+            // Empty tracks - render nothing
+            rsx! {}
+        }
     }
 }
 
@@ -64,8 +130,6 @@ pub fn SmartFileDisplay(files: CategorizedFileInfo, folder_path: String) -> Elem
         });
     };
 
-    let tracks_total_size: u64 = files.tracks.iter().map(|f| f.size).sum();
-
     rsx! {
         if files.is_empty() {
             div { class: "text-gray-400 text-center py-8",
@@ -73,30 +137,8 @@ pub fn SmartFileDisplay(files: CategorizedFileInfo, folder_path: String) -> Elem
             }
         } else {
             div { class: "space-y-3",
-                // Tracks section
-                if !files.tracks.is_empty() {
-                    div {
-                        class: "p-4 bg-gray-800/50 border border-blue-500/30 rounded-lg",
-                        div { class: "flex items-start gap-3",
-                            div {
-                                class: "flex-shrink-0 w-10 h-10 bg-blue-600 rounded flex items-center justify-center",
-                                span { class: "text-white text-lg", "🎼" }
-                            }
-                            div { class: "flex-1",
-                                div { class: "flex items-center gap-2 mb-1",
-                                    span { class: "text-sm font-semibold text-blue-300", "Track Files" }
-                                    span {
-                                        class: "px-2 py-0.5 bg-blue-600/50 text-blue-200 text-xs rounded",
-                                        {format!("{} tracks", files.tracks.len())}
-                                    }
-                                }
-                                div { class: "text-xs text-gray-400",
-                                    {format!("{} total", format_file_size(tracks_total_size))}
-                                }
-                            }
-                        }
-                    }
-                }
+                // Audio section - render based on content type
+                {render_audio_content(&files.audio)}
 
                 // Artwork section
                 for image in files.artwork.iter() {

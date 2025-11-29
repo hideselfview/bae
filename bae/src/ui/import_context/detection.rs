@@ -307,11 +307,16 @@ async fn handle_discid_lookup_result(
 
 /// Categorize torrent files into tracks, artwork, documents, and other
 fn categorize_torrent_files(files: &[crate::torrent::ffi::TorrentFileInfo]) -> CategorizedFileInfo {
+    use crate::ui::components::import::AudioContentInfo;
+
     let audio_extensions = ["flac", "mp3", "wav", "m4a", "aac", "ogg"];
     let image_extensions = ["jpg", "jpeg", "png", "webp", "gif", "bmp"];
     let document_extensions = ["cue", "log", "txt", "nfo", "m3u", "m3u8"];
 
-    let mut categorized = CategorizedFileInfo::default();
+    let mut tracks = Vec::new();
+    let mut artwork = Vec::new();
+    let mut documents = Vec::new();
+    let mut other = Vec::new();
 
     for tf in files {
         let path_buf = PathBuf::from(&tf.path);
@@ -330,21 +335,28 @@ fn categorize_torrent_files(files: &[crate::torrent::ffi::TorrentFileInfo]) -> C
         };
 
         if audio_extensions.contains(&ext_lower.as_str()) {
-            categorized.tracks.push(file_info);
+            tracks.push(file_info);
         } else if image_extensions.contains(&ext_lower.as_str()) {
-            categorized.artwork.push(file_info);
+            artwork.push(file_info);
         } else if document_extensions.contains(&ext_lower.as_str()) {
-            categorized.documents.push(file_info);
+            documents.push(file_info);
         } else {
-            categorized.other.push(file_info);
+            other.push(file_info);
         }
     }
 
     // Sort each category
-    categorized.tracks.sort_by(|a, b| a.name.cmp(&b.name));
-    categorized.artwork.sort_by(|a, b| a.name.cmp(&b.name));
-    categorized.documents.sort_by(|a, b| a.name.cmp(&b.name));
-    categorized.other.sort_by(|a, b| a.name.cmp(&b.name));
+    tracks.sort_by(|a, b| a.name.cmp(&b.name));
+    artwork.sort_by(|a, b| a.name.cmp(&b.name));
+    documents.sort_by(|a, b| a.name.cmp(&b.name));
+    other.sort_by(|a, b| a.name.cmp(&b.name));
 
-    categorized
+    // For torrents, we don't detect CUE/FLAC pairs yet - just use track files
+    // TODO: Could add CUE/FLAC pair detection for torrents
+    CategorizedFileInfo {
+        audio: AudioContentInfo::TrackFiles(tracks),
+        artwork,
+        documents,
+        other,
+    }
 }

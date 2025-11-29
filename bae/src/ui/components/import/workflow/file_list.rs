@@ -1,3 +1,4 @@
+use crate::import::folder_scanner::{AudioContent, ScannedCueFlacPair, ScannedFile};
 use dioxus::prelude::*;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -7,14 +8,38 @@ pub struct FileInfo {
     pub format: String,
 }
 
+/// A CUE/FLAC pair for UI display
+#[derive(Debug, Clone, PartialEq)]
+pub struct CueFlacPairInfo {
+    pub cue_name: String,
+    pub flac_name: String,
+    pub total_size: u64,
+    pub track_count: usize,
+}
+
+/// Audio content type for UI display
+#[derive(Debug, Clone, PartialEq)]
+pub enum AudioContentInfo {
+    /// One or more CUE/FLAC pairs
+    CueFlacPairs(Vec<CueFlacPairInfo>),
+    /// Individual track files
+    TrackFiles(Vec<FileInfo>),
+}
+
+impl Default for AudioContentInfo {
+    fn default() -> Self {
+        AudioContentInfo::TrackFiles(Vec::new())
+    }
+}
+
 /// Pre-categorized files for UI display
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct CategorizedFileInfo {
-    /// Audio track files
-    pub tracks: Vec<FileInfo>,
+    /// Audio content - CUE/FLAC pairs or track files
+    pub audio: AudioContentInfo,
     /// Artwork/image files
     pub artwork: Vec<FileInfo>,
-    /// Document files (.cue, .log, .txt, .nfo)
+    /// Document files (.log, .txt, .nfo) - CUE files in pairs are NOT here
     pub documents: Vec<FileInfo>,
     /// Everything else
     pub other: Vec<FileInfo>,
@@ -23,7 +48,7 @@ pub struct CategorizedFileInfo {
 impl CategorizedFileInfo {
     /// Convert from backend CategorizedFiles
     pub fn from_scanned(categorized: &crate::import::CategorizedFiles) -> Self {
-        let convert = |files: &[crate::import::ScannedFile]| -> Vec<FileInfo> {
+        let convert = |files: &[ScannedFile]| -> Vec<FileInfo> {
             files
                 .iter()
                 .map(|f| {
@@ -41,8 +66,24 @@ impl CategorizedFileInfo {
                 .collect()
         };
 
+        let convert_pair = |pair: &ScannedCueFlacPair| -> CueFlacPairInfo {
+            CueFlacPairInfo {
+                cue_name: pair.cue_file.relative_path.clone(),
+                flac_name: pair.audio_file.relative_path.clone(),
+                total_size: pair.cue_file.size + pair.audio_file.size,
+                track_count: pair.track_count,
+            }
+        };
+
+        let audio = match &categorized.audio {
+            AudioContent::CueFlacPairs(pairs) => {
+                AudioContentInfo::CueFlacPairs(pairs.iter().map(convert_pair).collect())
+            }
+            AudioContent::TrackFiles(tracks) => AudioContentInfo::TrackFiles(convert(tracks)),
+        };
+
         Self {
-            tracks: convert(&categorized.tracks),
+            audio,
             artwork: convert(&categorized.artwork),
             documents: convert(&categorized.documents),
             other: convert(&categorized.other),
@@ -51,7 +92,11 @@ impl CategorizedFileInfo {
 
     /// Total number of files across all categories
     pub fn total_count(&self) -> usize {
-        self.tracks.len() + self.artwork.len() + self.documents.len() + self.other.len()
+        let audio_count = match &self.audio {
+            AudioContentInfo::CueFlacPairs(pairs) => pairs.len() * 2, // CUE + FLAC
+            AudioContentInfo::TrackFiles(tracks) => tracks.len(),
+        };
+        audio_count + self.artwork.len() + self.documents.len() + self.other.len()
     }
 
     /// Check if empty
