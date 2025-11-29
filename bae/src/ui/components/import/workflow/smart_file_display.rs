@@ -18,35 +18,16 @@ fn format_file_size(bytes: u64) -> String {
 }
 
 /// Render audio content based on type (CUE/FLAC pairs or track files)
-fn render_audio_content(audio: &AudioContentInfo) -> Element {
+fn render_audio_content(
+    audio: &AudioContentInfo,
+    folder_path: &str,
+    on_cue_click: impl Fn(String, String) + Copy + 'static,
+) -> Element {
     match audio {
         AudioContentInfo::CueFlacPairs(pairs) => {
             rsx! {
                 for pair in pairs.iter() {
-                    div {
-                        class: "p-4 bg-gray-800/50 border border-purple-500/30 rounded-lg",
-                        div { class: "flex items-start gap-3",
-                            div {
-                                class: "flex-shrink-0 w-10 h-10 bg-purple-600 rounded flex items-center justify-center",
-                                span { class: "text-white text-lg", "💿" }
-                            }
-                            div { class: "flex-1",
-                                div { class: "flex items-center gap-2 mb-1",
-                                    span { class: "text-sm font-semibold text-purple-300", "CUE/FLAC" }
-                                    span {
-                                        class: "px-2 py-0.5 bg-purple-600/50 text-purple-200 text-xs rounded",
-                                        {format!("{} tracks", pair.track_count)}
-                                    }
-                                }
-                                div { class: "text-xs text-gray-400",
-                                    {format!("{} total", format_file_size(pair.total_size))}
-                                }
-                                div { class: "text-xs text-gray-500 mt-1 truncate",
-                                    {pair.flac_name.clone()}
-                                }
-                            }
-                        }
-                    }
+                    {render_cue_flac_pair(pair, folder_path, on_cue_click)}
                 }
             }
         }
@@ -79,6 +60,47 @@ fn render_audio_content(audio: &AudioContentInfo) -> Element {
         AudioContentInfo::TrackFiles(_) => {
             // Empty tracks - render nothing
             rsx! {}
+        }
+    }
+}
+
+/// Render a single CUE/FLAC pair with click-to-view CUE functionality
+fn render_cue_flac_pair(
+    pair: &crate::ui::components::import::CueFlacPairInfo,
+    folder_path: &str,
+    on_click: impl Fn(String, String) + Copy + 'static,
+) -> Element {
+    let cue_path = format!("{}/{}", folder_path, pair.cue_name);
+    let cue_name = pair.cue_name.clone();
+    let flac_name = pair.flac_name.clone();
+    let track_count = pair.track_count;
+    let total_size = pair.total_size;
+
+    rsx! {
+        div {
+            class: "p-4 bg-gray-800/50 border border-purple-500/30 rounded-lg hover:bg-gray-800/70 hover:border-purple-500/50 transition-colors cursor-pointer",
+            onclick: move |_| on_click(cue_name.clone(), cue_path.clone()),
+            div { class: "flex items-start gap-3",
+                div {
+                    class: "flex-shrink-0 w-10 h-10 bg-purple-600 rounded flex items-center justify-center",
+                    span { class: "text-white text-lg", "💿" }
+                }
+                div { class: "flex-1",
+                    div { class: "flex items-center gap-2 mb-1",
+                        span { class: "text-sm font-semibold text-purple-300", "CUE/FLAC" }
+                        span {
+                            class: "px-2 py-0.5 bg-purple-600/50 text-purple-200 text-xs rounded",
+                            {format!("{} tracks", track_count)}
+                        }
+                    }
+                    div { class: "text-xs text-gray-400",
+                        {format!("{} total • Click to view CUE", format_file_size(total_size))}
+                    }
+                    div { class: "text-xs text-gray-500 mt-1 truncate",
+                        {flac_name}
+                    }
+                }
+            }
         }
     }
 }
@@ -138,7 +160,7 @@ pub fn SmartFileDisplay(files: CategorizedFileInfo, folder_path: String) -> Elem
         } else {
             div { class: "space-y-3",
                 // Audio section - render based on content type
-                {render_audio_content(&files.audio)}
+                {render_audio_content(&files.audio, &folder_path, on_text_file_click)}
 
                 // Artwork section
                 for image in files.artwork.iter() {
