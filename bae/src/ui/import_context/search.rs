@@ -1,12 +1,13 @@
 use super::state::ImportContext;
 use crate::discogs::client::DiscogsSearchResult;
+use crate::import::cover_art::fetch_cover_art_from_archive;
 use crate::import::{FolderMetadata, MatchCandidate};
 use crate::musicbrainz::{
     search_releases, search_releases_with_params, MbRelease, ReleaseSearchParams,
 };
 use crate::ui::components::import::SearchSource;
 use dioxus::prelude::*;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 pub async fn search_discogs_by_metadata(
     ctx: &ImportContext,
@@ -193,13 +194,13 @@ pub async fn search_for_matches(
                         );
                     }
 
-                    // Use detected metadata for ranking if available
-                    if let Some(ref meta) = metadata {
+                    // Create candidates first (with or without ranking)
+                    let mut candidates = if let Some(ref meta) = metadata {
                         use crate::import::rank_mb_matches;
-                        Ok(rank_mb_matches(meta, releases))
+                        rank_mb_matches(meta, releases)
                     } else {
                         // No metadata for ranking, return unranked results
-                        Ok(releases
+                        releases
                             .into_iter()
                             .map(|release| MatchCandidate {
                                 source: crate::import::MatchSource::MusicBrainz(release),
@@ -207,8 +208,42 @@ pub async fn search_for_matches(
                                 match_reasons: vec!["Manual search result".to_string()],
                                 cover_art_url: None,
                             })
-                            .collect())
+                            .collect()
+                    };
+
+                    // Fetch cover art for each candidate in parallel
+                    let cover_art_futures: Vec<_> = candidates
+                        .iter()
+                        .map(|candidate| {
+                            let release_id = match &candidate.source {
+                                crate::import::MatchSource::MusicBrainz(release) => {
+                                    release.release_id.clone()
+                                }
+                                _ => String::new(),
+                            };
+                            async move {
+                                if !release_id.is_empty() {
+                                    debug!("Fetching cover art for release {}", release_id);
+                                    fetch_cover_art_from_archive(&release_id).await
+                                } else {
+                                    None
+                                }
+                            }
+                        })
+                        .collect();
+
+                    let cover_art_results = futures::future::join_all(cover_art_futures).await;
+
+                    // Update candidates with cover art URLs
+                    for (candidate, cover_url) in
+                        candidates.iter_mut().zip(cover_art_results.into_iter())
+                    {
+                        if candidate.cover_art_url.is_none() {
+                            candidate.cover_art_url = cover_url;
+                        }
                     }
+
+                    Ok(candidates)
                 }
                 Err(e) => {
                     warn!("✗ MusicBrainz search failed: {}", e);

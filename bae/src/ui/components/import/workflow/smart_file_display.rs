@@ -1,4 +1,5 @@
 use crate::ui::components::import::{AudioContentInfo, CategorizedFileInfo, FileInfo};
+use crate::ui::local_file_url;
 use chardetng::EncodingDetector;
 use dioxus::prelude::*;
 use tracing::warn;
@@ -217,12 +218,13 @@ pub fn SmartFileDisplay(files: CategorizedFileInfo, folder_path: String) -> Elem
 
 fn render_image_file(file: &FileInfo, folder_path: &str) -> Element {
     let image_path = format!("{}/{}", folder_path, file.name);
+    let image_url = local_file_url(&image_path);
     rsx! {
         div {
             class: "p-3 bg-gray-800 border border-gray-700 rounded-lg",
             div { class: "flex items-start gap-3",
                 img {
-                    src: "file://{image_path}",
+                    src: "{image_url}",
                     class: "w-20 h-20 object-cover rounded flex-shrink-0",
                     alt: "{file.name}",
                 }

@@ -86,6 +86,17 @@ pub async fn confirm_and_start_import(
     let metadata = ctx.detected_metadata().read().clone();
     let master_year = metadata.as_ref().and_then(|m| m.year).unwrap_or(1970);
 
+    // Determine cover art URL based on user selection
+    // If user selected a local image, don't download remote cover art
+    let selected_cover_idx = *ctx.selected_cover_index().read();
+    let cover_art_url = if selected_cover_idx.is_some() {
+        // User selected a local image, skip remote download
+        None
+    } else {
+        // Use remote cover art URL from candidate
+        candidate.cover_art_url.clone()
+    };
+
     // Build import request based on source
     let request = match import_source {
         ImportSource::Folder => {
@@ -107,7 +118,7 @@ pub async fn confirm_and_start_import(
                         mb_release: None,
                         folder: PathBuf::from(folder_path),
                         master_year,
-                        cover_art_url: candidate.cover_art_url.clone(),
+                        cover_art_url: cover_art_url.clone(),
                     }
                 }
                 MatchSource::MusicBrainz(mb_release) => {
@@ -121,7 +132,7 @@ pub async fn confirm_and_start_import(
                         mb_release: Some(mb_release.clone()),
                         folder: PathBuf::from(folder_path),
                         master_year,
-                        cover_art_url: candidate.cover_art_url.clone(),
+                        cover_art_url: cover_art_url.clone(),
                     }
                 }
             }
@@ -158,7 +169,7 @@ pub async fn confirm_and_start_import(
                         master_year,
                         seed_after_download,
                         torrent_metadata,
-                        cover_art_url: candidate.cover_art_url.clone(),
+                        cover_art_url: cover_art_url.clone(),
                     }
                 }
                 MatchSource::MusicBrainz(mb_release) => {
@@ -174,7 +185,7 @@ pub async fn confirm_and_start_import(
                         master_year,
                         seed_after_download,
                         torrent_metadata,
-                        cover_art_url: candidate.cover_art_url.clone(),
+                        cover_art_url: cover_art_url.clone(),
                     }
                 }
             }
@@ -196,7 +207,7 @@ pub async fn confirm_and_start_import(
                         mb_release: Some(mb_release.clone()),
                         drive_path: PathBuf::from(folder_path),
                         master_year,
-                        cover_art_url: candidate.cover_art_url.clone(),
+                        cover_art_url: cover_art_url.clone(),
                     }
                 }
             }
