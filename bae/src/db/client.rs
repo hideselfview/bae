@@ -145,6 +145,7 @@ impl Database {
                 id TEXT PRIMARY KEY,
                 release_id TEXT NOT NULL,
                 title TEXT NOT NULL,
+                disc_number INTEGER,
                 track_number INTEGER,
                 duration_ms INTEGER,
                 discogs_position TEXT,
@@ -643,14 +644,15 @@ impl Database {
         sqlx::query(
             r#"
             INSERT INTO tracks (
-                id, release_id, title, track_number, duration_ms, 
+                id, release_id, title, disc_number, track_number, duration_ms, 
                 discogs_position, import_status, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&track.id)
         .bind(&track.release_id)
         .bind(&track.title)
+        .bind(track.disc_number)
         .bind(track.track_number)
         .bind(track.duration_ms)
         .bind(&track.discogs_position)
@@ -757,14 +759,15 @@ impl Database {
             sqlx::query(
                 r#"
                 INSERT INTO tracks (
-                    id, release_id, title, track_number, duration_ms, 
+                    id, release_id, title, disc_number, track_number, duration_ms, 
                     discogs_position, import_status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 "#,
             )
             .bind(&track.id)
             .bind(&track.release_id)
             .bind(&track.title)
+            .bind(track.disc_number)
             .bind(track.track_number)
             .bind(track.duration_ms)
             .bind(&track.discogs_position)
@@ -990,6 +993,7 @@ impl Database {
                 id: row.get("id"),
                 release_id: row.get("release_id"),
                 title: row.get("title"),
+                disc_number: row.get("disc_number"),
                 track_number: row.get("track_number"),
                 duration_ms: row.get("duration_ms"),
                 discogs_position: row.get("discogs_position"),
@@ -1019,10 +1023,12 @@ impl Database {
         &self,
         release_id: &str,
     ) -> Result<Vec<DbTrack>, sqlx::Error> {
-        let rows = sqlx::query("SELECT * FROM tracks WHERE release_id = ? ORDER BY track_number")
-            .bind(release_id)
-            .fetch_all(&self.pool)
-            .await?;
+        let rows = sqlx::query(
+            "SELECT * FROM tracks WHERE release_id = ? ORDER BY disc_number, track_number",
+        )
+        .bind(release_id)
+        .fetch_all(&self.pool)
+        .await?;
 
         let mut tracks = Vec::new();
         for row in rows {
@@ -1030,6 +1036,7 @@ impl Database {
                 id: row.get("id"),
                 release_id: row.get("release_id"),
                 title: row.get("title"),
+                disc_number: row.get("disc_number"),
                 track_number: row.get("track_number"),
                 duration_ms: row.get("duration_ms"),
                 discogs_position: row.get("discogs_position"),

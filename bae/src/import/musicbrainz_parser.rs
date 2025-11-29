@@ -167,7 +167,10 @@ fn parse_mb_release_from_json(
     let mut track_index = 0;
 
     if let Some(media_array) = json.get("media").and_then(|m| m.as_array()) {
-        for medium in media_array {
+        for (medium_index, medium) in media_array.iter().enumerate() {
+            // Disc number is 1-indexed
+            let disc_number = Some((medium_index + 1) as i32);
+
             if let Some(tracks_array) = medium.get("tracks").and_then(|t| t.as_array()) {
                 for track_json in tracks_array {
                     if let Some(recording) = track_json.get("recording") {
@@ -188,6 +191,7 @@ fn parse_mb_release_from_json(
                             id: Uuid::new_v4().to_string(),
                             release_id: db_release.id.clone(),
                             title,
+                            disc_number,
                             track_number,
                             duration_ms: None, // Will be filled in during track mapping
                             discogs_position: position.map(|p| p.to_string()),

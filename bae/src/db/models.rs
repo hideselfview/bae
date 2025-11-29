@@ -199,6 +199,8 @@ pub struct DbTrack {
     /// Links to the specific release (DbRelease), not the logical album
     pub release_id: String,
     pub title: String,
+    /// Disc number (1-indexed) for multi-disc releases
+    pub disc_number: Option<i32>,
     pub track_number: Option<i32>,
     pub duration_ms: Option<i64>,
     /// Position from metadata source (e.g., "A1", "1", "1-1")
@@ -492,6 +494,7 @@ impl DbTrack {
             id: track_id.to_string(),
             release_id: release_id.to_string(),
             title: title.to_string(),
+            disc_number: None,
             track_number,
             duration_ms: None,
             discogs_position: None,
@@ -504,11 +507,13 @@ impl DbTrack {
         discogs_track: &crate::discogs::DiscogsTrack,
         release_id: &str,
         track_index: usize,
+        disc_number: Option<i32>,
     ) -> Result<Self, String> {
         Ok(DbTrack {
             id: Uuid::new_v4().to_string(),
             release_id: release_id.to_string(),
             title: discogs_track.title.clone(),
+            disc_number,
             track_number: Some((track_index + 1) as i32),
             duration_ms: None, // Will be filled in during track mapping
             discogs_position: Some(discogs_track.position.clone()),

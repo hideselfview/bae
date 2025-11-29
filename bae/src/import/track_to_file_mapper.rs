@@ -218,6 +218,7 @@ mod tests {
                 id: format!("track-{}", i),
                 release_id: "release-1".to_string(),
                 title: format!("Track {}", i + 1),
+                disc_number: None,
                 track_number: Some((i + 1) as i32),
                 duration_ms: None,
                 discogs_position: Some((i + 1).to_string()),
