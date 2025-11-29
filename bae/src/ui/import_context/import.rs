@@ -206,15 +206,43 @@ pub async fn confirm_and_start_import(
     // Submit import request
     match ctx.import_service.send_request(request).await {
         Ok((album_id, _release_id)) => {
-            info!("Import started, navigating to album: {}", album_id);
+            info!("Import started successfully: {}", album_id);
 
             ctx.set_is_importing(false);
-            ctx.reset();
-            navigator.push(Route::AlbumDetail {
-                album_id,
-                release_id: String::new(),
-            });
-            Ok(())
+
+            // Check if there are more releases to import in the batch
+            if ctx.has_more_releases() {
+                info!("More releases to import, advancing to next release");
+                ctx.advance_to_next_release();
+
+                // Load the next release
+                let current_idx = *ctx.current_release_index().read();
+                let selected_indices = ctx.selected_release_indices().read().clone();
+                if let Some(&release_idx) = selected_indices.get(current_idx) {
+                    match ctx.load_selected_release(release_idx).await {
+                        Ok(()) => {
+                            info!("Loaded next release for import");
+                        }
+                        Err(e) => {
+                            error!("Failed to load next release: {}", e);
+                            ctx.set_import_error_message(Some(e));
+                        }
+                    }
+                }
+                Ok(())
+            } else {
+                // No more releases, navigate to the imported album
+                info!(
+                    "No more releases to import, navigating to album: {}",
+                    album_id
+                );
+                ctx.reset();
+                navigator.push(Route::AlbumDetail {
+                    album_id,
+                    release_id: String::new(),
+                });
+                Ok(())
+            }
         }
         Err(e) => {
             let error_msg = format!("Failed to start import: {}", e);

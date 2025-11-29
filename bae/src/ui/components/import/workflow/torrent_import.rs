@@ -71,6 +71,7 @@ pub fn TorrentImport() -> Element {
         let folder_files = import_context.folder_files();
         let files = folder_files.read();
         let result = files
+            .documents
             .iter()
             .any(|f| f.format.to_lowercase() == "cue" || f.format.to_lowercase() == "log");
         drop(files);

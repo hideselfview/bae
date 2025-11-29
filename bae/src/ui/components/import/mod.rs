@@ -4,4 +4,4 @@ mod workflow;
 
 pub use import_source_selector::{ImportSource, ImportSourceSelector, TorrentInputMode};
 pub use import_workflow_manager::ImportWorkflowManager;
-pub use workflow::{FileInfo, SearchSource};
+pub use workflow::{CategorizedFileInfo, FileInfo, SearchSource};

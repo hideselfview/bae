@@ -6,6 +6,7 @@ pub enum ImportStep {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ImportPhase {
     FolderSelection,
+    ReleaseSelection,
     MetadataDetection,
     ExactLookup,
     ManualSearch,

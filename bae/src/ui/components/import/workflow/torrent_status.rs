@@ -1,21 +1,21 @@
 use crate::torrent::progress::{TorrentProgress, TrackerStatus};
-use crate::ui::components::import::FileInfo;
+use crate::ui::components::import::CategorizedFileInfo;
 use dioxus::prelude::*;
 use std::collections::HashMap;
 
 #[derive(Clone)]
-pub struct TorrentStatusState {
-    pub info_hash: String,
-    pub name: String,
-    pub total_size: u64,
-    pub num_files: usize,
-    pub num_peers: i32,
-    pub num_seeds: i32,
-    pub trackers: Vec<TrackerStatus>,
-    pub files: Vec<FileInfo>,
-    pub metadata_files: Vec<String>,
-    pub metadata_progress: HashMap<String, f32>, // file -> progress (0.0 to 1.0)
-    pub is_detecting: bool,
+struct TorrentStatusState {
+    info_hash: String,
+    name: String,
+    total_size: u64,
+    num_files: usize,
+    num_peers: i32,
+    num_seeds: i32,
+    trackers: Vec<TrackerStatus>,
+    files: CategorizedFileInfo,
+    metadata_files: Vec<String>,
+    metadata_progress: HashMap<String, f32>, // file -> progress (0.0 to 1.0)
+    is_detecting: bool,
 }
 
 #[component]
@@ -30,7 +30,7 @@ pub fn TorrentStatus(info_hash: String, on_skip: Option<EventHandler<()>>) -> El
         num_peers: 0,
         num_seeds: 0,
         trackers: vec![],
-        files: vec![],
+        files: CategorizedFileInfo::default(),
         metadata_files: vec![],
         metadata_progress: HashMap::new(),
         is_detecting: false,
@@ -157,22 +157,16 @@ pub fn TorrentStatus(info_hash: String, on_skip: Option<EventHandler<()>>) -> El
                 }
             }
 
-            // Files section
-            if !state_read.files.is_empty() {
+            // Files section - show track count
+            if !state_read.files.tracks.is_empty() {
                 div { class: "border-b border-gray-200 pb-4",
                     h5 { class: "text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2", "Files" }
-                    div { class: "space-y-1 max-h-48 overflow-y-auto",
-                        for file in &state_read.files {
-                            div {
-                                class: if state_read.metadata_files.iter().any(|mf| file.name.contains(mf)) {
-                                    "text-sm py-1 px-2 bg-blue-50 border border-blue-200 rounded"
-                                } else {
-                                    "text-sm py-1 px-2"
-                                },
-                                {file.name.clone()}
-                                span { class: "text-gray-500 ml-2", "({format_size(file.size)})" }
-                            }
-                        }
+                    div { class: "text-sm text-gray-600",
+                        {format!("{} tracks, {} artwork, {} documents",
+                            state_read.files.tracks.len(),
+                            state_read.files.artwork.len(),
+                            state_read.files.documents.len()
+                        )}
                     }
                 }
             }

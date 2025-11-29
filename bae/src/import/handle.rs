@@ -659,28 +659,46 @@ fn extract_duration_from_file(file_path: &Path) -> Option<i64> {
 
 /// Discover all files in folder with metadata.
 ///
-/// Single filesystem traversal to gather file paths and sizes upfront.
-/// This avoids redundant directory reads later for CUE detection and chunk calculations.
+/// Recursively scans the folder using the folder_scanner module to support:
+/// - Single release (flat) - audio files in root, optional artwork subfolders
+/// - Single release (multi-disc) - disc subfolders with audio, optional artwork
+/// - Collections - recursive tree where leaves are single releases
+///
 /// Files are sorted by path for consistent ordering across runs.
 fn discover_folder_files(folder: &Path) -> Result<Vec<DiscoveredFile>, String> {
-    let mut files = Vec::new();
+    use crate::import::folder_scanner;
 
-    for entry in std::fs::read_dir(folder).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let path = entry.path();
+    // Use the folder scanner to collect files recursively (already categorized)
+    let categorized = folder_scanner::collect_release_files(folder)?;
 
-        if path.is_file() {
-            let size = entry
-                .metadata()
-                .map_err(|e| format!("Failed to read metadata for {:?}: {}", path, e))?
-                .len();
+    // Convert all categories to DiscoveredFile format
+    // For import purposes, we need all files (tracks are the important ones)
+    let mut files: Vec<DiscoveredFile> = Vec::new();
 
-            files.push(DiscoveredFile { path, size });
-        }
+    for f in categorized.tracks {
+        files.push(DiscoveredFile {
+            path: f.path,
+            size: f.size,
+        });
     }
-
-    // Sort by path for consistent ordering
-    files.sort_by(|a, b| a.path.cmp(&b.path));
+    for f in categorized.artwork {
+        files.push(DiscoveredFile {
+            path: f.path,
+            size: f.size,
+        });
+    }
+    for f in categorized.documents {
+        files.push(DiscoveredFile {
+            path: f.path,
+            size: f.size,
+        });
+    }
+    for f in categorized.other {
+        files.push(DiscoveredFile {
+            path: f.path,
+            size: f.size,
+        });
+    }
 
     Ok(files)
 }

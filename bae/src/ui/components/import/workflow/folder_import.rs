@@ -1,4 +1,4 @@
-use super::inputs::FolderSelector;
+use super::inputs::{FolderSelector, ReleaseSelector};
 use super::shared::{
     Confirmation, DetectingMetadata, ErrorDisplay, ExactLookup, ManualSearch, SelectedSource,
 };
@@ -76,7 +76,14 @@ pub fn FolderImport() -> Element {
                         }
                     }
                 }
-            } else {
+            }
+
+            // Phase 2: Release Selection (for multi-release folders)
+            else if *import_phase.read() == ImportPhase::ReleaseSelection {
+                ReleaseSelector {}
+            }
+
+            else {
                 div { class: "space-y-6",
                     // Show selected folder
                     SelectedSource {

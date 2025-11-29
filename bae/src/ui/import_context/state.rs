@@ -1,14 +1,17 @@
 use crate::discogs::client::DiscogsSearchResult;
 use crate::discogs::DiscogsClient;
 use crate::import::{
-    FolderMetadata, ImportServiceHandle, MatchCandidate, TorrentImportMetadata, TorrentSource,
+    DetectedRelease, FolderMetadata, ImportServiceHandle, MatchCandidate, TorrentImportMetadata,
+    TorrentSource,
 };
 use crate::library::SharedLibraryManager;
 use crate::musicbrainz::MbRelease;
 use crate::torrent::ffi::TorrentInfo;
 use crate::torrent::TorrentManagerHandle;
 use crate::ui::components::dialog_context::DialogContext;
-use crate::ui::components::import::{FileInfo, ImportSource, SearchSource, TorrentInputMode};
+use crate::ui::components::import::{
+    CategorizedFileInfo, FileInfo, ImportSource, SearchSource, TorrentInputMode,
+};
 use dioxus::prelude::*;
 use dioxus::router::Navigator;
 use std::path::PathBuf;
@@ -37,6 +40,9 @@ pub struct ImportContext {
     pub(crate) mb_error_message: Signal<Option<String>>,
     // Folder detection import state (persists across navigation)
     pub(crate) folder_path: Signal<String>,
+    pub(crate) detected_releases: Signal<Vec<DetectedRelease>>,
+    pub(crate) selected_release_indices: Signal<Vec<usize>>,
+    pub(crate) current_release_index: Signal<usize>,
     pub(crate) detected_metadata: Signal<Option<FolderMetadata>>,
     pub(crate) import_phase: Signal<ImportPhase>,
     pub(crate) exact_match_candidates: Signal<Vec<MatchCandidate>>,
@@ -47,7 +53,7 @@ pub struct ImportContext {
     pub(crate) is_importing: Signal<bool>,
     pub(crate) import_error_message: Signal<Option<String>>,
     pub(crate) duplicate_album_id: Signal<Option<String>>,
-    pub(crate) folder_files: Signal<Vec<FileInfo>>,
+    pub(crate) folder_files: Signal<CategorizedFileInfo>,
     // Torrent-specific state
     pub(crate) torrent_source: Signal<Option<TorrentSource>>,
     pub(crate) seed_after_download: Signal<bool>,
@@ -98,6 +104,9 @@ impl ImportContext {
             mb_error_message: Signal::new(None),
             // Folder detection import state
             folder_path: Signal::new(String::new()),
+            detected_releases: Signal::new(Vec::new()),
+            selected_release_indices: Signal::new(Vec::new()),
+            current_release_index: Signal::new(0),
             detected_metadata: Signal::new(None),
             import_phase: Signal::new(ImportPhase::FolderSelection),
             exact_match_candidates: Signal::new(Vec::new()),
@@ -108,7 +117,7 @@ impl ImportContext {
             is_importing: Signal::new(false),
             import_error_message: Signal::new(None),
             duplicate_album_id: Signal::new(None),
-            folder_files: Signal::new(Vec::new()),
+            folder_files: Signal::new(CategorizedFileInfo::default()),
             torrent_source: Signal::new(None),
             seed_after_download: Signal::new(true),
             torrent_metadata: Signal::new(None),
@@ -161,6 +170,18 @@ impl ImportContext {
         self.folder_path
     }
 
+    pub fn detected_releases(&self) -> Signal<Vec<DetectedRelease>> {
+        self.detected_releases
+    }
+
+    pub fn selected_release_indices(&self) -> Signal<Vec<usize>> {
+        self.selected_release_indices
+    }
+
+    pub fn current_release_index(&self) -> Signal<usize> {
+        self.current_release_index
+    }
+
     pub fn detected_metadata(&self) -> Signal<Option<FolderMetadata>> {
         self.detected_metadata
     }
@@ -205,7 +226,7 @@ impl ImportContext {
         self.duplicate_album_id
     }
 
-    pub fn folder_files(&self) -> Signal<Vec<FileInfo>> {
+    pub fn folder_files(&self) -> Signal<CategorizedFileInfo> {
         self.folder_files
     }
 
@@ -301,6 +322,21 @@ impl ImportContext {
         signal.set(value);
     }
 
+    pub fn set_detected_releases(&self, value: Vec<DetectedRelease>) {
+        let mut signal = self.detected_releases;
+        signal.set(value);
+    }
+
+    pub fn set_selected_release_indices(&self, value: Vec<usize>) {
+        let mut signal = self.selected_release_indices;
+        signal.set(value);
+    }
+
+    pub fn set_current_release_index(&self, value: usize) {
+        let mut signal = self.current_release_index;
+        signal.set(value);
+    }
+
     pub fn set_detected_metadata(&self, value: Option<FolderMetadata>) {
         let mut signal = self.detected_metadata;
         signal.set(value);
@@ -351,7 +387,7 @@ impl ImportContext {
         signal.set(value);
     }
 
-    pub fn set_folder_files(&self, value: Vec<FileInfo>) {
+    pub fn set_folder_files(&self, value: CategorizedFileInfo) {
         let mut signal = self.folder_files;
         signal.set(value);
     }
@@ -468,7 +504,7 @@ impl ImportContext {
         self.set_is_importing(false);
         self.set_import_error_message(None);
         self.set_duplicate_album_id(None);
-        self.set_folder_files(Vec::new());
+        self.set_folder_files(CategorizedFileInfo::default());
         self.set_torrent_source(None);
         self.set_seed_after_download(true);
         self.set_torrent_metadata(None);
@@ -550,6 +586,34 @@ impl ImportContext {
         self.set_is_detecting(true);
     }
 
+    // Multi-release workflow helpers
+
+    /// Check if there are more releases to import in the current batch
+    pub fn has_more_releases(&self) -> bool {
+        let current_idx = *self.current_release_index.read();
+        let selected_indices = self.selected_release_indices.read();
+        current_idx + 1 < selected_indices.len()
+    }
+
+    /// Advance to the next release in the batch
+    pub fn advance_to_next_release(&self) {
+        if self.has_more_releases() {
+            let current_idx = *self.current_release_index.read();
+            self.set_current_release_index(current_idx + 1);
+        }
+    }
+
+    /// Get the currently selected release
+    pub fn get_current_release(&self) -> Option<DetectedRelease> {
+        let current_idx = *self.current_release_index.read();
+        let selected_indices = self.selected_release_indices.read();
+        let releases = self.detected_releases.read();
+
+        selected_indices
+            .get(current_idx)
+            .and_then(|&release_idx| releases.get(release_idx).cloned())
+    }
+
     // Facade methods delegating to submodules
 
     pub async fn load_torrent_for_import(
@@ -586,8 +650,45 @@ impl ImportContext {
 
         let result = detection::load_folder_for_import(self, path).await?;
 
+        // If we're in ReleaseSelection phase, stop here (multiple releases detected)
+        if *self.import_phase.read() == ImportPhase::ReleaseSelection {
+            return Ok(());
+        }
+
         // Files and metadata are already set inside load_folder_for_import
         // so they appear immediately in the UI before the MusicBrainz lookup
+
+        match result.discid_result {
+            None | Some(detection::DiscIdLookupResult::NoMatches) => {
+                self.init_search_query_from_metadata(&result.metadata);
+                self.set_import_phase(ImportPhase::ManualSearch);
+            }
+            Some(detection::DiscIdLookupResult::SingleMatch(candidate)) => {
+                self.set_confirmed_candidate(Some(*candidate));
+                self.set_import_phase(ImportPhase::Confirmation);
+            }
+            Some(detection::DiscIdLookupResult::MultipleMatches(candidates)) => {
+                self.set_exact_match_candidates(candidates);
+                self.set_import_phase(ImportPhase::ExactLookup);
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn load_selected_release(&self, release_index: usize) -> Result<(), String> {
+        // Reset state for new release
+        self.set_detected_metadata(None);
+        self.set_exact_match_candidates(Vec::new());
+        self.set_selected_match_index(None);
+        self.set_confirmed_candidate(None);
+        self.set_import_error_message(None);
+        self.set_duplicate_album_id(None);
+        self.set_import_phase(ImportPhase::MetadataDetection);
+
+        let result = detection::load_selected_release(self, release_index).await?;
+
+        // Files and metadata are already set inside load_selected_release
 
         match result.discid_result {
             None | Some(detection::DiscIdLookupResult::NoMatches) => {

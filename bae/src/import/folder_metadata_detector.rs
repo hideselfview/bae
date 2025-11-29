@@ -68,6 +68,105 @@ fn extract_year_from_cue(content: &str) -> Option<u32> {
     None
 }
 
+/// Check if a CUE file represents a single-file CUE/FLAC release
+/// Returns true only if the CUE has exactly ONE FILE directive
+/// Multiple FILE directives = one-file-per-track = documentation-only CUE
+fn is_single_file_cue(content: &str) -> bool {
+    let file_count = content
+        .lines()
+        .filter(|line| line.trim().starts_with("FILE "))
+        .count();
+    file_count == 1
+}
+
+/// Extract the FILE directive filename from CUE content
+/// Returns the stem (filename without extension) of the referenced file
+/// Only returns Some if there's exactly one FILE directive
+fn extract_single_file_stem_from_cue(content: &str) -> Option<String> {
+    // First check this is a single-file CUE
+    if !is_single_file_cue(content) {
+        return None;
+    }
+
+    for line in content.lines() {
+        let line = line.trim();
+        // Match FILE "filename.ext" WAVE or FILE "filename.ext" BINARY etc.
+        if line.starts_with("FILE ") {
+            // Extract the quoted filename
+            if let Some(start) = line.find('"') {
+                if let Some(end) = line[start + 1..].find('"') {
+                    let filename = &line[start + 1..start + 1 + end];
+                    // Get the stem (filename without extension)
+                    let path = Path::new(filename);
+                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        return Some(stem.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Find a matching FLAC file for a CUE file (for CUE/FLAC DiscID calculation)
+/// Only returns a match if:
+/// 1. The CUE has exactly ONE FILE directive (single-file release)
+/// 2. A matching audio file exists
+///
+/// Returns None for one-file-per-track releases (multiple FILE directives)
+fn find_matching_flac_for_cue<'a>(
+    cue_path: &Path,
+    cue_content: &str,
+    audio_files: &'a [PathBuf],
+) -> Option<&'a PathBuf> {
+    // First: check if this is a single-file CUE
+    // If not, this is a one-file-per-track release and we shouldn't try DiscID calculation
+    if !is_single_file_cue(cue_content) {
+        debug!(
+            "CUE has multiple FILE directives - this is a one-file-per-track release: {:?}",
+            cue_path
+        );
+        return None;
+    }
+
+    let cue_stem = cue_path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+
+    // Try 1: Stem-based matching (most common case)
+    // "album.cue" → "album.flac"
+    if let Some(flac_path) = audio_files.iter().find(|p| {
+        p.extension().and_then(|e| e.to_str()) == Some("flac")
+            && p.file_stem().and_then(|s| s.to_str()) == Some(cue_stem)
+    }) {
+        debug!("Found FLAC via stem match: {:?}", flac_path);
+        return Some(flac_path);
+    }
+
+    // Try 2: Parse FILE directive from CUE and look for that file
+    if let Some(file_stem) = extract_single_file_stem_from_cue(cue_content) {
+        debug!(
+            "CUE references file with stem: '{}', looking for match",
+            file_stem
+        );
+
+        // Try to find a file matching the FILE directive stem with various extensions
+        for ext in &["flac", "wav", "ape", "wv"] {
+            if let Some(flac_path) = audio_files.iter().find(|p| {
+                p.extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.to_lowercase())
+                    == Some(ext.to_string())
+                    && p.file_stem().and_then(|s| s.to_str()) == Some(&file_stem)
+            }) {
+                debug!("Found audio file via FILE directive: {:?}", flac_path);
+                return Some(flac_path);
+            }
+        }
+    }
+
+    // No match found - this CUE is documentation-only
+    None
+}
+
 /// Read FLAC metadata using symphonia
 /// Note: Symphonia metadata reading is complex, so we'll skip FLAC tag reading for now
 /// and rely on CUE files and MP3 tags. FLAC metadata can be added later if needed.
@@ -673,32 +772,35 @@ fn parse_folder_name(folder_path: &Path) -> (Option<String>, Option<String>) {
 pub fn detect_folder_contents(
     folder_path: PathBuf,
 ) -> Result<FolderContents, MetadataDetectionError> {
-    // Read files from folder
-    let mut files = Vec::new();
-    if let Ok(entries) = fs::read_dir(&folder_path) {
-        for entry in entries.flatten() {
-            let entry_path = entry.path();
-            if entry_path.is_file() {
-                let name = entry_path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown")
-                    .to_string();
-                let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-                let extension = entry_path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("")
-                    .to_string();
-                files.push(FileEntry {
-                    name,
-                    size,
-                    extension,
-                });
-            }
+    use crate::import::folder_scanner;
+
+    // Use folder scanner to collect files recursively (already categorized)
+    let categorized = folder_scanner::collect_release_files(&folder_path)
+        .map_err(|e| MetadataDetectionError::Io(std::io::Error::other(e)))?;
+
+    // Convert all categories to FileEntry format for the FolderContents
+    let mut files: Vec<FileEntry> = Vec::new();
+
+    // Helper to convert ScannedFile to FileEntry
+    let to_file_entry = |f: &folder_scanner::ScannedFile| {
+        let extension = std::path::Path::new(&f.relative_path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_string();
+        FileEntry {
+            name: f.relative_path.clone(),
+            size: f.size,
+            extension,
         }
-        files.sort_by(|a, b| a.name.cmp(&b.name));
-    }
+    };
+
+    files.extend(categorized.tracks.iter().map(to_file_entry));
+    files.extend(categorized.artwork.iter().map(to_file_entry));
+    files.extend(categorized.documents.iter().map(to_file_entry));
+    files.extend(categorized.other.iter().map(to_file_entry));
+
+    files.sort_by(|a, b| a.name.cmp(&b.name));
 
     let metadata = detect_metadata(folder_path)?;
 
@@ -722,20 +824,23 @@ pub fn detect_metadata(folder_path: PathBuf) -> Result<FolderMetadata, MetadataD
     let mut track_count: Option<u32> = None;
 
     // Check for CUE files first (highest priority for DISCID)
-    let entries = fs::read_dir(&folder_path)?;
+    // Use folder scanner to recursively collect all files (already categorized)
+    use crate::import::folder_scanner;
+    let categorized = folder_scanner::collect_release_files(&folder_path)
+        .map_err(|e| MetadataDetectionError::Io(std::io::Error::other(e)))?;
+
+    // Extract files by type from categorized structure
+    let audio_files: Vec<PathBuf> = categorized.tracks.iter().map(|f| f.path.clone()).collect();
+
+    // Extract CUE and LOG files from documents
     let mut cue_files = Vec::new();
     let mut log_files = Vec::new();
-    let mut audio_files = Vec::new();
 
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+    for doc in &categorized.documents {
+        if let Some(ext) = doc.path.extension().and_then(|e| e.to_str()) {
             match ext.to_lowercase().as_str() {
-                "cue" => cue_files.push(path),
-                "log" => log_files.push(path),
-                "flac" | "mp3" | "wav" | "m4a" | "aac" | "ogg" => {
-                    audio_files.push(path);
-                }
+                "cue" => cue_files.push(doc.path.clone()),
+                "log" => log_files.push(doc.path.clone()),
                 _ => {}
             }
         }
@@ -752,7 +857,17 @@ pub fn detect_metadata(folder_path: PathBuf) -> Result<FolderMetadata, MetadataD
     for cue_path in &cue_files {
         debug!("Reading CUE file: {:?}", cue_path);
         if let Ok(content) = fs::read_to_string(cue_path) {
-            // Extract FreeDB DISCID
+            // Check if this is a single-file CUE (true CUE/FLAC) or documentation-only
+            let is_cue_flac_release = is_single_file_cue(&content);
+
+            if !is_cue_flac_release {
+                debug!(
+                    "📄 CUE is documentation-only (multiple FILE directives): {:?}",
+                    cue_path
+                );
+            }
+
+            // Extract FreeDB DISCID (useful regardless of CUE type)
             if discid.is_none() {
                 discid = extract_discid_from_cue(&content);
                 if let Some(ref id) = discid {
@@ -760,8 +875,8 @@ pub fn detect_metadata(folder_path: PathBuf) -> Result<FolderMetadata, MetadataD
                 }
             }
 
-            // Calculate MusicBrainz DiscID - try log file first, then FLAC
-            if mb_discid.is_none() {
+            // Calculate MusicBrainz DiscID - only for true CUE/FLAC releases
+            if mb_discid.is_none() && is_cue_flac_release {
                 let cue_stem = cue_path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
 
                 // Try matching log file first (more efficient, no audio download needed)
@@ -789,14 +904,9 @@ pub fn detect_metadata(folder_path: PathBuf) -> Result<FolderMetadata, MetadataD
 
                 // Fall back to FLAC if log didn't work
                 if mb_discid.is_none() {
-                    info!(
-                        "🔍 Looking for matching FLAC file for CUE stem: {}",
-                        cue_stem
-                    );
-                    if let Some(flac_path) = audio_files.iter().find(|p| {
-                        p.extension().and_then(|e| e.to_str()) == Some("flac")
-                            && p.file_stem().and_then(|s| s.to_str()) == Some(cue_stem)
-                    }) {
+                    if let Some(flac_path) =
+                        find_matching_flac_for_cue(cue_path, &content, &audio_files)
+                    {
                         info!("📀 Found matching FLAC file: {:?}", flac_path);
                         match calculate_mb_discid_from_cue_flac(cue_path, flac_path) {
                             Ok(id) => {
@@ -807,48 +917,40 @@ pub fn detect_metadata(folder_path: PathBuf) -> Result<FolderMetadata, MetadataD
                                 warn!("✗ Failed to calculate MB DiscID from FLAC: {}", e);
                             }
                         }
-                    } else {
-                        info!(
-                            "⚠️ No matching FLAC file found for CUE: {:?} (stem: {})",
-                            cue_path, cue_stem
-                        );
-                        info!(
-                            "📋 Available audio files: {:?}",
-                            audio_files
-                                .iter()
-                                .map(|p| p.file_name())
-                                .collect::<Vec<_>>()
-                        );
                     }
                 }
             }
 
-            // Extract year from REM DATE
+            // Extract year from REM DATE (useful regardless of CUE type)
             if year_sources.is_empty() {
                 if let Some(y) = extract_year_from_cue(&content) {
                     year_sources.push((y, 0.9)); // High confidence from CUE
                 }
             }
 
-            // Parse CUE sheet for title/performer
-            match CueFlacProcessor::parse_cue_sheet(cue_path) {
-                Ok(cue_sheet) => {
-                    info!(
-                        "✓ Parsed CUE: artist='{}', album='{}', tracks={}",
-                        cue_sheet.performer,
-                        cue_sheet.title,
-                        cue_sheet.tracks.len()
-                    );
-                    if !cue_sheet.performer.is_empty() {
-                        artist_sources.push((cue_sheet.performer.clone(), 0.9));
+            // Parse CUE sheet for title/performer - ONLY for true CUE/FLAC releases
+            // Documentation-only CUEs often have per-disc titles like "Electric Ladyland (Disc 1)"
+            // which we don't want to use as the album name
+            if is_cue_flac_release {
+                match CueFlacProcessor::parse_cue_sheet(cue_path) {
+                    Ok(cue_sheet) => {
+                        info!(
+                            "✓ Parsed CUE: artist='{}', album='{}', tracks={}",
+                            cue_sheet.performer,
+                            cue_sheet.title,
+                            cue_sheet.tracks.len()
+                        );
+                        if !cue_sheet.performer.is_empty() {
+                            artist_sources.push((cue_sheet.performer.clone(), 0.9));
+                        }
+                        if !cue_sheet.title.is_empty() {
+                            album_sources.push((cue_sheet.title.clone(), 0.9));
+                        }
+                        track_count = Some(cue_sheet.tracks.len() as u32);
                     }
-                    if !cue_sheet.title.is_empty() {
-                        album_sources.push((cue_sheet.title.clone(), 0.9));
+                    Err(e) => {
+                        warn!("✗ Failed to parse CUE file {:?}: {}", cue_path, e);
                     }
-                    track_count = Some(cue_sheet.tracks.len() as u32);
-                }
-                Err(e) => {
-                    warn!("✗ Failed to parse CUE file {:?}: {}", cue_path, e);
                 }
             }
         }

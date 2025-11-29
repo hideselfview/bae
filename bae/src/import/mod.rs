@@ -35,6 +35,7 @@ pub mod cover_art;
 mod discogs_matcher;
 mod discogs_parser;
 mod folder_metadata_detector;
+pub(crate) mod folder_scanner;
 mod handle;
 mod metadata_persister;
 mod musicbrainz_parser;
@@ -50,6 +51,7 @@ pub use folder_metadata_detector::{
     calculate_mb_discid_from_cue_flac, calculate_mb_discid_from_log, detect_folder_contents,
     detect_metadata, FolderMetadata,
 };
+pub use folder_scanner::{CategorizedFiles, DetectedRelease, ScannedFile};
 pub use handle::{ImportServiceHandle, TorrentFileMetadata, TorrentImportMetadata};
 pub use service::{ImportConfig, ImportService};
 pub use types::{ImportProgress, ImportRequest, TorrentSource};
