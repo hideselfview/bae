@@ -41,6 +41,7 @@ id3 = "1.14"            # MP3 tag reading
 musicbrainz_rs = "0.5"  # MusicBrainz API for DISCID lookup
 discid = "0.5"          # Calculate MusicBrainz DiscIDs from TOC data
 flacenc = "0.4"         # FLAC encoding for CUE/FLAC splitting
+regex = "1.11"          # Regular expressions for album name cleaning
 libflac-sys = "0.3.4"    # FFI bindings to libFLAC for seektable generation
 libc = "0.2"            # C types for libflac-sys FFI
 crc32fast = "1.4"       # Fast CRC32 calculation for EAC-style log files

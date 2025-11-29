@@ -526,26 +526,145 @@ pub async fn lookup_release_by_id(
     Ok((release, external_urls, json))
 }
 
-/// Search MusicBrainz for releases by artist, album, and optional year
-pub async fn search_releases(
-    artist: &str,
-    album: &str,
-    year: Option<u32>,
-) -> Result<Vec<MbRelease>, MusicBrainzError> {
-    info!(
-        "🎵 MusicBrainz: Searching for artist='{}', album='{}', year={:?}",
-        artist, album, year
-    );
+/// Parameters for searching MusicBrainz releases
+#[derive(Debug, Clone, Default)]
+pub struct ReleaseSearchParams {
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub year: Option<String>,
+    pub catalog_number: Option<String>,
+    pub barcode: Option<String>,
+    pub format: Option<String>,
+    pub country: Option<String>,
+}
 
-    // Build query string - URL encode the query parameters
-    let query = if let Some(y) = year {
-        format!(
-            "artist:\"{}\" AND release:\"{}\" AND date:{}",
-            artist, album, y
-        )
-    } else {
-        format!("artist:\"{}\" AND release:\"{}\"", artist, album)
-    };
+impl ReleaseSearchParams {
+    /// Check if at least one field is filled
+    pub fn has_any_field(&self) -> bool {
+        self.artist.is_some()
+            || self.album.is_some()
+            || self.year.is_some()
+            || self.catalog_number.is_some()
+            || self.barcode.is_some()
+            || self.format.is_some()
+            || self.country.is_some()
+    }
+
+    /// Build Lucene query string from filled fields
+    fn build_query(&self) -> String {
+        let mut parts = Vec::new();
+
+        if let Some(ref artist) = self.artist {
+            if !artist.trim().is_empty() {
+                parts.push(format!("artist:\"{}\"", artist.trim()));
+            }
+        }
+        if let Some(ref album) = self.album {
+            if !album.trim().is_empty() {
+                parts.push(format!("release:\"{}\"", album.trim()));
+            }
+        }
+        if let Some(ref year) = self.year {
+            if !year.trim().is_empty() {
+                parts.push(format!("date:{}", year.trim()));
+            }
+        }
+        if let Some(ref catno) = self.catalog_number {
+            if !catno.trim().is_empty() {
+                parts.push(format!("catno:\"{}\"", catno.trim()));
+            }
+        }
+        if let Some(ref barcode) = self.barcode {
+            if !barcode.trim().is_empty() {
+                parts.push(format!("barcode:{}", barcode.trim()));
+            }
+        }
+        if let Some(ref format) = self.format {
+            if !format.trim().is_empty() {
+                parts.push(format!("format:\"{}\"", format.trim()));
+            }
+        }
+        if let Some(ref country) = self.country {
+            if !country.trim().is_empty() {
+                parts.push(format!("country:\"{}\"", country.trim()));
+            }
+        }
+
+        parts.join(" AND ")
+    }
+}
+
+/// Clean album name for search by removing common metadata patterns
+pub fn clean_album_name_for_search(album: &str) -> String {
+    use regex::Regex;
+
+    let mut cleaned = album.to_string();
+
+    // Remove catalog numbers in brackets: [Label 123-456, Year]
+    let bracket_pattern = Regex::new(r"\s*\[([^\]]+)\]\s*").unwrap();
+    cleaned = bracket_pattern.replace_all(&cleaned, " ").to_string();
+
+    // Remove year in parentheses at the end: (1968), (2024)
+    let year_pattern = Regex::new(r"\s*\((\d{4})\)\s*$").unwrap();
+    cleaned = year_pattern.replace_all(&cleaned, "").to_string();
+
+    // Remove disc indicators: (Disc 2), (CD1), (CD 2)
+    let disc_pattern = Regex::new(r"(?i)\s*\((Disc|CD)\s*\d+\)\s*$").unwrap();
+    cleaned = disc_pattern.replace_all(&cleaned, "").to_string();
+
+    // Remove edition markers: (Remastered), (Deluxe Edition), etc.
+    let edition_pattern =
+        Regex::new(r"(?i)\s*\((Remaster(ed)?|Deluxe|Limited|Special|Expanded)(\s+Edition)?\)\s*$")
+            .unwrap();
+    cleaned = edition_pattern.replace_all(&cleaned, "").to_string();
+
+    // Trim and collapse multiple spaces
+    cleaned.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Extract catalog number from album or folder name
+pub fn extract_catalog_number(text: &str) -> Option<String> {
+    use regex::Regex;
+
+    // Match patterns like [Label 123-456] or [123-456, Year]
+    let bracket_pattern = Regex::new(r"\[([^\]]+)\]").unwrap();
+
+    if let Some(caps) = bracket_pattern.captures(text) {
+        if let Some(content) = caps.get(1) {
+            let content_str = content.as_str();
+
+            // Try to extract catalog number pattern: alphanumeric with dashes/spaces
+            let catno_pattern = Regex::new(r"([A-Z0-9][\w\s\-]+\d+)").unwrap();
+
+            if let Some(catno_caps) = catno_pattern.captures(content_str) {
+                if let Some(catno) = catno_caps.get(1) {
+                    let catno_str = catno.as_str().trim();
+                    // Filter out years (4 digits only)
+                    if !Regex::new(r"^\d{4}$").unwrap().is_match(catno_str) {
+                        return Some(catno_str.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Search MusicBrainz for releases using structured parameters
+pub async fn search_releases_with_params(
+    params: &ReleaseSearchParams,
+) -> Result<Vec<MbRelease>, MusicBrainzError> {
+    if !params.has_any_field() {
+        return Err(MusicBrainzError::Api(
+            "At least one search field must be provided".to_string(),
+        ));
+    }
+
+    let query = params.build_query();
+
+    info!("🎵 MusicBrainz: Searching with params: {:?}", params);
+    info!("   Query: {}", query);
 
     let url = "https://musicbrainz.org/ws/2/release";
 
@@ -572,7 +691,6 @@ pub async fn search_releases(
         .map_err(|e| MusicBrainzError::Api(format!("HTTP request failed: {}", e)))?;
 
     if !response.status().is_success() {
-        // Try to extract error message from response
         let status = response.status();
         let error_text = response
             .text()
@@ -584,7 +702,7 @@ pub async fn search_releases(
         );
 
         if status == 404 {
-            return Ok(Vec::new()); // No results, not an error
+            return Ok(Vec::new());
         }
         return Err(MusicBrainzError::Api(format!(
             "MusicBrainz API returned status {}: {}",
@@ -599,7 +717,6 @@ pub async fn search_releases(
 
     debug!("MusicBrainz search response: {:#}", json);
 
-    // Check for error field in response
     if let Some(error_msg) = json.get("error").and_then(|e| e.as_str()) {
         warn!("MusicBrainz API returned error: {}", error_msg);
         return Err(MusicBrainzError::Api(format!(
@@ -608,7 +725,6 @@ pub async fn search_releases(
         )));
     }
 
-    // Parse releases from response
     let mut releases = Vec::new();
 
     if let Some(releases_array) = json.get("releases").and_then(|r| r.as_array()) {
@@ -624,71 +740,46 @@ pub async fn search_releases(
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| "unknown".to_string());
 
-                // Extract artist from artist-credit
                 let artist = release_json
                     .get("artist-credit")
                     .and_then(|ac| ac.as_array())
-                    .and_then(|credits| credits.first())
-                    .and_then(|credit| credit.get("name"))
+                    .and_then(|arr| arr.first())
+                    .and_then(|first| first.get("name"))
                     .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| "Unknown Artist".to_string());
+                    .unwrap_or("Unknown Artist")
+                    .to_string();
 
-                // Extract date
                 let date = release_json
                     .get("date")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
-                // Extract first release date from release-group
-                let first_release_date = release_json
-                    .get("release-group")
-                    .and_then(|rg| rg.get("first-release-date"))
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty())
-                    .map(|s| s.to_string());
-
-                // Extract country
                 let country = release_json
                     .get("country")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
-                // Extract barcode
                 let barcode = release_json
                     .get("barcode")
                     .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty())
                     .map(|s| s.to_string());
 
-                // Extract format from media array
-                let format = release_json
-                    .get("media")
-                    .and_then(|m| m.as_array())
-                    .and_then(|media| media.first())
-                    .and_then(|m| m.get("format"))
-                    .and_then(|f| f.as_str())
-                    .map(|s| s.to_string());
-
-                // Extract label and catalog number from label-info array
-                let (label, catalog_number) = release_json
+                let label = release_json
                     .get("label-info")
                     .and_then(|li| li.as_array())
-                    .and_then(|labels| labels.first())
-                    .map(|label_info| {
-                        let label_name = label_info
-                            .get("label")
-                            .and_then(|l| l.get("name"))
-                            .and_then(|n| n.as_str())
-                            .map(|s| s.to_string());
-                        let catalog = label_info
-                            .get("catalog-number")
-                            .and_then(|c| c.as_str())
-                            .filter(|s| !s.is_empty())
-                            .map(|s| s.to_string());
-                        (label_name, catalog)
-                    })
-                    .unwrap_or((None, None));
+                    .and_then(|arr| arr.first())
+                    .and_then(|first| first.get("label"))
+                    .and_then(|label| label.get("name"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                let catalog_number = release_json
+                    .get("label-info")
+                    .and_then(|li| li.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|first| first.get("catalog-number"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
 
                 releases.push(MbRelease {
                     release_id: id.to_string(),
@@ -696,8 +787,8 @@ pub async fn search_releases(
                     title: title.to_string(),
                     artist,
                     date,
-                    first_release_date,
-                    format,
+                    first_release_date: None,
+                    format: None,
                     country,
                     label,
                     catalog_number,
@@ -707,11 +798,92 @@ pub async fn search_releases(
         }
     }
 
-    info!(
-        "✓ MusicBrainz search returned {} release(s)",
-        releases.len()
-    );
+    info!("✓ Found {} release(s)", releases.len());
     Ok(releases)
+}
+
+/// Search MusicBrainz for releases by artist, album, and optional year
+/// This is a convenience wrapper around search_releases_with_params
+pub async fn search_releases(
+    artist: &str,
+    album: &str,
+    year: Option<u32>,
+) -> Result<Vec<MbRelease>, MusicBrainzError> {
+    info!(
+        "🎵 MusicBrainz: Searching for artist='{}', album='{}', year={:?}",
+        artist, album, year
+    );
+
+    let params = ReleaseSearchParams {
+        artist: Some(artist.to_string()),
+        album: Some(album.to_string()),
+        year: year.map(|y| y.to_string()),
+        ..Default::default()
+    };
+
+    search_releases_with_params(&params).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_clean_album_name() {
+        assert_eq!(
+            clean_album_name_for_search("Electric Ladyland (1968) [Polydor 823 359-2, 1984]"),
+            "Electric Ladyland"
+        );
+        assert_eq!(
+            clean_album_name_for_search("Back In Black (Disc 2)"),
+            "Back In Black"
+        );
+        assert_eq!(
+            clean_album_name_for_search("Abbey Road (Remastered)"),
+            "Abbey Road"
+        );
+        assert_eq!(
+            clean_album_name_for_search("The Wall (Deluxe Edition)"),
+            "The Wall"
+        );
+    }
+
+    #[test]
+    fn test_extract_catalog_number() {
+        assert_eq!(
+            extract_catalog_number("Electric Ladyland (1968) [Polydor 823 359-2, 1984]"),
+            Some("Polydor 823 359-2".to_string())
+        );
+        assert_eq!(
+            extract_catalog_number("Back In Black [Atlantic A2 16018]"),
+            Some("Atlantic A2 16018".to_string())
+        );
+        assert_eq!(extract_catalog_number("No catalog here"), None);
+    }
+
+    #[test]
+    fn test_release_search_params_build_query() {
+        let params = ReleaseSearchParams {
+            artist: Some("Hendrix".to_string()),
+            album: Some("Electric Ladyland".to_string()),
+            year: Some("1968".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            params.build_query(),
+            "artist:\"Hendrix\" AND release:\"Electric Ladyland\" AND date:1968"
+        );
+
+        let params2 = ReleaseSearchParams {
+            artist: Some("ACDC".to_string()),
+            catalog_number: Some("A2 16018".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            params2.build_query(),
+            "artist:\"ACDC\" AND catno:\"A2 16018\""
+        );
+    }
 }
 
 /// Fetch the first release date for a release group

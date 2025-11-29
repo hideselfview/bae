@@ -1,7 +1,9 @@
 use super::state::ImportContext;
 use crate::discogs::client::DiscogsSearchResult;
 use crate::import::{FolderMetadata, MatchCandidate};
-use crate::musicbrainz::{search_releases, MbRelease};
+use crate::musicbrainz::{
+    search_releases, search_releases_with_params, MbRelease, ReleaseSearchParams,
+};
 use crate::ui::components::import::SearchSource;
 use dioxus::prelude::*;
 use tracing::{info, warn};
@@ -118,21 +120,100 @@ pub async fn search_musicbrainz_by_metadata(
 
 pub async fn search_for_matches(
     ctx: &ImportContext,
-    query: String,
     source: SearchSource,
 ) -> Result<Vec<MatchCandidate>, String> {
-    ctx.set_search_query(query.clone());
-
     let metadata = ctx.detected_metadata().read().clone();
 
     match source {
         SearchSource::MusicBrainz => {
-            if let Some(ref meta) = metadata {
-                let results = search_musicbrainz_by_metadata(ctx, meta).await?;
-                use crate::import::rank_mb_matches;
-                Ok(rank_mb_matches(meta, results))
-            } else {
-                Err("No metadata available for search".to_string())
+            // Build search params from UI fields
+            let artist = ctx.search_artist().read().clone();
+            let album = ctx.search_album().read().clone();
+            let year = ctx.search_year().read().clone();
+            let catalog_number = ctx.search_catalog_number().read().clone();
+            let barcode = ctx.search_barcode().read().clone();
+            let format = ctx.search_format().read().clone();
+            let country = ctx.search_country().read().clone();
+
+            let params = ReleaseSearchParams {
+                artist: if artist.trim().is_empty() {
+                    None
+                } else {
+                    Some(artist)
+                },
+                album: if album.trim().is_empty() {
+                    None
+                } else {
+                    Some(album)
+                },
+                year: if year.trim().is_empty() {
+                    None
+                } else {
+                    Some(year)
+                },
+                catalog_number: if catalog_number.trim().is_empty() {
+                    None
+                } else {
+                    Some(catalog_number)
+                },
+                barcode: if barcode.trim().is_empty() {
+                    None
+                } else {
+                    Some(barcode)
+                },
+                format: if format.trim().is_empty() {
+                    None
+                } else {
+                    Some(format)
+                },
+                country: if country.trim().is_empty() {
+                    None
+                } else {
+                    Some(country)
+                },
+            };
+
+            if !params.has_any_field() {
+                return Err("Please fill in at least one search field".to_string());
+            }
+
+            info!("🎵 Starting MusicBrainz search with params: {:?}", params);
+
+            match search_releases_with_params(&params).await {
+                Ok(releases) => {
+                    info!("✓ MusicBrainz search returned {} result(s)", releases.len());
+                    for (i, release) in releases.iter().enumerate().take(5) {
+                        info!(
+                            "   {}. {} - {} (release_id: {}, release_group_id: {})",
+                            i + 1,
+                            release.artist,
+                            release.title,
+                            release.release_id,
+                            release.release_group_id
+                        );
+                    }
+
+                    // Use detected metadata for ranking if available
+                    if let Some(ref meta) = metadata {
+                        use crate::import::rank_mb_matches;
+                        Ok(rank_mb_matches(meta, releases))
+                    } else {
+                        // No metadata for ranking, return unranked results
+                        Ok(releases
+                            .into_iter()
+                            .map(|release| MatchCandidate {
+                                source: crate::import::MatchSource::MusicBrainz(release),
+                                confidence: 50.0,
+                                match_reasons: vec!["Manual search result".to_string()],
+                                cover_art_url: None,
+                            })
+                            .collect())
+                    }
+                }
+                Err(e) => {
+                    warn!("✗ MusicBrainz search failed: {}", e);
+                    Err(format!("MusicBrainz search failed: {}", e))
+                }
             }
         }
         SearchSource::Discogs => {

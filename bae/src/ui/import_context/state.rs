@@ -1,5 +1,5 @@
 use crate::discogs::client::DiscogsSearchResult;
-use crate::discogs::{DiscogsClient, DiscogsRelease};
+use crate::discogs::DiscogsClient;
 use crate::import::{
     FolderMetadata, ImportServiceHandle, MatchCandidate, TorrentImportMetadata, TorrentSource,
 };
@@ -18,7 +18,14 @@ use super::types::{ImportPhase, ImportStep};
 use super::{detection, import, navigation, search};
 
 pub struct ImportContext {
-    pub(crate) search_query: Signal<String>,
+    // Structured search fields for manual search
+    pub(crate) search_artist: Signal<String>,
+    pub(crate) search_album: Signal<String>,
+    pub(crate) search_year: Signal<String>,
+    pub(crate) search_catalog_number: Signal<String>,
+    pub(crate) search_barcode: Signal<String>,
+    pub(crate) search_format: Signal<String>,
+    pub(crate) search_country: Signal<String>,
     pub(crate) search_results: Signal<Vec<DiscogsSearchResult>>,
     pub(crate) is_searching_masters: Signal<bool>,
     pub(crate) is_loading_versions: Signal<bool>,
@@ -74,7 +81,13 @@ impl ImportContext {
         dialog: DialogContext,
     ) -> Self {
         Self {
-            search_query: Signal::new(String::new()),
+            search_artist: Signal::new(String::new()),
+            search_album: Signal::new(String::new()),
+            search_year: Signal::new(String::new()),
+            search_catalog_number: Signal::new(String::new()),
+            search_barcode: Signal::new(String::new()),
+            search_format: Signal::new(String::new()),
+            search_country: Signal::new(String::new()),
             search_results: Signal::new(Vec::new()),
             is_searching_masters: Signal::new(false),
             is_loading_versions: Signal::new(false),
@@ -116,8 +129,32 @@ impl ImportContext {
     }
 
     // Getters - return Signal (which can be used as ReadSignal)
-    pub fn search_query(&self) -> Signal<String> {
-        self.search_query
+    pub fn search_artist(&self) -> Signal<String> {
+        self.search_artist
+    }
+
+    pub fn search_album(&self) -> Signal<String> {
+        self.search_album
+    }
+
+    pub fn search_year(&self) -> Signal<String> {
+        self.search_year
+    }
+
+    pub fn search_catalog_number(&self) -> Signal<String> {
+        self.search_catalog_number
+    }
+
+    pub fn search_barcode(&self) -> Signal<String> {
+        self.search_barcode
+    }
+
+    pub fn search_format(&self) -> Signal<String> {
+        self.search_format
+    }
+
+    pub fn search_country(&self) -> Signal<String> {
+        self.search_country
     }
 
     pub fn folder_path(&self) -> Signal<String> {
@@ -184,8 +221,38 @@ impl ImportContext {
         self.torrent_metadata
     }
 
-    pub fn set_search_query(&self, value: String) {
-        let mut signal = self.search_query;
+    pub fn set_search_artist(&self, value: String) {
+        let mut signal = self.search_artist;
+        signal.set(value);
+    }
+
+    pub fn set_search_album(&self, value: String) {
+        let mut signal = self.search_album;
+        signal.set(value);
+    }
+
+    pub fn set_search_year(&self, value: String) {
+        let mut signal = self.search_year;
+        signal.set(value);
+    }
+
+    pub fn set_search_catalog_number(&self, value: String) {
+        let mut signal = self.search_catalog_number;
+        signal.set(value);
+    }
+
+    pub fn set_search_barcode(&self, value: String) {
+        let mut signal = self.search_barcode;
+        signal.set(value);
+    }
+
+    pub fn set_search_format(&self, value: String) {
+        let mut signal = self.search_format;
+        signal.set(value);
+    }
+
+    pub fn set_search_country(&self, value: String) {
+        let mut signal = self.search_country;
         signal.set(value);
     }
 
@@ -373,7 +440,13 @@ impl ImportContext {
     }
 
     pub fn reset(&self) {
-        self.set_search_query(String::new());
+        self.set_search_artist(String::new());
+        self.set_search_album(String::new());
+        self.set_search_year(String::new());
+        self.set_search_catalog_number(String::new());
+        self.set_search_barcode(String::new());
+        self.set_search_format(String::new());
+        self.set_search_country(String::new());
         self.set_search_results(Vec::new());
         self.set_is_searching_masters(false);
         self.set_is_loading_versions(false);
@@ -414,16 +487,44 @@ impl ImportContext {
         self.set_import_phase(ImportPhase::FolderSelection);
     }
 
-    /// Initialize search query from metadata
+    /// Initialize search fields from metadata
     pub fn init_search_query_from_metadata(&self, metadata: &FolderMetadata) {
-        let mut query_parts = Vec::new();
+        use crate::musicbrainz::{clean_album_name_for_search, extract_catalog_number};
+
+        // Set artist
         if let Some(ref artist) = metadata.artist {
-            query_parts.push(artist.clone());
+            self.set_search_artist(artist.clone());
+        } else {
+            self.set_search_artist(String::new());
         }
+
+        // Set album (cleaned)
         if let Some(ref album) = metadata.album {
-            query_parts.push(album.clone());
+            let cleaned_album = clean_album_name_for_search(album);
+            self.set_search_album(cleaned_album);
+
+            // Try to extract catalog number
+            if let Some(catno) = extract_catalog_number(album) {
+                self.set_search_catalog_number(catno);
+            } else {
+                self.set_search_catalog_number(String::new());
+            }
+        } else {
+            self.set_search_album(String::new());
+            self.set_search_catalog_number(String::new());
         }
-        self.set_search_query(query_parts.join(" "));
+
+        // Set year
+        if let Some(year) = metadata.year {
+            self.set_search_year(year.to_string());
+        } else {
+            self.set_search_year(String::new());
+        }
+
+        // Clear other fields
+        self.set_search_barcode(String::new());
+        self.set_search_format(String::new());
+        self.set_search_country(String::new());
     }
 
     /// Reset state for a new torrent selection
@@ -508,10 +609,9 @@ impl ImportContext {
 
     pub async fn search_for_matches(
         &self,
-        query: String,
         source: SearchSource,
     ) -> Result<Vec<MatchCandidate>, String> {
-        search::search_for_matches(self, query, source).await
+        search::search_for_matches(self, source).await
     }
 
     pub async fn load_cd_for_import(
@@ -533,7 +633,9 @@ impl ImportContext {
 
         match result {
             detection::DiscIdLookupResult::NoMatches => {
-                self.set_search_query(drive_path.clone());
+                // For CD import, we'll populate search fields after metadata detection
+                self.set_search_artist(String::new());
+                self.set_search_album(String::new());
                 self.set_import_phase(ImportPhase::ManualSearch);
             }
             detection::DiscIdLookupResult::SingleMatch(candidate) => {

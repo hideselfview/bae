@@ -853,6 +853,7 @@ dependencies = [
  "objc",
  "rand 0.8.5",
  "rayon",
+ "regex",
  "reqwest 0.12.24",
  "rfd",
  "serde",
